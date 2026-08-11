@@ -3,7 +3,7 @@ build-native/
 build-wasm/
 node_modules/
 packages/api/dist/
-packages/api/wasm/*.wasm
+# Track published kernel WASM under packages/api/wasm/ (CI builds + commits it)
 demo/dist/
 demo/templates/**/dist/
 demo/templates/**/.next/

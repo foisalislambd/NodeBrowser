@@ -207,7 +207,9 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/api/package.json package.json packages/api/wasm/browsernode_kernel.js packages/api/wasm/browsernode_kernel.wasm
+          git add packages/api/package.json package.json
+          # Published kernel binary (may be gitignored historically — force-add)
+          git add -f packages/api/wasm/browsernode_kernel.js packages/api/wasm/browsernode_kernel.wasm
           if git diff --staged --quiet; then
             echo "No version/WASM changes to commit"
           else
