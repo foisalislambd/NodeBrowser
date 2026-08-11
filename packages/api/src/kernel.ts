@@ -15,6 +15,8 @@ export interface KernelModule {
   unlink(k: KernelHandle, path: string): boolean;
   readdir(k: KernelHandle, path: string): string[];
   exists(k: KernelHandle, path: string): boolean;
+  /** Optional — JS fallback; WASM may use readText heuristic via BrowserNode.fs */
+  isDir?(k: KernelHandle, path: string): boolean;
   spawn(k: KernelHandle, cmd: string, argv: string[], cwd: string): number;
   wait(k: KernelHandle, pid: number): number;
   kill(k: KernelHandle, pid: number): boolean;

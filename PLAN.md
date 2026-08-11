@@ -29,6 +29,7 @@
 | 9 Vite Node APIs | ✅ | **crypto / nextTick / perf_hooks** |
 | 10 Next.js APIs | ✅ | **createRequire / async_hooks stubs / broader fs** |
 | 11 Vite/Next demos | ✅ | Real `create-vite` + `create-next-app` under `demo/templates/` |
+| 12 File manager DX | ✅ | VFS explorer + `fs.stat/exists/rm` + in-tab install/run/save |
 
 ## Phase 9 — Vite Node API enablers (detail)
 
@@ -71,9 +72,19 @@ Done: crypto, nextTick, perf_hooks.
 - Demo UI mounts template sources into VFS (`/apps/vite`, `/apps/next`) for inspection
 - Full Vite/Next CLIs still run on the host until BN can host them in-tab
 
+## Phase 12 — In-browser file manager + WebContainer DX
+
+- Demo **Files** pane: browse VFS, open/edit/save, new file/dir, delete, refresh
+- Host `bn.fs`: `exists`, `stat`, `rm({ recursive })`
+- Install prompts for package → writes into current cwd `node_modules` in VFS
+- Run saves then `spawn('node', …)` with project cwd
+- Full Vite/Next CLI in-tab remains later (templates + host scripts)
+
 ## Non-goals (still)
 
 - Native `.node` addons
 - Full POSIX fork/threads
 - Raw TCP/UDP
 - Perfect Node 20 parity / full Next.js in-WASM (later)
+- OPFS persistence across refresh
+- Full Vite/Next CLI inside the tab

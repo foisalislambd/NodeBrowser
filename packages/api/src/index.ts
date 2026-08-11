@@ -40,6 +40,28 @@ export class BrowserNode {
   get fs() {
     const mod = this.#mod;
     const k = this.#k;
+    const isDir = (path: string): boolean => {
+      if (path === '/' || path === '') return true;
+      if (mod.isDir) return mod.isDir(k, path);
+      // WASM heuristic: directories exist but have no file text
+      if (!mod.exists(k, path)) return false;
+      return mod.readText(k, path) === null;
+    };
+    const joinFs = (dir: string, name: string) => {
+      if (dir === '/') return `/${name}`;
+      return `${dir.replace(/\/+$/, '')}/${name}`;
+    };
+    const rmTree = async (path: string): Promise<void> => {
+      if (!mod.exists(k, path)) return;
+      if (isDir(path)) {
+        for (const name of mod.readdir(k, path)) {
+          await rmTree(joinFs(path, name));
+        }
+      }
+      if (!mod.unlink(k, path) && mod.exists(k, path)) {
+        throw new Error(`EPERM: cannot remove ${path}`);
+      }
+    };
     return {
       writeFile: async (path: string, data: string | Uint8Array) => {
         if (typeof data === 'string') mod.writeText(k, path, data);
@@ -58,8 +80,23 @@ export class BrowserNode {
       mkdir: async (path: string, opts?: { recursive?: boolean }) => {
         mod.mkdir(k, path, opts?.recursive ?? true);
       },
-      rm: async (path: string) => {
-        mod.unlink(k, path);
+      exists: async (path: string) => path === '/' || mod.exists(k, path),
+      stat: async (path: string) => {
+        if (path !== '/' && !mod.exists(k, path)) throw new Error(`ENOENT: ${path}`);
+        const dir = isDir(path);
+        return {
+          isFile: () => !dir,
+          isDirectory: () => dir,
+        };
+      },
+      rm: async (path: string, opts?: { recursive?: boolean }) => {
+        if (!mod.exists(k, path) && path !== '/') throw new Error(`ENOENT: ${path}`);
+        if (opts?.recursive) {
+          await rmTree(path);
+          return;
+        }
+        if (isDir(path)) throw new Error(`EISDIR: ${path} (use { recursive: true })`);
+        if (!mod.unlink(k, path)) throw new Error(`ENOENT: ${path}`);
       },
     };
   }

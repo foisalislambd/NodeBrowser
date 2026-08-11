@@ -225,6 +225,11 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
       return [...node.children.keys()];
     },
     exists: (_k, path) => path === '/' || resolve(path).node != null,
+    isDir: (_k, path) => {
+      if (path === '/' || path === '') return true;
+      const r = resolve(path);
+      return !!r.node && r.node.kind === 'dir';
+    },
     spawn: (_k, cmd, argv, cwd) => {
       const pid = nextPid++;
       if (cmd === 'echo') {
