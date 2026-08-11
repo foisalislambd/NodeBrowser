@@ -10,8 +10,15 @@
 export const VITE_ROOT = '/apps/vite';
 export const NEXT_ROOT = '/apps/next';
 
-async function fetchText(path) {
-  const url = new URL(path.replace(/^\//, ''), document.baseURI).href;
+/** Resolve demo assets next to this module (works on GitHub Pages project sites). */
+function assetUrl(rel) {
+  const clean = String(rel).replace(/^\//, '');
+  // apps.js lives in dist/; templates/ is dist/templates/
+  return new URL(clean, import.meta.url).href;
+}
+
+async function fetchText(rel) {
+  const url = assetUrl(rel);
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`fetch ${url} → ${res.status}`);
   return res.text();
