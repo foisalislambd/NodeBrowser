@@ -60,10 +60,16 @@ function joinPath(dir, name) {
 }
 
 async function loadApi() {
+  const url = new URL('packages/api/dist/index.js', document.baseURI).href;
   try {
-    return await import('/packages/api/dist/index.js');
-  } catch {
-    return await import('./browsernode-api.js');
+    return await import(url);
+  } catch (e) {
+    // Dev fallback when served without self-contained dist layout
+    try {
+      return await import('/packages/api/dist/index.js');
+    } catch {
+      throw e;
+    }
   }
 }
 
@@ -271,9 +277,11 @@ async function deleteSelected() {
 async function boot() {
   $('status').textContent = 'booting…';
   const { NodeBrowser } = await loadApi();
-  bn = await NodeBrowser.boot({ useWasm: false });
+  const previewPath = new URL('__bn_preview', document.baseURI).pathname.replace(/\/$/, '');
+  const previewBase = new URL('__bn_preview', document.baseURI).href.replace(/\/$/, '');
+  bn = await NodeBrowser.boot({ useWasm: false, previewBase });
   appendTerm(`runtime=${bn.runtime}\n`);
-  bn.attachServiceWorkerBridge('/__bn_preview');
+  bn.attachServiceWorkerBridge(previewPath);
   await bn.mount({
     home: {
       directory: {

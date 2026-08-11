@@ -123,6 +123,8 @@ npm install @foisal/nodebrowser
 
 Push to **`main`** builds, publishes to **npm** (Trusted Publisher / OIDC) and **GitHub Packages**, then creates a **GitHub Release** starting at `1.0.0` (`1.0.9` → `1.1.0`).
 
+**Live demo (GitHub Pages):** https://foisalislambd.github.io/NodeBrowser/
+
 Full guide: **[`docs/PUBLISHING.md`](./docs/PUBLISHING.md)**.  
 Release process: [`docs/RELEASING.md`](./docs/RELEASING.md).
 

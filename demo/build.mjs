@@ -6,13 +6,25 @@ import {
   readdirSync,
   statSync,
   existsSync,
+  rmSync,
 } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
-const out = join(root, 'dist');
-mkdirSync(out, { recursive: true });
+const demoRoot = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(demoRoot, '..');
+const out = join(demoRoot, 'dist');
+
+/** Normalize to `/` or `/RepoName/` */
+function normalizeBase(raw) {
+  if (!raw || raw === '/') return '/';
+  let b = String(raw).trim();
+  if (!b.startsWith('/')) b = `/${b}`;
+  if (!b.endsWith('/')) b += '/';
+  return b;
+}
+
+const BASE_PATH = normalizeBase(process.env.BASE_PATH || '/');
 
 const SKIP = new Set(['node_modules', '.git', 'dist', '.next', '.turbo', 'coverage']);
 
@@ -43,8 +55,14 @@ function copyFiltered(src, dest) {
   }
 }
 
+function copyDir(src, dest) {
+  if (!existsSync(src)) throw new Error(`Missing required path: ${src}`);
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(src, dest, { recursive: true });
+}
+
 function buildTemplates() {
-  const templatesRoot = join(root, 'templates');
+  const templatesRoot = join(demoRoot, 'templates');
   const outTemplates = join(out, 'templates');
   mkdirSync(outTemplates, { recursive: true });
   for (const name of readdirSync(templatesRoot)) {
@@ -57,14 +75,53 @@ function buildTemplates() {
   }
 }
 
+function buildIndexHtml() {
+  let html = readFileSync(join(demoRoot, 'index.html'), 'utf8');
+  const baseTag = BASE_PATH === '/' ? '' : `    <base href="${BASE_PATH}" />\n`;
+  if (baseTag) {
+    html = html.replace('<head>\n', `<head>\n${baseTag}`);
+    if (!html.includes('<base ')) {
+      html = html.replace('<head>', `<head>\n${baseTag.trimEnd()}`);
+    }
+  }
+  // Relative import map so <base href> / Pages project sites resolve correctly
+  html = html.replace(
+    /"esbuild-wasm":\s*"[^"]+"/,
+    '"esbuild-wasm": "./node_modules/esbuild-wasm/esm/browser.js"',
+  );
+  writeFileSync(join(out, 'index.html'), html);
+}
+
 async function main() {
-  writeFileSync(join(out, 'main.js'), readFileSync(join(root, 'src/main.vanilla.js'), 'utf8'));
-  writeFileSync(join(out, 'apps.js'), readFileSync(join(root, 'src/apps.js'), 'utf8'));
-  cpSync(join(root, 'index.html'), join(out, 'index.html'));
-  cpSync(join(root, 'styles.css'), join(out, 'styles.css'));
-  cpSync(join(root, 'sw.js'), join(out, 'sw.js'));
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+
+  writeFileSync(join(out, 'main.js'), readFileSync(join(demoRoot, 'src/main.vanilla.js'), 'utf8'));
+  writeFileSync(join(out, 'apps.js'), readFileSync(join(demoRoot, 'src/apps.js'), 'utf8'));
+  writeFileSync(join(out, 'sw.js'), readFileSync(join(demoRoot, 'sw.js'), 'utf8'));
+  cpSync(join(demoRoot, 'styles.css'), join(out, 'styles.css'));
+  writeFileSync(join(out, '.nojekyll'), '');
+  writeFileSync(
+    join(out, 'base.json'),
+    JSON.stringify({ basePath: BASE_PATH, builtAt: new Date().toISOString() }, null, 2),
+  );
+  buildIndexHtml();
   buildTemplates();
-  console.log('demo →', out);
+
+  // Self-contained API + WASM (no monorepo server required)
+  const apiPkg = join(repoRoot, 'packages/api');
+  copyDir(join(apiPkg, 'dist'), join(out, 'packages/api/dist'));
+  copyDir(join(apiPkg, 'wasm'), join(out, 'packages/api/wasm'));
+
+  // esbuild-wasm for in-browser bundle
+  const esbuildSrc = [
+    join(repoRoot, 'node_modules/esbuild-wasm'),
+    join(demoRoot, 'node_modules/esbuild-wasm'),
+  ].find((p) => existsSync(p));
+  if (!esbuildSrc) throw new Error('esbuild-wasm not found — run npm install at repo root');
+  copyDir(esbuildSrc, join(out, 'node_modules/esbuild-wasm'));
+
+  console.log(`demo → ${out} (BASE_PATH=${BASE_PATH})`);
 }
 
 main().catch((e) => {

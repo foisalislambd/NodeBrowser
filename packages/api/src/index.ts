@@ -42,7 +42,12 @@ export class NodeBrowser {
     mod.registerBuiltins(k);
     const previewBase =
       options?.previewBase ??
-      (typeof location !== 'undefined' ? `${location.origin}/__bn_preview` : 'http://localhost/__bn_preview');
+      (typeof location !== 'undefined'
+        ? new URL(
+            '__bn_preview',
+            typeof document !== 'undefined' && document.baseURI ? document.baseURI : location.href,
+          ).href.replace(/\/$/, '')
+        : 'http://localhost/__bn_preview');
     return new NodeBrowser(mod, k, previewBase);
   }
 

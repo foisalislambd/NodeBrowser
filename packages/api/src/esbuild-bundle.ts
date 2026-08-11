@@ -31,9 +31,11 @@ async function ensureEsbuild(wasmURL?: string): Promise<typeof import('esbuild-w
     const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
     if (isBrowser) {
       const defaultWasm =
-        typeof location !== 'undefined'
-          ? `${location.origin}/node_modules/esbuild-wasm/esbuild.wasm`
-          : 'https://unpkg.com/esbuild-wasm@0.25.0/esbuild.wasm';
+        typeof document !== 'undefined'
+          ? new URL('node_modules/esbuild-wasm/esbuild.wasm', document.baseURI).href
+          : typeof location !== 'undefined'
+            ? `${location.origin}/node_modules/esbuild-wasm/esbuild.wasm`
+            : 'https://unpkg.com/esbuild-wasm@0.25.0/esbuild.wasm';
       await esbuildApi.initialize({
         wasmURL: wasmURL || defaultWasm,
         worker: false,

@@ -1,4 +1,4 @@
-/* Service Worker — routes /__bn_preview/:port/* into the NodeBrowser page via MessageChannel */
+/* Service Worker — routes {scope}__bn_preview/:port/* into the NodeBrowser page */
 self.addEventListener('install', (e) => {
   e.waitUntil(self.skipWaiting());
 });
@@ -7,20 +7,33 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(self.clients.claim());
 });
 
+function previewPrefix() {
+  try {
+    const scopePath = new URL(self.registration.scope).pathname;
+    const base = scopePath.endsWith('/') ? scopePath : `${scopePath}/`;
+    return `${base}__bn_preview`;
+  } catch {
+    return '/__bn_preview';
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  const m = url.pathname.match(/^\/__bn_preview\/(\d+)(\/.*)?$/);
+  const prefix = previewPrefix();
+  if (!url.pathname.startsWith(prefix + '/') && url.pathname !== prefix) return;
+
+  const rest = url.pathname.slice(prefix.length);
+  const m = rest.match(/^\/(\d+)(\/.*)?$/);
   if (!m) return;
 
   event.respondWith(
     (async () => {
       const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      // Prefer the controlling app page, never the preview iframe itself
       const client =
         clients.find((c) => {
           try {
             const u = new URL(c.url);
-            return c.frameType === 'top-level' && !u.pathname.startsWith('/__bn_preview');
+            return c.frameType === 'top-level' && !u.pathname.includes('/__bn_preview');
           } catch {
             return c.frameType === 'top-level';
           }
