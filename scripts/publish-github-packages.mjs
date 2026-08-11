@@ -58,13 +58,23 @@ try {
   console.log(`Publishing ${ghName}@${version} → https://npm.pkg.github.com`);
   execSync('npm publish --access public --registry https://npm.pkg.github.com', {
     cwd: join(root, 'packages/api'),
-    stdio: 'inherit',
+    stdio: 'pipe',
     env: {
       ...process.env,
       NPM_CONFIG_USERCONFIG: npmrc,
       NODE_AUTH_TOKEN: token,
     },
   });
+  console.log('GitHub Packages publish OK');
+} catch (err) {
+  const msg = `${err.stderr?.toString?.() || ''}\n${err.stdout?.toString?.() || ''}\n${err.message || ''}`;
+  if (/EPUBLISHCONFLICT|cannot publish over|already exists|409/i.test(msg)) {
+    console.log(`GitHub Packages already has ${ghName}@${version} — skip`);
+  } else {
+    if (err.stdout) process.stdout.write(err.stdout);
+    if (err.stderr) process.stderr.write(err.stderr);
+    throw err;
+  }
 } finally {
   writeFileSync(apiPkgPath, original);
   rmSync(npmrcDir, { recursive: true, force: true });

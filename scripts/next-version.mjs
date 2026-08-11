@@ -3,6 +3,10 @@
  * Version scheme: 1.0.0 → 1.0.1 → … → 1.0.9 → 1.1.0 → … → 1.9.9 → 2.0.0
  * Patch and minor each roll at 9.
  *
+ * Source of truth: npm latest + git tags.
+ * If npm already has X.Y.Z but tag vX.Y.Z is missing, return X.Y.Z again
+ * (finish an incomplete release) instead of bumping.
+ *
  * Usage:
  *   node scripts/next-version.mjs              # print next version
  *   node scripts/next-version.mjs --set        # write packages/api + root package.json
@@ -17,6 +21,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = '@foisal/nodebrowser';
 const apiPkgPath = join(root, 'packages/api/package.json');
 const rootPkgPath = join(root, 'package.json');
+const V1 = { major: 1, minor: 0, patch: 0 };
 
 function parse(v) {
   const m = String(v).replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)$/);
@@ -46,13 +51,24 @@ function latestFromNpm() {
   return parse(tryCmd(`npm view ${PKG} version --registry https://registry.npmjs.org`));
 }
 
-function latestFromTags() {
-  const out = tryCmd('git tag -l "v*" --sort=-v:refname');
+function tagSet() {
+  const out = tryCmd('git tag -l "v*"');
+  const set = new Set();
   for (const line of out.split('\n')) {
     const p = parse(line.trim());
-    if (p) return p;
+    if (p) set.add(format(p));
   }
-  return null;
+  return set;
+}
+
+function latestFromTags(tags) {
+  let best = null;
+  for (const t of tags) {
+    const p = parse(t);
+    if (!p) continue;
+    if (!best || cmp(p, best) > 0) best = p;
+  }
+  return best;
 }
 
 function latestFromPackage() {
@@ -63,10 +79,6 @@ function cmp(a, b) {
   if (a.major !== b.major) return a.major - b.major;
   if (a.minor !== b.minor) return a.minor - b.minor;
   return a.patch - b.patch;
-}
-
-function maxVer(...list) {
-  return list.filter(Boolean).sort(cmp).at(-1) ?? null;
 }
 
 const args = process.argv.slice(2);
@@ -83,14 +95,24 @@ if (currentArg) {
   }
   next = bump(cur);
 } else {
-  const released = maxVer(latestFromNpm(), latestFromTags());
-  if (!released) {
-    next = latestFromPackage() || { major: 1, minor: 0, patch: 0 };
-  } else if (cmp(released, { major: 1, minor: 0, patch: 0 }) < 0) {
-    // Pre-1.0 publishes (e.g. 0.0.1 claim) → first public line is 1.0.0
-    next = { major: 1, minor: 0, patch: 0 };
+  const npmV = latestFromNpm();
+  const tags = tagSet();
+  const tagV = latestFromTags(tags);
+
+  if (npmV && cmp(npmV, V1) >= 0) {
+    const npmStr = format(npmV);
+    // Incomplete: on npm but no matching tag yet → finish that version
+    if (!tags.has(npmStr)) {
+      next = npmV;
+    } else {
+      next = bump(npmV);
+    }
+  } else if (tagV && cmp(tagV, V1) >= 0) {
+    // Tag exists but npm behind/missing — retry that tagged version on npm
+    next = tagV;
   } else {
-    next = bump(released);
+    // Pre-1.0 only (e.g. 0.0.1 claim) or nothing published → start public line at 1.0.0
+    next = V1;
   }
 }
 

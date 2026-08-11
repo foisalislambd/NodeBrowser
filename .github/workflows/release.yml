@@ -1,6 +1,6 @@
 name: Release
 
-# Push to main → build/test → npm (Trusted Publisher / OIDC) → GitHub Packages → GitHub Release.
+# Push to main → build/test → npm (OIDC) → GitHub Packages → GitHub Release → version commit.
 # Version: 1.0.0 → 1.0.1 → … → 1.0.9 → 1.1.0 (patch/minor roll at 9).
 # Skip with commit message containing [skip release].
 
@@ -95,7 +95,17 @@ jobs:
         run: npm run build:api
 
       - name: Publish to npm (Trusted Publisher / OIDC)
-        run: npm publish -w "$NPM_PACKAGE" --access public
+        id: npm_publish
+        run: |
+          set -euo pipefail
+          VER="${{ steps.ver.outputs.version }}"
+          if npm view "${NPM_PACKAGE}@${VER}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "npm already has ${NPM_PACKAGE}@${VER} — skip publish"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            npm publish -w "$NPM_PACKAGE" --access public
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
         env:
           NPM_CONFIG_PROVENANCE: true
 
@@ -106,28 +116,16 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: node scripts/publish-github-packages.mjs
 
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/api/package.json package.json
-          if git diff --staged --quiet; then
-            echo "No version file changes to commit"
-          else
-            git commit -m "chore(release): v${{ steps.ver.outputs.version }} [skip release]"
-            git push
-          fi
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
           OWNER: ${{ github.repository_owner }}
         run: |
+          set -euo pipefail
           TAG="v${VERSION}"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
-          NOTES="$(cat <<EOF
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
           ## \`@foisal/nodebrowser@${VERSION}\`
 
           Automated release from \`main\`.
@@ -145,7 +143,34 @@ jobs:
           \`\`\`
 
           (GitHub Packages scope must match the repo owner: \`@${OWNER}/nodebrowser\`.)
-
           EOF
-          )"
-          gh release create "$TAG" --title "$TAG" --notes "$NOTES"
+          # Drop the fixed indent that YAML run blocks introduce
+          sed -i 's/^          //' "$NOTES_FILE"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG} already exists — skip"
+          else
+            if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+              git tag -a "$TAG" -m "Release $TAG"
+            fi
+            if ! git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+              git push origin "$TAG"
+            else
+              echo "Tag ${TAG} already on origin"
+            fi
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+          fi
+          rm -f "$NOTES_FILE"
+
+      - name: Commit version bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/api/package.json package.json
+          if git diff --staged --quiet; then
+            echo "No version file changes to commit"
+          else
+            git commit -m "chore(release): v${{ steps.ver.outputs.version }} [skip release]"
+            git push
+          fi

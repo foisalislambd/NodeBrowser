@@ -40,10 +40,11 @@ Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml)
 On every push to `main` (unless the commit message contains `[skip release]`):
 
 1. Build + test (API, demo, native)
-2. Bump version (`1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`; patch/minor roll at **9**)
-3. Publish to **npm** via **Trusted Publisher (OIDC)** — no long-lived `NPM_TOKEN`
-4. Publish to **GitHub Packages**
-5. Commit version bump (`[skip release]`), tag `vX.Y.Z`, create **GitHub Release**
+2. Resolve next version (`1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`; patch/minor roll at **9**)
+3. Publish to **npm** via **Trusted Publisher (OIDC)** — skip if that version already exists
+4. Publish to **GitHub Packages** — skip if that version already exists
+5. Tag `vX.Y.Z` + **GitHub Release** (only after the publish steps succeed)
+6. Commit version bump (`[skip release]`)
 
 ### One-time npm Trusted Publisher setup
 

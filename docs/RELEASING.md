@@ -10,12 +10,13 @@ Patch and minor each roll over at **9**.
 
 ## What happens on `main`
 
-1. CI build + tests  
+1. Build + tests  
 2. Publish **`@foisal/nodebrowser`** to npm (Trusted Publisher / OIDC + provenance)  
 3. Publish **`@<owner>/nodebrowser`** to GitHub Packages  
-4. Tag `vX.Y.Z` + GitHub Release  
+4. Tag `vX.Y.Z` + **GitHub Release** (only after both publishes succeed)  
+5. Commit version bump (`[skip release]`)
 
-Skip a release: put `[skip release]` in the commit message.
+Retries are safe: if npm already has the version, publish is skipped and the workflow finishes GitHub Packages / Release if they were missing.
 
 ## Changelog
 
