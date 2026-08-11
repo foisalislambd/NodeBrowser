@@ -109,6 +109,32 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md). Please read the [Code of Conduct](./
 
 Bug reports and ideas: use [GitHub Issues](../../issues). Security: [`SECURITY.md`](./SECURITY.md).
 
+## npm package name & publishing
+
+| Package | Name on npm | Notes |
+|---------|-------------|--------|
+| Host API | **`@browsernode/api`** | Publish this (scoped, public) |
+| Monorepo root | `browsernode` | `"private": true` — do **not** publish |
+| Demo | `demo` | Local only — do **not** publish |
+
+```bash
+# one-time: npm org + login
+npm login
+
+# build & publish the API package
+npm run build:api
+npm publish -w @browsernode/api --access public
+```
+
+Users install with:
+
+```bash
+npm install @browsernode/api
+```
+
+Full guide (naming, versions, checklist, CI tokens, mistakes): **[`docs/PUBLISHING.md`](./docs/PUBLISHING.md)**.  
+Release tags / changelog: [`docs/RELEASING.md`](./docs/RELEASING.md).
+
 ## Design
 
 Shipping full Node+V8+libuv to WASM is a multi-year effort. BrowserNode embeds **QuickJS** (and a JS fallback) behind a C++/host kernel and grows Node compatibility incrementally — aimed at real `npm` / tooling workflows over time.

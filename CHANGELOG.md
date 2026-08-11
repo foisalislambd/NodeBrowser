@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Master future roadmap in `PLAN.md` (phases 13–42): WASM parity, OPFS, ESM, npm 2.0, Vite/Next in-tab, productization
+- Public `ROADMAP.md` summary aligned with PLAN
 - In-browser VFS file manager in the demo (browse, save, new file/dir, delete)
 - Host `bn.fs.exists`, `bn.fs.stat`, `bn.fs.rm({ recursive })`
 - Project-cwd npm install + save-then-run UX in the demo
