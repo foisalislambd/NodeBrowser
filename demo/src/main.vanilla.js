@@ -62,9 +62,15 @@ editor.value = DEFAULT;
 let bn = null;
 let httpProc = null;
 
-async function showPreview(port, url) {
+async function showPreview(port, url, opts = {}) {
   $('preview-url').textContent = url || '';
-  // Always paint via handleHttp → srcdoc so preview works even if SW/iframe fetch fails
+  if (opts.preferUrl && url) {
+    $('preview').removeAttribute('srcdoc');
+    $('preview').src = url;
+    appendTerm(`[preview] iframe → ${url}\n`);
+    return;
+  }
+  // Paint via handleHttp → srcdoc so preview works even if SW/iframe fetch fails
   if (bn && port != null) {
     try {
       const res = await bn.handleHttp({
@@ -195,10 +201,58 @@ async function bundleDemo() {
   }
 }
 
+async function loadApps() {
+  return import('./apps.js');
+}
+
+async function viteLoad() {
+  if (!bn) return;
+  const { loadVite } = await loadApps();
+  $('term').textContent = '';
+  const { files } = await loadVite(bn, appendTerm);
+  try {
+    editor.value = await bn.fs.readFile('/apps/vite/src/App.jsx', 'utf8');
+  } catch {
+    editor.value = files.slice(0, 12).join('\n');
+  }
+}
+
+async function vitePreview() {
+  if (!bn) return;
+  const { viteStaticPreview } = await loadApps();
+  $('term').textContent = '';
+  const { url, port } = await viteStaticPreview(bn, appendTerm);
+  await showPreview(port, url, { preferUrl: true });
+}
+
+async function nextLoad() {
+  if (!bn) return;
+  const { loadNext } = await loadApps();
+  $('term').textContent = '';
+  const { files } = await loadNext(bn, appendTerm);
+  try {
+    editor.value = await bn.fs.readFile('/apps/next/app/page.js', 'utf8');
+  } catch {
+    editor.value = files.slice(0, 12).join('\n');
+  }
+}
+
+async function nextPreview() {
+  if (!bn) return;
+  const { nextStaticPreview } = await loadApps();
+  $('term').textContent = '';
+  const { url, port } = await nextStaticPreview(bn, appendTerm);
+  await showPreview(port, url, { preferUrl: true });
+}
+
 $('btn-run').addEventListener('click', () => runNode().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-install').addEventListener('click', () => installMs().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-http').addEventListener('click', () => httpDemo().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-bundle')?.addEventListener('click', () => bundleDemo().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-vite-load')?.addEventListener('click', () => viteLoad().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-vite-preview')?.addEventListener('click', () => vitePreview().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-next-load')?.addEventListener('click', () => nextLoad().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-next-preview')?.addEventListener('click', () => nextPreview().catch((e) => appendTerm(String(e) + '\n')));
 
 async function registerSw() {
   if (!('serviceWorker' in navigator)) return;

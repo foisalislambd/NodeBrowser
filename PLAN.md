@@ -28,7 +28,7 @@
 | 8 Vite path | ✅ | **esbuild-wasm transform demo** |
 | 9 Vite Node APIs | ✅ | **crypto / nextTick / perf_hooks** |
 | 10 Next.js APIs | ✅ | **createRequire / async_hooks stubs / broader fs** |
-| 11 Next.js app | 🔜 | Run a tiny Next subset later |
+| 11 Vite/Next demos | ✅ | Real `create-vite` + `create-next-app` under `demo/templates/` |
 
 ## Phase 9 — Vite Node API enablers (detail)
 
@@ -64,9 +64,16 @@ Done: crypto, nextTick, perf_hooks.
 - [x] esbuild-wasm can bundle a tiny entry to `/dist`
 - [x] `crypto.randomBytes` / `process.nextTick` / `perf_hooks.performance.now`
 
+## Phase 11 — Real Vite + Next templates
+
+- `demo/templates/vite` — official `create-vite` React app (`npm run dev:vite` / `build:vite`)
+- `demo/templates/next` — official `create-next-app` App Router (`npm run dev:next` / `build:next` / `start:next`)
+- Demo UI mounts template sources into VFS (`/apps/vite`, `/apps/next`) for inspection
+- Full Vite/Next CLIs still run on the host until BN can host them in-tab
+
 ## Non-goals (still)
 
 - Native `.node` addons
 - Full POSIX fork/threads
 - Raw TCP/UDP
-- Perfect Node 20 parity / full Next.js (later)
+- Perfect Node 20 parity / full Next.js in-WASM (later)

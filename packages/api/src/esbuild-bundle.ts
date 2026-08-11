@@ -7,6 +7,11 @@ export type BundleOptions = {
   entry: string;
   outfile?: string;
   format?: 'esm' | 'cjs' | 'iife';
+  /** esbuild jsx mode — default transform for Vite/Next demos */
+  jsx?: 'transform' | 'preserve' | 'automatic';
+  jsxFactory?: string;
+  jsxFragment?: string;
+  globalName?: string;
 };
 
 type FsLike = {
@@ -56,8 +61,12 @@ export async function bundleWithEsbuild(
     bundle: true,
     write: false,
     format: opts.format || 'iife',
+    globalName: opts.globalName,
     platform: 'browser',
     logLevel: 'silent',
+    jsx: opts.jsx || 'transform',
+    jsxFactory: opts.jsxFactory || 'h',
+    jsxFragment: opts.jsxFragment || 'Fragment',
     plugins: [
       {
         name: 'browsernode-vfs',

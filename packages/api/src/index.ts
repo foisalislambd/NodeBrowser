@@ -178,36 +178,56 @@ export class BrowserNode {
     }
   }
 
-  /** Bundle a VFS entry with esbuild-wasm into /dist (Vite-ready path). */
-  async bundle(opts: BundleOptions): Promise<{ outfile: string; code: string }> {
-    const result = await bundleWithEsbuild(this.fs, opts);
-    // Serve /dist statically on a virtual port for preview
-    const distPort = 4173;
-    this.#http.listen(distPort, async (req, res) => {
+  /**
+   * Serve a VFS directory on a virtual HTTP port (Vite/Next preview & static hosting).
+   * Returns the preview URL.
+   */
+  serveStatic(port: number, rootDir: string, opts?: { index?: string }): string {
+    const root = rootDir.replace(/\/+$/, '') || '/';
+    const indexName = opts?.index || 'index.html';
+    this.#http.listen(port, async (req, res) => {
       const urlPath = (req.url || '/').split('?')[0] || '/';
-      const filePath =
-        urlPath === '/' || urlPath === ''
-          ? '/dist/index.html'
-          : urlPath.startsWith('/dist')
-            ? urlPath
-            : `/dist${urlPath}`;
+      let rel = decodeURIComponent(urlPath);
+      if (rel === '/' || rel === '') rel = '/' + indexName;
+      const filePath = (root + (rel.startsWith('/') ? rel : '/' + rel)).replace(/\/+/g, '/');
       try {
         const body = await this.fs.readFile(filePath, 'utf8');
-        const type = filePath.endsWith('.js')
-          ? 'application/javascript'
-          : filePath.endsWith('.css')
-            ? 'text/css'
-            : 'text/html; charset=utf-8';
-        res.writeHead(200, { 'Content-Type': type });
+        res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
         res.end(body);
       } catch {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end(`Not found: ${filePath}`);
+        // SPA fallback → index.html
+        try {
+          const idx = `${root}/${indexName}`.replace(/\/+/g, '/');
+          const body = await this.fs.readFile(idx, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(body);
+        } catch {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end(`Not found: ${filePath}`);
+        }
       }
     });
-    const url = `${this.#previewBase}/${distPort}/`;
-    this.#emit('server-ready', distPort, url);
-    return result;
+    const url = `${this.#previewBase}/${port}/`;
+    this.#emit('server-ready', port, url);
+    return url;
+  }
+
+  /** Stop serving a virtual port (dev server restart). */
+  closePort(port: number): void {
+    this.#http.close(port);
+  }
+
+  /** Bundle a VFS entry with esbuild-wasm; optionally serve `serveRoot` on `servePort`. */
+  async bundle(
+    opts: BundleOptions & { servePort?: number; serveRoot?: string },
+  ): Promise<{ outfile: string; code: string; url?: string }> {
+    const result = await bundleWithEsbuild(this.fs, opts);
+    let url: string | undefined;
+    if (opts.servePort != null) {
+      const root = opts.serveRoot || dirnamePath(opts.outfile || '/dist/bundle.js');
+      url = this.serveStatic(opts.servePort, root);
+    }
+    return { ...result, url };
   }
 
   on<K extends keyof BrowserNodeEventMap>(event: K, fn: Listener<K>): void {
@@ -271,6 +291,20 @@ export class BrowserNode {
     this.#mod.destroy(this.#k);
     this.#booted = false;
   }
+}
+
+function contentTypeFor(filePath: string): string {
+  if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) return 'application/javascript; charset=utf-8';
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.svg')) return 'image/svg+xml';
+  if (filePath.endsWith('.html') || filePath.endsWith('.htm')) return 'text/html; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+function dirnamePath(p: string): string {
+  const i = p.lastIndexOf('/');
+  return i <= 0 ? '/' : p.slice(0, i);
 }
 
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
