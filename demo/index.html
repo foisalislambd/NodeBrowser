@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BrowserNode</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-bg" aria-hidden="true"></div>
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <h1>BrowserNode</h1>
+      </div>
+      <p class="tag">Node.js inside the tab — no remote server</p>
+    </header>
+
+    <main class="stage">
+      <section class="pane editor-pane">
+        <div class="pane-head">
+          <span>/home/project/index.js</span>
+          <div class="actions">
+            <button type="button" id="btn-run" class="btn primary">Run node</button>
+            <button type="button" id="btn-install" class="btn">npm install ms</button>
+            <button type="button" id="btn-http" class="btn">HTTP demo</button>
+          </div>
+        </div>
+        <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
+      </section>
+
+      <section class="pane term-pane">
+        <div class="pane-head"><span>terminal</span><span id="status" class="status">booting…</span></div>
+        <pre id="term" class="term" aria-live="polite"></pre>
+      </section>
+
+      <section class="pane preview-pane">
+        <div class="pane-head"><span>preview</span><span id="preview-url" class="status"></span></div>
+        <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin"></iframe>
+      </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

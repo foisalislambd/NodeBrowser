@@ -1,0 +1,230 @@
+:root {
+  --paper: #e4ebf2;
+  --ink: #0b1f33;
+  --line: #9bb0c4;
+  --accent: #007a8a;
+  --accent-hot: #c45c26;
+  --pane: rgba(255, 255, 255, 0.72);
+  --term-bg: #0d1824;
+  --term-fg: #d6e6f2;
+  --ok: #1f7a4c;
+  --font-display: "Syne", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  background: var(--paper);
+}
+
+.grid-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(11, 31, 51, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 31, 51, 0.04) 1px, transparent 1px),
+    radial-gradient(1200px 600px at 10% -10%, rgba(0, 122, 138, 0.12), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(196, 92, 38, 0.1), transparent 55%);
+  background-size: 24px 24px, 24px 24px, auto, auto;
+  pointer-events: none;
+}
+
+.top,
+.stage {
+  position: relative;
+  z-index: 1;
+}
+
+.top {
+  padding: 1.75rem clamp(1rem, 4vw, 2.5rem) 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1rem 2rem;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mark {
+  width: 1.1rem;
+  height: 1.1rem;
+  background: var(--accent);
+  box-shadow: 4px 4px 0 var(--ink);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(2px, -2px);
+  }
+}
+
+.brand h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.tag {
+  margin: 0;
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
+  font-size: 0.95rem;
+}
+
+.stage {
+  padding: 1rem clamp(1rem, 4vw, 2.5rem) 2rem;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  grid-template-rows: minmax(320px, 1fr) minmax(220px, 0.7fr);
+  gap: 1rem;
+  min-height: calc(100vh - 7rem);
+}
+
+.editor-pane {
+  grid-row: 1 / 3;
+}
+
+.pane {
+  background: var(--pane);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  animation: rise 0.55s ease both;
+}
+
+.term-pane {
+  animation-delay: 0.08s;
+}
+
+.preview-pane {
+  animation-delay: 0.16s;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.78rem;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.btn {
+  font: inherit;
+  font-size: 0.75rem;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.btn:hover {
+  background: var(--ink);
+  color: var(--paper);
+  transform: translateY(-1px);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+#editor {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  resize: none;
+  padding: 1rem;
+  font: 500 0.9rem/1.5 var(--font-mono);
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+}
+
+.term {
+  margin: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 0.85rem 1rem;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font: 500 0.82rem/1.45 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.status {
+  color: var(--accent);
+}
+
+#preview {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+@media (max-width: 900px) {
+  .stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+  .editor-pane {
+    grid-row: auto;
+    min-height: 360px;
+  }
+  .term-pane,
+  .preview-pane {
+    min-height: 220px;
+  }
+}

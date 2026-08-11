@@ -1,0 +1,39 @@
+#pragma once
+
+#include "bn/process.hpp"
+
+#include <cstddef>
+#include <cstdint>
+
+// Stable C ABI for Emscripten / TypeScript host
+extern "C" {
+
+typedef struct BNKernel BNKernel;
+
+BNKernel* bn_kernel_create(void);
+void bn_kernel_destroy(BNKernel* k);
+
+// VFS
+int bn_vfs_mkdir(BNKernel* k, const char* path, int recursive);
+int bn_vfs_write_text(BNKernel* k, const char* path, const char* text);
+int bn_vfs_write_bytes(BNKernel* k, const char* path, const uint8_t* data, size_t len);
+char* bn_vfs_read_text(BNKernel* k, const char* path);  // malloc'd; free with bn_free
+int bn_vfs_unlink(BNKernel* k, const char* path);
+char* bn_vfs_readdir_json(BNKernel* k, const char* path);  // ["a","b"]
+int bn_vfs_exists(BNKernel* k, const char* path);
+int bn_vfs_stat_json(BNKernel* k, const char* path, char** out_json);
+
+// Process
+int bn_spawn(BNKernel* k, const char* cmd, const char* argv_json, const char* cwd);
+int bn_wait(BNKernel* k, int pid);           // -1 if running, else exit code
+int bn_kill(BNKernel* k, int pid);
+int bn_read_stdout(BNKernel* k, int pid, uint8_t* buf, int buflen);
+int bn_read_stderr(BNKernel* k, int pid, uint8_t* buf, int buflen);
+int bn_write_stdin(BNKernel* k, int pid, const uint8_t* buf, int buflen);
+
+// Register built-in commands (node). Call once after create.
+void bn_register_builtins(BNKernel* k);
+
+void bn_free(void* p);
+
+}  // extern "C"

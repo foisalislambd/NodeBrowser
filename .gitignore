@@ -1,0 +1,10 @@
+# Ignore build artifacts and tool downloads
+build-native/
+build-wasm/
+node_modules/
+packages/api/dist/
+packages/api/wasm/*.wasm
+demo/dist/
+.DS_Store
+*.o
+*.a

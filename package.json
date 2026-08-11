@@ -1,0 +1,22 @@
+{
+  "name": "browsernode",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WebContainers alternative — Node.js in the browser via C++/WASM",
+  "workspaces": [
+    "packages/api",
+    "demo"
+  ],
+  "scripts": {
+    "build:native": "cmake -S . -B build-native -G Ninja -DBN_WITH_QUICKJS=ON -DBN_BUILD_NATIVE_TESTS=ON && cmake --build build-native && ./build-native/kernel/bn_vfs_test && ./build-native/kernel/bn_node_test",
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "build:api": "npm run build -w @browsernode/api",
+    "build:demo": "npm run build -w demo",
+    "build": "npm run build:wasm && npm run build:api && npm run build:demo",
+    "dev": "node scripts/serve-demo.mjs",
+    "test": "npm run build:native"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
