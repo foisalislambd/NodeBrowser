@@ -49,6 +49,37 @@ editor.value = DEFAULT;
 let bn = null;
 let httpProc = null;
 
+async function showPreview(port, url) {
+  $('preview-url').textContent = url || '';
+  // Always paint via handleHttp → srcdoc so preview works even if SW/iframe fetch fails
+  if (bn && port != null) {
+    try {
+      const res = await bn.handleHttp({
+        id: 'preview-' + Math.random().toString(36).slice(2),
+        port,
+        method: 'GET',
+        path: '/',
+      });
+      if (res.status >= 200 && res.status < 400 && res.body) {
+        const type = (res.headers && res.headers['Content-Type']) || 'text/html';
+        if (String(type).includes('html') || res.body.trimStart().startsWith('<')) {
+          $('preview').removeAttribute('src');
+          $('preview').srcdoc = res.body;
+          appendTerm(`[preview] rendered port ${port} via HttpBridge (${res.status})\n`);
+          return;
+        }
+      }
+      appendTerm(`[preview] handleHttp ${res.status}: ${String(res.body).slice(0, 120)}\n`);
+    } catch (e) {
+      appendTerm(`[preview] handleHttp failed: ${e}\n`);
+    }
+  }
+  if (url) {
+    $('preview').removeAttribute('srcdoc');
+    $('preview').src = url;
+  }
+}
+
 async function boot() {
   $('status').textContent = 'booting…';
   const { BrowserNode } = await loadApi();
@@ -66,9 +97,8 @@ async function boot() {
     },
   });
   bn.on('server-ready', (port, url) => {
-    $('preview-url').textContent = url;
-    $('preview').src = url;
     appendTerm(`\n[server-ready] port=${port} url=${url}\n`);
+    showPreview(port, url).catch((e) => appendTerm(String(e) + '\n'));
   });
   bn.on('install-progress', (p) => {
     appendTerm(`[install] ${p.phase} ${p.name}${p.version ? '@' + p.version : ''}${p.message ? ' — ' + p.message : ''}\n`);
@@ -160,9 +190,26 @@ $('btn-bundle')?.addEventListener('click', () => bundleDemo().catch((e) => appen
 async function registerSw() {
   if (!('serviceWorker' in navigator)) return;
   try {
-    const reg = await navigator.serviceWorker.register('./sw.js');
+    const reg = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+    await reg.update().catch(() => {});
     await navigator.serviceWorker.ready;
-    appendTerm(`service worker ready (${reg.scope})\n`);
+    // Wait until this page is controlled (needed for preview iframe fetches)
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, 1500);
+        navigator.serviceWorker.addEventListener(
+          'controllerchange',
+          () => {
+            clearTimeout(t);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }
+    appendTerm(
+      `service worker ready (${reg.scope}) controller=${!!navigator.serviceWorker.controller}\n`,
+    );
   } catch (e) {
     appendTerm('SW register failed: ' + e + '\n');
   }

@@ -150,11 +150,18 @@ export class HttpBridge {
         headers: data.headers,
         body: data.body,
       });
+      const reply = { type: 'bn-http-response', ...out };
+      // Prefer MessageChannel port from SW (reliable). Fall back to source/controller.
+      const port = event.ports && event.ports[0];
+      if (port) {
+        port.postMessage(reply);
+        return;
+      }
       const src = event.source as MessageEventSource | null;
       if (src && typeof (src as ServiceWorker).postMessage === 'function') {
-        (src as ServiceWorker).postMessage({ type: 'bn-http-response', ...out });
+        (src as ServiceWorker).postMessage(reply);
       } else if (navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'bn-http-response', ...out });
+        navigator.serviceWorker.controller.postMessage(reply);
       }
     };
 
