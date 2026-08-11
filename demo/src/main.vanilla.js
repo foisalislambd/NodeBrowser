@@ -1,9 +1,15 @@
 const DEFAULT = `const fs = require('fs');
+const crypto = require('crypto');
+const { performance } = require('perf_hooks');
 
 console.log('cwd =', process.cwd());
 fs.writeFileSync('/home/project/hello.txt', 'BrowserNode VFS OK');
 console.log(fs.readFileSync('/home/project/hello.txt'));
 console.log('Buffer hex =', Buffer.from('hi').toString('hex'));
+console.log('randomBytes =', crypto.randomBytes(8).toString('hex'));
+console.log('sha256 =', crypto.createHash('sha256').update('browsernode').digest('hex').slice(0, 16) + '…');
+console.log('perf.now =', performance.now());
+process.nextTick(function() { console.log('nextTick ok'); });
 console.log('2 + 2 =', 2 + 2);
 `;
 

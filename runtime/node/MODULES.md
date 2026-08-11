@@ -6,7 +6,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 |--------|--------|-------|
 | `fs` / `fs/promises` | ok (subset) | sync + promises read/write/mkdir/readdir/unlink/stat |
 | `path` | partial | posix only |
-| `process` | partial | cwd, argv, env, exit |
+| `process` | partial | cwd, argv, env, exit, **nextTick** |
 | `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex |
 | `events` | ok | EventEmitter basics |
 | `stream` | stub | EE subclasses |
@@ -18,7 +18,8 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `url` | stub | |
 | `util` | stub | |
 | `os` | stub | |
-| `crypto` | todo | WebCrypto bridge |
+| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(sha256) |
+| `perf_hooks` | ok (subset) | performance.now + no-op PerformanceObserver |
 | `worker_threads` | todo | |
 | `vm` | todo | QuickJS realms |
 | `assert` | stub | |
@@ -32,8 +33,8 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 - [x] `esbuild-wasm` transform path (`BrowserNode.bundle`)
 - [x] `fs.promises` + Buffer
 - [ ] `http` upgrade / HMR websocket via SW
-- [ ] `crypto.randomFillSync`
-- [ ] `perf_hooks`
+- [x] `crypto.randomFillSync`
+- [x] `perf_hooks`
 
 ## Next.js checklist
 

@@ -1,5 +1,10 @@
 import type { KernelModule } from './kernel.js';
-import { BUFFER_POLYFILL, FS_PROMISES_HELPER } from './node-polyfills.js';
+import {
+  BUFFER_POLYFILL,
+  FS_PROMISES_HELPER,
+  CRYPTO_POLYFILL,
+  PERF_HOOKS_POLYFILL,
+} from './node-polyfills.js';
 
 export type HttpRegistrar = (
   port: number,
@@ -148,6 +153,8 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
       var __bn = globalThis.__bn;
       ${BUFFER_POLYFILL}
       ${FS_PROMISES_HELPER}
+      ${CRYPTO_POLYFILL}
+      ${PERF_HOOKS_POLYFILL}
       ${jsBootstrap}
       __bn_runMain(${JSON.stringify(scriptPath)});
     `;
@@ -164,6 +171,13 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
       g.TextDecoder = TextDecoder;
       g.atob = atob.bind(globalThis);
       g.btoa = btoa.bind(globalThis);
+      g.crypto = globalThis.crypto;
+      g.performance = globalThis.performance;
+      g.queueMicrotask = queueMicrotask.bind(globalThis);
+      g.Promise = Promise;
+      g.Uint8Array = Uint8Array;
+      g.Date = Date;
+      g.Math = Math;
       const codeResult = fn(g);
       const exitCode = typeof codeResult === 'number' ? codeResult : 0;
       return { out, err, code: keepAlive ? -1 : exitCode, running: keepAlive };
@@ -300,6 +314,20 @@ var process = {
   exit: function(code) { process.exitCode = code|0; throw {__bn_exit: code|0}; },
 };
 globalThis.process = process;
+var __bn_ticks = [];
+function __bn_drain_ticks() {
+  var guard = 0;
+  while (__bn_ticks.length && guard++ < 10000) {
+    var q = __bn_ticks.slice();
+    __bn_ticks.length = 0;
+    for (var i = 0; i < q.length; i++) q[i]();
+  }
+}
+process.nextTick = function(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  __bn_ticks.push(function() { fn.apply(null, args); });
+  if (typeof queueMicrotask === 'function') queueMicrotask(__bn_drain_ticks);
+};
 var moduleCache = Object.create(null);
 function dirname(p){ var i=p.lastIndexOf('/'); if(i<=0) return '/'; return p.slice(0,i); }
 function join(){ var parts=[]; for(var i=0;i<arguments.length;i++) parts.push(String(arguments[i])); return parts.join('/').replace(/\\/+/g,'/'); }
@@ -340,7 +368,7 @@ function resolveFrom(fromDir, request){
     if(dir==='/'||dir==='') break;
     var parent=dirname(dir); if(parent===dir) break; dir=parent;
   }
-  if(['fs','path','http','url','events','util','stream','os','module','buffer','assert','querystring'].indexOf(request)>=0) return 'node:'+request;
+  if(['fs','path','http','url','events','util','stream','os','module','buffer','assert','querystring','crypto','perf_hooks'].indexOf(request)>=0) return 'node:'+request;
   throw new Error("Cannot find module '"+request+"'");
 }
 function loadCore(name){
@@ -384,7 +412,9 @@ function loadCore(name){
   if(name==='os') return { platform:function(){return 'browsernode';}, homedir:function(){return '/home';}, EOL:'\\n', arch:function(){return 'wasm32';} };
   if(name==='assert'){ function assert(v,m){ if(!v) throw new Error(m||'assert'); } assert.strictEqual=function(a,b){ if(a!==b) throw new Error('neq'); }; return assert; }
   if(name==='querystring') return { parse:function(){return {};}, stringify:function(){return '';} };
-  if(name==='module') return { builtinModules:['fs','path','http','buffer'] };
+  if(name==='crypto') return __bn_load_crypto();
+  if(name==='perf_hooks') return __bn_load_perf_hooks();
+  if(name==='module') return { builtinModules:['fs','path','http','buffer','crypto','perf_hooks'] };
   throw new Error('Unknown core '+name);
 }
 function createRequire(fromFile){
@@ -413,6 +443,7 @@ function __bn_runMain(filename){
     var mod=makeModule(resolved); moduleCache[resolved]=mod;
     var fn=new Function('exports','require','module','__filename','__dirname','console','process','globalThis', 'var Buffer=globalThis.Buffer;\\n'+code);
     fn(mod.exports, createRequire(resolved), mod, resolved, dirname(resolved), globalThis.console, process, globalThis);
+    __bn_drain_ticks();
     return process.exitCode|0;
   } catch(e){
     if(e && typeof e==='object' && '__bn_exit' in e) return e.__bn_exit;
