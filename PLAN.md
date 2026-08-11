@@ -24,9 +24,80 @@ Details: `[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)` · Module matrix: `[ru
 
 ---
 
+## WebContainers parity — what they have vs what we must add
+
+StackBlitz **WebContainers** = WASM micro-OS + Node-in-tab + VFS + virtual network (Service Worker) + polished DX.  
+**NodeBrowser** already shares the same *shape* (C++→WASM kernel, VFS, spawn, SW preview, npm-into-VFS). Below is the honest gap list — **add these to become WC-class**.
+
+### Side-by-side
 
 
-## Completed phases (0–12)
+| Capability | WebContainers (typical) | NodeBrowser now | Add via |
+| ---------- | ----------------------- | --------------- | ------- |
+| WASM runtime / kernel | Mature micro-OS | C++→WASM kernel ✅ (early) | Harden kernel (phases 13 remainder, 16–18) |
+| In-memory VFS | ✅ | ✅ | — |
+| Persist across refresh | Strong (browser storage) | ❌ RAM only | **Phase 14 OPFS** |
+| `boot` / `mount` / `spawn` API | ✅ public API | ✅ `@foisal/nodebrowser` | Phase **41** compat shim |
+| Full terminal (xterm) | ✅ | Basic demo term | **Phase 32** |
+| `npm install` (real trees) | Fast, production | Works, limited | **Phases 23–24** |
+| `npm run` / `npx` / `.bin` | ✅ | Partial / missing | **Phases 23–24** |
+| Shell (`sh`, pipes, redirects) | ✅ enough for tooling | Minimal | **Phase 25** |
+| Node ESM (`import`) | ✅ | Mostly CJS | **Phase 20** |
+| Watch / HMR FS events | ✅ | ❌ | **Phase 15** |
+| Vite **in-tab** (dev + HMR) | ✅ | Host templates only | **Phases 27–28** |
+| Next.js **in-tab** (subset) | ✅ (common apps) | Host templates only | **Phases 29–30** |
+| Keep-alive HTTP servers | ✅ | JS path strong; WASM weak | **Phase 18** |
+| Multi-port preview UX | ✅ | Basic iframe | **Phase 34** |
+| COOP/COEP / SAB fast-path | Used where needed | Demo local only; Pages limited | **Phase 37** + Pages headers strategy |
+| Package install speed / cache | Highly optimized | Memory cache only | **Phases 23, 37** |
+| WebContainer API compat | Native | Different names | **Phase 41** `@foisal/nodebrowser-compat` |
+| Open source | API docs; runtime proprietary | ✅ MIT kernel+API | Keep honest docs |
+
+### Must-add backlog (WC-like product)
+
+Ordered for **maximum WC feel per week** — map to numbered phases already in this file:
+
+#### A. Feel like a real project disk
+- [ ] **OPFS persistence** (survive reload) → Phase **14**
+- [ ] Symlinks + binary polish + `fs.watch` → Phase **15**
+- [ ] Snapshot export/import (shareable project) → Phase **35**
+
+#### B. Feel like real Node + npm
+- [ ] ESM / `import` / `node:` fully → Phase **20**
+- [ ] `node_modules/.bin`, `npm run`, `npx` → Phases **23–24**
+- [ ] Shell subset for scripts → Phase **25**
+- [ ] Process groups / kill tree / better stdio → Phase **16**
+
+#### C. Feel like WebContainers networking
+- [ ] WASM HTTP keep-alive parity with JS HttpBridge → Phase **18**
+- [ ] Multi-port preview + network log → Phase **34**
+- [ ] Offline-friendly SW routing (already partial) → harden in **18/34**
+
+#### D. Run the apps WC users expect in-tab
+- [ ] Vite React template **in-tab** + HMR → Phases **27–28**
+- [ ] Next default app **in-tab** (subset) → Phases **29–30**
+- [ ] Express / simple API server demos → after **18**
+
+#### E. Feel like StackBlitz DX
+- [ ] xterm.js terminal + tabs → Phase **32**
+- [ ] File search, drag-drop, templates gallery → Phase **33**
+- [ ] `WebContainer`-shaped API shim → Phase **41**
+- [ ] Docs site + migration table → Phase **40**
+
+#### F. Beat them where open-source can win
+- [ ] Public C++/WASM kernel anyone can audit → keep shipping from CI
+- [ ] Benchmark suite vs WC (boot, install, vite) → Phase **37**
+- [ ] Agent/headless API for AI tools → Phase **36**
+- [ ] Honest MODULES.md gaps forever → non-negotiable
+
+### Explicit “not copying WC”
+Do **not** block on: proprietary WC internals, bit-identical Node, native `.node` addons, full Turbopack, multi-tenant hardened cloud sandbox (see Non-goals).
+
+---
+
+
+
+## Completed phases (0–13)
 
 
 | Phase              | Status | Deliverable                                                                |
@@ -417,17 +488,19 @@ Make NodeBrowser the best runtime for AI coding agents in-browser:
 
 ## Priority order (what to do next)
 
-If capacity is limited, execute in this order for **maximum power per week**:
+If capacity is limited, execute for **WebContainers-class power** (see parity section above):
 
-1. **14** OPFS persistence
-2. **15** watch + binary polish / symlinks
-3. **20** ESM
-4. **23–24** npm bin + `npm run` / npx
-5. **27–28** Vite in-tab
-6. **16** process 2.0 / shell (**25**) as needed by Vite
-7. **18** Network / WASM HTTP parity remainder
+1. **14** OPFS persistence *(WC: project survives refresh)*
+2. **18** WASM HTTP keep-alive parity *(WC: real servers in-tab)*
+3. **15** watch + symlinks / binary polish *(WC: HMR foundation)*
+4. **20** ESM
+5. **23–24** npm bin + `npm run` / npx
+6. **25** shell subset + **16** process 2.0 as needed
+7. **27–28** Vite in-tab
 8. **30** Next subset
-9. Product polish (**32–34**) + publish (**40**)
+9. **32–34** terminal / preview UX
+10. **41** WebContainer API compat shim + **40** docs
+11. **37** benchmarks vs WebContainers
 
 ---
 

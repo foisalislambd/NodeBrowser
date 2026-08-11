@@ -1,37 +1,34 @@
 # Roadmap
 
-Full detail lives in [`PLAN.md`](./PLAN.md). This is the short public view.
+Full detail lives in [`PLAN.md`](./PLAN.md) — including **WebContainers parity** (what they have vs what we must add).
 
 ## North star
 
 Open-source **WebContainers-class** runtime: real `npm` / Vite / Next-subset **in the browser tab**, no remote compute VM.
 
-## Done (0.1 → Phase 13)
+## Already like WebContainers (early)
 
-- Kernel + JS/WASM paths, VFS, spawn, HTTP preview, npm→VFS
-- Node subset (fs/http/crypto/…)
-- Demo file manager + Vite/Next **host** templates
-- Phase 13: `rename`, binary `readFile(...,'buffer')`, spawn `env`, `useWasm: 'auto'`, `npm run test:api`
+- C++ → **WASM** kernel + VFS + spawn  
+- Service Worker preview  
+- npm install into VFS  
+- Host API (`boot` / `mount` / `spawn`)  
+- Demo file manager  
 
-## Next (highest leverage)
+## Must add to match WC feel
 
-1. OPFS persistence (survive refresh)  
-2. File watch + symlink polish  
-3. ESM module system  
-4. npm bin / `npm run` / npx  
-5. **Vite fully in-tab** (HMR)  
-6. Process/shell 2.0 as needed  
-7. Next.js supported subset in-tab  
-8. WASM HTTP keep-alive full parity
+See the big checklist in [`PLAN.md` → WebContainers parity](./PLAN.md#webcontainers-parity--what-they-have-vs-what-we-must-add).
 
-## Then
+Highest leverage next:
 
-- Terminal (xterm) + stronger IDE UX  
-- Publish `@foisal/nodebrowser` + docs site
-- WebContainer API compat shim  
-- Performance benchmarks vs WebContainers  
-- Agent/automation headless API  
+1. **OPFS** — project survives refresh  
+2. **WASM HTTP keep-alive** — real servers like WC  
+3. **fs.watch / ESM / npm run+npx** — tooling foundation  
+4. **Vite in-tab + HMR**  
+5. **Next subset in-tab**  
+6. **xterm + multi-port preview**  
+7. **WebContainer API compat shim**  
+8. **Benchmarks vs WebContainers**
 
 ## Non-goals
 
-Native `.node` addons, raw internet TCP, perfect Node parity, full Turbopack/enterprise Next — see `PLAN.md`.
+Native `.node` addons, raw internet TCP, perfect Node parity, full Turbopack/enterprise Next, copying proprietary WC internals — see `PLAN.md`.
