@@ -3,6 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "description": "WebContainers alternative — Node.js in the browser via C++/WASM",
+  "license": "MIT",
+  "type": "module",
   "workspaces": [
     "packages/api",
     "demo"
@@ -20,9 +22,30 @@
     "dev:next": "npm run dev --prefix demo/templates/next",
     "build:next": "npm run build --prefix demo/templates/next",
     "start:next": "npm run start --prefix demo/templates/next",
-    "test": "npm run build:native"
+    "test": "npm run build:native",
+    "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md']) require('fs').accessSync(f)\""
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "packageManager": "npm@10.9.3",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_ORG/browsernode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_ORG/browsernode/issues"
+  },
+  "homepage": "https://github.com/YOUR_ORG/browsernode#readme",
+  "keywords": [
+    "webcontainers",
+    "nodejs",
+    "wasm",
+    "browser",
+    "vfs",
+    "quickjs",
+    "sandbox",
+    "esbuild"
+  ],
+  "author": "BrowserNode contributors"
 }

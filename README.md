@@ -2,80 +2,119 @@
 
 **WebContainers-style Node.js runtime in the browser — core in C/C++ → WebAssembly.**
 
-Run `node`, `fs`, CommonJS `require`, and a growing Node API surface entirely client-side. No remote compute VM.
+Run `node`, a virtual filesystem, CommonJS `require`, npm install into a VFS, and HTTP preview — entirely in the tab. No remote compute server.
+
+[![CI](https://github.com/browsernode/browsernode/actions/workflows/ci.yml/badge.svg)](https://github.com/browsernode/browsernode/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](./package.json)
+
+> **Note:** Replace the CI badge org/repo path with your GitHub URL after publishing.
 
 ```ts
 import { BrowserNode } from '@browsernode/api';
 
 const bn = await BrowserNode.boot();
 await bn.mount({
-  'index.js': { file: { contents: "console.log('hi from BrowserNode')" } },
+  home: {
+    directory: {
+      project: {
+        directory: {
+          'index.js': { file: { contents: "console.log('hi from BrowserNode')" } },
+        },
+      },
+    },
+  },
 });
-const proc = await bn.spawn('node', ['index.js']);
-proc.output.pipeTo(new WritableStream({ write: (c) => console.log(c) }));
+const proc = await bn.spawn('node', ['/home/project/index.js'], { cwd: '/home/project' });
+for await (const chunk of proc.output) console.log(chunk);
 ```
 
-## Status (v0.1)
+## Features
 
 | Capability | State |
 |------------|--------|
-| In-memory VFS (POSIX-ish) | ✅ |
-| Process spawn + stdio pipes | ✅ |
-| QuickJS engine (native tests) | ✅ |
-| Node builtins: `fs`, `path`, `http` listen, `events`, … | ✅ subset |
-| TypeScript host API | ✅ |
-| npm install (registry → VFS) | ✅ MVP |
-| WASM build (Emscripten) | ⏳ via `scripts/build-wasm.sh` |
-| Vite / Next.js | 🔜 (see `PLAN.md`) |
+| In-memory VFS | ✅ |
+| Process spawn + stdio | ✅ |
+| QuickJS (native) + JS fallback (browser) | ✅ |
+| Node builtins (`fs`, `path`, `http`, `crypto`, …) | ✅ subset |
+| npm install → VFS | ✅ |
+| Service Worker HTTP preview | ✅ |
+| esbuild-wasm bundle | ✅ |
+| Demo file manager (browse / save / run) | ✅ |
+| Vite / Next templates (host CLI) | ✅ demos |
+| Full Vite/Next CLI in-tab | 🔜 |
 
-Honest roadmap & architecture: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+Honest roadmap & architecture: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md).
 
 ## Quick start
 
 ```bash
-# Toolchain (user-local, no sudo): Node, CMake, Ninja, Emscripten
-bash scripts/setup-toolchain.sh
-source ~/tools/emsdk/emsdk_env.sh
-export PATH="$HOME/.local/bin:$HOME/tools/node/bin:$PATH"
+git clone --recurse-submodules https://github.com/YOUR_ORG/browsernode.git
+cd browsernode
 
-# Native kernel tests (g++ + QuickJS)
-npm run build:native
-
-# WASM kernel + API + demo
+# Optional: toolchain (Node, CMake, Ninja, Emscripten) — see scripts/setup-toolchain.sh
 npm install
-npm run build:wasm
 npm run build:api
-# copy demo assets
-node demo/build.mjs
-npm run dev   # http://localhost:5173  (COOP/COEP on)
+npm run build:demo
+npm run dev          # http://localhost:5173 (COOP/COEP enabled)
 ```
 
-Without WASM yet, the host API **falls back to an in-browser JS runtime** with the same Node bootstrap — useful for UI/dev.
+Without a WASM build, the API **falls back to an in-browser JS runtime** — enough for the demo and most host API work.
 
-## Layout
-
-```
-kernel/           C++ VFS + process table + C ABI + QuickJS node runner
-vendor/           CMake wrapper; QuickJS is a Git submodule → github.com/bellard/quickjs
-packages/api/     @browsernode/api (TypeScript)
-demo/             Playground UI
-scripts/          build-wasm, serve-demo, setup-toolchain, fetch-deps
-```
-
-Clone with submodules:
+### Native kernel tests
 
 ```bash
-git clone --recurse-submodules <repo-url>
-# or later:
+npm run build:native   # CMake + QuickJS tests
+npm test
+```
+
+### WASM (optional)
+
+```bash
+bash scripts/setup-toolchain.sh
+source ~/tools/emsdk/emsdk_env.sh
+npm run build:wasm
+npm run build:api
+```
+
+### Host Vite / Next template apps
+
+```bash
+npm run dev:vite
+npm run dev:next
+```
+
+Templates live under [`demo/templates/`](./demo/templates/).
+
+## Repository layout
+
+```
+kernel/           C++ VFS, processes, C ABI, QuickJS node runner
+vendor/           QuickJS (git submodule)
+packages/api/     @browsernode/api (TypeScript host API)
+demo/             Playground UI + templates
+docs/             Architecture & guides
+scripts/          build-wasm, serve-demo, setup-toolchain, …
+```
+
+```bash
 git submodule update --init --recursive
-# or:
+# or
 bash scripts/fetch-deps.sh
 ```
 
-## Design choice
+## Contributing
 
-Upstream Node+V8+libuv → WASM is a multi-year port. BrowserNode embeds **QuickJS** in a C++ kernel and implements Node APIs progressively — same strategy as other open in-browser runtimes, aimed at real `npm`/`vite` workflows over time.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). Please read the [Code of Conduct](./CODE_OF_CONDUCT.md).
+
+Bug reports and ideas: use [GitHub Issues](../../issues). Security: [`SECURITY.md`](./SECURITY.md).
+
+## Design
+
+Shipping full Node+V8+libuv to WASM is a multi-year effort. BrowserNode embeds **QuickJS** (and a JS fallback) behind a C++/host kernel and grows Node compatibility incrementally — aimed at real `npm` / tooling workflows over time.
 
 ## License
 
-MIT (QuickJS retains its own license — see `vendor/quickjs/LICENSE`).
+[MIT](./LICENSE) — © 2026 BrowserNode contributors.
+
+QuickJS retains its own license — see [`vendor/quickjs/LICENSE`](./vendor/quickjs/LICENSE).

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/YOUR_ORG/browsernode/security/advisories/new
+    about: Please report vulnerabilities privately (see SECURITY.md).
+  - name: Documentation / PLAN
+    url: https://github.com/YOUR_ORG/browsernode/blob/main/PLAN.md
+    about: Check the roadmap before requesting large features.

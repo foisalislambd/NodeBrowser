@@ -1,6 +1,8 @@
 {
   "name": "@browsernode/api",
   "version": "0.1.0",
+  "description": "BrowserNode host API — boot, mount, spawn, install, HTTP preview",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,5 +25,26 @@
   },
   "devDependencies": {
     "typescript": "^5.8.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_ORG/browsernode.git",
+    "directory": "packages/api"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_ORG/browsernode/issues"
+  },
+  "homepage": "https://github.com/YOUR_ORG/browsernode#readme",
+  "keywords": [
+    "browsernode",
+    "webcontainers",
+    "nodejs",
+    "wasm"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,0 +1,15 @@
+# BrowserNode — third-party notices
+
+This product includes software developed by third parties:
+
+## QuickJS
+
+Location: `vendor/quickjs/`
+License: see `vendor/quickjs/LICENSE` (Bellard / QuickJS license terms).
+Upstream: https://github.com/bellard/quickjs
+
+## Other npm dependencies
+
+Runtime and build dependencies are declared in `package.json` / workspace
+`package.json` files and resolved via the npm registry. Their licenses apply
+to those packages individually (MIT/Apache/etc. as published by each package).
