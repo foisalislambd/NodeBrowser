@@ -10,14 +10,15 @@
 export const VITE_ROOT = '/apps/vite';
 export const NEXT_ROOT = '/apps/next';
 
-async function fetchText(url) {
+async function fetchText(path) {
+  const url = new URL(path.replace(/^\//, ''), document.baseURI).href;
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`fetch ${url} → ${res.status}`);
   return res.text();
 }
 
 async function listTemplateFiles(name) {
-  const raw = await fetchText(`/templates/${name}.files.json`);
+  const raw = await fetchText(`templates/${name}.files.json`);
   return JSON.parse(raw);
 }
 
@@ -25,7 +26,7 @@ async function listTemplateFiles(name) {
 export async function mountTemplate(bn, name, mountRoot) {
   const files = await listTemplateFiles(name);
   for (const rel of files) {
-    const text = await fetchText(`/templates/${name}/${rel}`);
+    const text = await fetchText(`templates/${name}/${rel}`);
     const dest = `${mountRoot}/${rel}`.replace(/\/+/g, '/');
     const dir = dest.slice(0, dest.lastIndexOf('/'));
     if (dir && dir !== '/') await bn.fs.mkdir(dir, { recursive: true });
