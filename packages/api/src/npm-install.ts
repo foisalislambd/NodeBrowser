@@ -74,12 +74,14 @@ async function installOne(
     for (const [dep, range] of Object.entries(verMeta.dependencies)) {
       // Install nested under this package's node_modules for isolation (npm-like)
       await installOne(bn, `${dep}@${range}`, destRoot, depth + 1, seen, true, onProgress);
-      // Also hoist to project root if missing
-      const hoist = joinPath(cwd, 'node_modules', dep);
+      // Also hoist to project root if missing (readdir returns [] for missing dirs — check package.json)
+      const hoistPkg = joinPath(cwd, 'node_modules', dep, 'package.json');
       try {
-        await bn.fs.readdir(hoist);
+        await bn.fs.readFile(hoistPkg, 'utf8');
       } catch {
-        await installOne(bn, `${dep}@${range}`, cwd, depth + 1, seen, false, onProgress);
+        // Allow hoist even if nested install already marked this spec in `seen`
+        const hoistSeen = new Set<string>();
+        await installOne(bn, `${dep}@${range}`, cwd, depth + 1, hoistSeen, false, onProgress);
       }
     }
   }

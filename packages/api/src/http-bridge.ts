@@ -102,11 +102,28 @@ export class HttpBridge {
       };
 
       try {
-        handler(nodeReq, res);
-        // If handler never called end (sync empty), finish on microtask
-        queueMicrotask(() => {
-          if (!ended) finish();
-        });
+        const ret = handler(nodeReq, res) as unknown;
+        // Support async handlers (e.g. static file from VFS) without racing end()
+        if (ret != null && typeof (ret as Promise<void>).then === 'function') {
+          (ret as Promise<void>).then(
+            () => {
+              if (!ended) finish();
+            },
+            (e) => {
+              if (ended) return;
+              status = 500;
+              body = String(e);
+              headers['Content-Type'] = 'text/plain; charset=utf-8';
+              finish();
+            },
+          );
+        } else {
+          // Sync handler that forgot end() — finish on next macrotask (not microtask)
+          // so sync end() always wins; still allows 0-delay async scheduling.
+          setTimeout(() => {
+            if (!ended) finish();
+          }, 0);
+        }
       } catch (e) {
         status = 500;
         body = String(e);

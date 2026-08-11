@@ -16,6 +16,7 @@ export class BrowserNode {
   #booted = true;
   #http = new HttpBridge();
   #detachSw: (() => void) | null = null;
+  #portsByPid = new Map<number, Set<number>>();
 
   private constructor(mod: KernelModule, k: KernelHandle, previewBase: string) {
     this.#mod = mod;
@@ -50,7 +51,10 @@ export class BrowserNode {
         if (encoding === 'utf8' || encoding === undefined) return t;
         return t;
       },
-      readdir: async (path: string) => mod.readdir(k, path),
+      readdir: async (path: string) => {
+        if (path !== '/' && !mod.exists(k, path)) throw new Error(`ENOENT: ${path}`);
+        return mod.readdir(k, path);
+      },
       mkdir: async (path: string, opts?: { recursive?: boolean }) => {
         mod.mkdir(k, path, opts?.recursive ?? true);
       },
@@ -99,7 +103,28 @@ export class BrowserNode {
 
   async spawn(cmd: string, args: string[] = [], opts: SpawnOptions = {}): Promise<BrowserNodeProcess> {
     const cwd = opts.cwd ?? '/';
+
+    // Reserve pid tracking up-front — listen() fires synchronously inside spawn().
+    const pendingPorts = new Set<number>();
+    const notify = globalThis as unknown as {
+      __bn_on_server_ready?: (port: number) => void;
+      __bn_on_http_listen?: (port: number) => void;
+    };
+    // Hooks must be installed BEFORE spawn — listen() runs synchronously inside it.
+    notify.__bn_on_server_ready = (port: number) => {
+      pendingPorts.add(port | 0);
+      const url = `${this.#previewBase}/${port}/`;
+      this.#emit('server-ready', port, url);
+    };
+    notify.__bn_on_http_listen = (port: number) => {
+      pendingPorts.add(port | 0);
+      this.#ensureWasmHttpHandler(port);
+      const url = `${this.#previewBase}/${port}/`;
+      this.#emit('server-ready', port, url);
+    };
+
     const pid = this.#mod.spawn(this.#k, cmd, args, cwd);
+    if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
 
     let exitResolve!: (code: number) => void;
     const exit = new Promise<number>((r) => {
@@ -130,25 +155,15 @@ export class BrowserNode {
       },
     });
 
-    const notify = globalThis as unknown as {
-      __bn_on_server_ready?: (port: number) => void;
-      __bn_on_http_listen?: (port: number) => void;
-    };
-    notify.__bn_on_server_ready = (port: number) => {
-      const url = `${this.#previewBase}/${port}/`;
-      this.#emit('server-ready', port, url);
-    };
-    notify.__bn_on_http_listen = (port: number) => {
-      this.#ensureWasmHttpHandler(port);
-      const url = `${this.#previewBase}/${port}/`;
-      this.#emit('server-ready', port, url);
-    };
-
     return {
       pid,
       exit,
       output,
-      kill: () => this.#mod.kill(this.#k, pid),
+      kill: () => {
+        for (const port of this.#portsByPid.get(pid) ?? []) this.#http.close(port);
+        this.#portsByPid.delete(pid);
+        this.#mod.kill(this.#k, pid);
+      },
       write: (data: string) => this.#mod.writeStdin(this.#k, pid, data),
     };
   }
@@ -168,7 +183,7 @@ export class BrowserNode {
     const result = await bundleWithEsbuild(this.fs, opts);
     // Serve /dist statically on a virtual port for preview
     const distPort = 4173;
-    this.#http.listen(distPort, (req, res) => {
+    this.#http.listen(distPort, async (req, res) => {
       const urlPath = (req.url || '/').split('?')[0] || '/';
       const filePath =
         urlPath === '/' || urlPath === ''
@@ -176,21 +191,19 @@ export class BrowserNode {
           : urlPath.startsWith('/dist')
             ? urlPath
             : `/dist${urlPath}`;
-      void this.fs
-        .readFile(filePath, 'utf8')
-        .then((body) => {
-          const type = filePath.endsWith('.js')
-            ? 'application/javascript'
-            : filePath.endsWith('.css')
-              ? 'text/css'
-              : 'text/html; charset=utf-8';
-          res.writeHead(200, { 'Content-Type': type });
-          res.end(body);
-        })
-        .catch(() => {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          res.end(`Not found: ${filePath}`);
-        });
+      try {
+        const body = await this.fs.readFile(filePath, 'utf8');
+        const type = filePath.endsWith('.js')
+          ? 'application/javascript'
+          : filePath.endsWith('.css')
+            ? 'text/css'
+            : 'text/html; charset=utf-8';
+        res.writeHead(200, { 'Content-Type': type });
+        res.end(body);
+      } catch {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end(`Not found: ${filePath}`);
+      }
     });
     const url = `${this.#previewBase}/${distPort}/`;
     this.#emit('server-ready', distPort, url);
