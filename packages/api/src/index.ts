@@ -32,11 +32,11 @@ export class NodeBrowser {
     options?: {
       wasmUrl?: string;
       previewBase?: string;
-      /** `auto` (default) tries WASM then JS; `true` prefers WASM; `false` forces JS */
+      /** Prefer C++/WASM kernel (`true` default). `false` forces JS. `'auto'` tries WASM then JS quietly. */
       useWasm?: boolean | 'auto';
     } & LoadKernelOptions,
   ): Promise<NodeBrowser> {
-    const useWasm = options?.useWasm === undefined ? 'auto' : options.useWasm;
+    const useWasm = options?.useWasm === undefined ? true : options.useWasm;
     const mod = await loadKernel(options?.wasmUrl, { useWasm });
     const k = mod.create();
     mod.registerBuiltins(k);

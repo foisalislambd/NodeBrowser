@@ -14,7 +14,7 @@ Host templates yes (`npm run dev:vite` / `dev:next`). Full CLIs inside the tab a
 
 ## WASM vs JS fallback?
 
-`NodeBrowser.boot()` defaults to the JS runtime for reliability in the demo. Pass `{ useWasm: true }` when a WASM build is available.
+Primary kernel is **C++ → WASM**. `NodeBrowser.boot()` defaults to `{ useWasm: true }` (falls back to JS with a warning if WASM is missing). Pass `{ useWasm: false }` to force the JS runtime only.
 
 ## Is this a security sandbox?
 

@@ -258,9 +258,9 @@ export type UseWasmOption = boolean | 'auto';
 
 export type LoadKernelOptions = {
   /**
+   * - `true` (default) — prefer C++/WASM; fall back to JS with a warning
    * - `false` — JS runtime only
-   * - `true` — prefer WASM; fall back to JS with a warning
-   * - `'auto'` — try WASM, else JS (Phase 13 default)
+   * - `'auto'` — try WASM, else JS (no warning)
    */
   useWasm?: UseWasmOption;
 };
@@ -294,7 +294,7 @@ async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
 
       if (typeof window !== 'undefined' && window.createBrowserNodeKernel) {
         const mod = await window.createBrowserNodeKernel({
-          locateFile: (path: string) => url.replace(/browsernode_kernel\\.js.*/, path),
+          locateFile: (path: string) => url.replace(/browsernode_kernel\.js.*/, path),
         });
         const wrapped = wrap(mod);
         wrapped.runtime = 'wasm';
@@ -308,7 +308,7 @@ async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
 }
 
 export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Promise<KernelModule> {
-  const mode: UseWasmOption = opts?.useWasm === undefined ? 'auto' : opts.useWasm;
+  const mode: UseWasmOption = opts?.useWasm === undefined ? true : opts.useWasm;
 
   // JS kernel owns VFS in a closure — always create a fresh instance per boot
   // so concurrent NodeBrowser.boot() calls do not share filesystems.

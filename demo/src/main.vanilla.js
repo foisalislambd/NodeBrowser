@@ -60,13 +60,13 @@ function joinPath(dir, name) {
 }
 
 async function loadApi() {
-  const url = new URL('packages/api/dist/index.js', document.baseURI).href;
+  // Resolve from this module URL so GitHub Pages `/NodeBrowser/` works without relying on <base>
+  const url = new URL('packages/api/dist/index.js', import.meta.url).href;
   try {
     return await import(url);
   } catch (e) {
-    // Dev fallback when served without self-contained dist layout
     try {
-      return await import('/packages/api/dist/index.js');
+      return await import(new URL('packages/api/dist/index.js', document.baseURI).href);
     } catch {
       throw e;
     }
@@ -277,11 +277,15 @@ async function deleteSelected() {
 async function boot() {
   $('status').textContent = 'booting…';
   const { NodeBrowser } = await loadApi();
-  const previewPath = new URL('__bn_preview', document.baseURI).pathname.replace(/\/$/, '');
-  const previewBase = new URL('__bn_preview', document.baseURI).href.replace(/\/$/, '');
-  bn = await NodeBrowser.boot({ useWasm: false, previewBase });
-  appendTerm(`runtime=${bn.runtime}\n`);
+  const previewPath = new URL('__bn_preview', import.meta.url).pathname.replace(/\/$/, '');
+  const previewBase = new URL('__bn_preview', import.meta.url).href.replace(/\/$/, '');
+  // Primary path: C++ kernel via WASM (JS only if WASM fails to load)
+  bn = await NodeBrowser.boot({ useWasm: true, previewBase });
+  appendTerm(`runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}\n`);
   bn.attachServiceWorkerBridge(previewPath);
+  if (bn.runtime === 'wasm') {
+    appendTerm('Note: long-lived HTTP keep-alive is still strongest on JS; preview may use HttpBridge dispatch.\n');
+  }
   await bn.mount({
     home: {
       directory: {
@@ -303,7 +307,7 @@ async function boot() {
   setEditorPath(openPath);
   setCwd(projectCwd);
   await refreshTree();
-  $('status').textContent = 'ready';
+  $('status').textContent = bn.runtime === 'wasm' ? 'ready · wasm' : 'ready · js';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
 }
 

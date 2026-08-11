@@ -59,7 +59,7 @@ npm run build:demo
 npm run dev          # http://localhost:5173 (COOP/COEP enabled)
 ```
 
-Without a WASM build, the API **falls back to an in-browser JS runtime** — enough for the demo and most host API work.
+Without a WASM binary, the API **falls back to the in-browser JS runtime**. Default boot prefers the **C++/WASM** kernel (`useWasm: true`).
 
 ### Native kernel tests
 

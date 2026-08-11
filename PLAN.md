@@ -10,8 +10,8 @@
 
 | Layer | Technology | Role |
 |-------|------------|------|
-| Kernel | C++ → WASM (Emscripten) | VFS, processes, pipes, virtual ports |
-| JS Engine | QuickJS (native/WASM) + JS fallback | Execute JS/CJS like `node` |
+| Kernel | C++ → WASM (Emscripten) — **primary** | VFS, processes, pipes, virtual ports |
+| JS Engine | QuickJS (in WASM) + JS fallback | Execute JS/CJS like `node` |
 | Node Compat | Bootstrap + host polyfills | `fs`, `path`, `http`, `crypto`, … |
 | Package Mgr | TS host + npm registry | install into VFS (+ deps + cache) |
 | Networking | Service Worker ↔ HttpBridge | Preview `/__bn_preview/:port` |
@@ -56,7 +56,7 @@ Make WASM and JS kernels share one host surface; prefer auto-detect with JS fall
 - [x] Host `bn.fs`: `exists` / `stat` / recursive `rm` / **`rename`** (kernel or portable copy+rm)
 - [x] Binary files: JS VFS stores `Uint8Array`; `readFile(path, 'buffer')` → `Uint8Array`; `writeFile` accepts bytes
 - [x] `process.env` injected from `spawn(..., { env })` on **JS** runtime (WASM spawn env still ignored until C ABI grows)
-- [x] `NodeBrowser.boot({ useWasm: 'auto' | true | false })` — default **`auto`**; demo uses `false` for HttpBridge keep-alive certainty
+- [x] `NodeBrowser.boot({ useWasm: 'auto' | true | false })` — default **`true`** (C++/WASM primary; JS fallback)
 - [x] `bn.runtime` exposes `'js' | 'wasm'`
 - [x] Conformance suite: `packages/api/test/conformance.mjs` via `npm run test:api`
 - [ ] Full HTTP keep-alive feature-parity on WASM (still prefer JS for servers until Phase 18 / WASM HTTP hardening)

@@ -17,6 +17,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 ### Changed
 
 - Public package renamed to **`@foisal/nodebrowser`**
+- **Primary runtime is C++/WASM** — `boot({ useWasm: true })` is the default; JS is fallback only
 
 ## [1.0.0] — TBD
 

@@ -82,12 +82,18 @@ async function main() {
   assert(runOut.code === 0, 'main exit');
   assert(runOut.out.includes('m=7'), runOut.out);
 
-  // --- auto boot falls back to js in Node ---
+  // --- default boot prefers WASM; in Node without browser WASM loader → JS fallback ---
   resetKernelCache();
   const auto = await NodeBrowser.boot({ useWasm: 'auto' });
   assert(auto.runtime === 'js' || auto.runtime === 'wasm', 'auto runtime set');
   if (typeof document === 'undefined') {
     assert(auto.runtime === 'js', 'node auto → js');
+  }
+  resetKernelCache();
+  const preferred = await NodeBrowser.boot(); // default useWasm: true
+  assert(preferred.runtime === 'js' || preferred.runtime === 'wasm', 'default boot runtime');
+  if (typeof document === 'undefined') {
+    assert(preferred.runtime === 'js', 'node default(true) → js fallback');
   }
 
   // --- boot isolation: two JS boots must not share VFS ---
