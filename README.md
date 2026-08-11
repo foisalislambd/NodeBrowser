@@ -11,7 +11,7 @@ Run `node`, a virtual filesystem, CommonJS `require`, npm install into a VFS, an
 > **Note:** Replace the CI badge org/repo path with your GitHub URL after publishing.
 
 ```ts
-import { BrowserNode } from '@browsernode/api';
+import { BrowserNode } from 'browsernode-runtime';
 
 const bn = await BrowserNode.boot();
 await bn.mount({
@@ -91,7 +91,7 @@ Templates live under [`demo/templates/`](./demo/templates/).
 ```
 kernel/           C++ VFS, processes, C ABI, QuickJS node runner
 vendor/           QuickJS (git submodule)
-packages/api/     @browsernode/api (TypeScript host API)
+packages/api/     `browsernode-runtime` npm package (TypeScript host API)
 demo/             Playground UI + templates
 docs/             Architecture & guides
 scripts/          build-wasm, serve-demo, setup-toolchain, …
@@ -113,27 +113,28 @@ Bug reports and ideas: use [GitHub Issues](../../issues). Security: [`SECURITY.m
 
 | Package | Name on npm | Notes |
 |---------|-------------|--------|
-| Host API | **`@browsernode/api`** | Publish this (scoped, public) |
-| Monorepo root | `browsernode` | `"private": true` — do **not** publish |
+| Host API | **`browsernode-runtime`** | Publish this (unscoped) |
+| Monorepo root | `browsernode-monorepo` | `"private": true` — do **not** publish |
 | Demo | `demo` | Local only — do **not** publish |
 
-```bash
-# one-time: npm org + login
-npm login
+> Plain **`browsernode`** is already taken on npm by another project — we use `browsernode-runtime`.
 
-# build & publish the API package
+Future optional add-ons may use `@browsernode/...`. See [`docs/PUBLISHING.md`](./docs/PUBLISHING.md).
+
+```bash
+npm login
 npm run build:api
-npm publish -w @browsernode/api --access public
+npm publish -w browsernode-runtime
 ```
 
 Users install with:
 
 ```bash
-npm install @browsernode/api
+npm install browsernode-runtime
 ```
 
-Full guide (naming, versions, checklist, CI tokens, mistakes): **[`docs/PUBLISHING.md`](./docs/PUBLISHING.md)**.  
-Release tags / changelog: [`docs/RELEASING.md`](./docs/RELEASING.md).
+Full guide: **[`docs/PUBLISHING.md`](./docs/PUBLISHING.md)**.  
+Release tags: [`docs/RELEASING.md`](./docs/RELEASING.md).
 
 ## Design
 

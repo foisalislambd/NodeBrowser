@@ -1,7 +1,7 @@
 {
-  "name": "@browsernode/api",
+  "name": "browsernode-runtime",
   "version": "0.1.0",
-  "description": "BrowserNode host API — boot, mount, spawn, install, HTTP preview",
+  "description": "Node.js in the browser — WebContainers-style runtime (VFS, spawn, npm, HTTP preview)",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -43,8 +43,5 @@
   ],
   "engines": {
     "node": ">=20"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

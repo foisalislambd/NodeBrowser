@@ -9,7 +9,7 @@
 
 ## What we can help with
 
-- `@browsernode/api` usage (`boot` / `mount` / `spawn` / `install`)
+- `browsernode-runtime` usage (`boot` / `mount` / `spawn` / `install`)
 - Demo playground behavior
 - Building native tests / WASM toolchain problems
 - Contributing Node API polyfills

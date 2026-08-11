@@ -29,7 +29,7 @@ We aim to acknowledge within **7 days** and share a remediation plan when feasib
 
 In scope:
 
-- Escape from intended VFS / process isolation in the demo or `@browsernode/api`
+- Escape from intended VFS / process isolation in the demo or `browsernode-runtime` package
 - XSS / SW misuse that can steal host-page data beyond the preview sandbox
 - Supply-chain issues in published packages (when publishing begins)
 

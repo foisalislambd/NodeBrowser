@@ -4,8 +4,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  Browser Tab (COOP + COEP → SharedArrayBuffer)              │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │ Demo UI      │  │ @browsernode │  │ Service Worker    │  │
-│  │ Editor/Term  │◄─┤ /api         │◄─┤ Preview + proxy   │  │
+│  │ Demo UI      │  │ browsernode- │  │ Service Worker    │  │
+│  │ Editor/Term  │◄─┤ runtime API  │◄─┤ Preview + proxy   │  │
 │  └──────────────┘  └──────┬───────┘  └─────────┬─────────┘  │
 │                           │ MessagePort / SAB               │
 │                    ┌──────▼────────────────────┐            │

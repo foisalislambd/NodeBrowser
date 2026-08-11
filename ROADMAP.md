@@ -26,7 +26,7 @@ Open-source **WebContainers-class** runtime: real `npm` / Vite / Next-subset **i
 ## Then
 
 - Terminal (xterm) + stronger IDE UX  
-- Publish `@browsernode/api` + docs site  
+- Publish `browsernode-runtime` + docs site  
 - WebContainer API compat shim  
 - Performance benchmarks vs WebContainers  
 - Agent/automation headless API  

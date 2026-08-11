@@ -11,5 +11,5 @@ git shortlog -sn
 Significant areas:
 
 - Kernel / WASM — C++ VFS, process model, QuickJS integration
-- Host API — `@browsernode/api`
+- Host API — `browsernode-runtime` (`packages/api`)
 - Demo — playground UI and templates

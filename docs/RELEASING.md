@@ -11,15 +11,15 @@ git push origin v0.1.0
 ```
 
 5. Create a GitHub Release from the tag; paste the changelog section.
-6. Publish `@browsernode/api` to npm — see the full guide:
+6. Publish npm package **`browsernode-runtime`**:
 
-→ **[`PUBLISHING.md`](./PUBLISHING.md)** (package names, org scope, `npm publish`, checklist)
-
-Short version:
+→ [`PUBLISHING.md`](./PUBLISHING.md)
 
 ```bash
 npm run build:api
-npm publish -w @browsernode/api --access public
+npm publish -w browsernode-runtime
 ```
 
-Replace `YOUR_ORG` placeholders in README badges / `package.json` `repository` fields before publishing.
+> Plain name `browsernode` is **already taken** on npm — do not use it.
+
+Replace `YOUR_ORG` placeholders in README / `package.json` before publishing.

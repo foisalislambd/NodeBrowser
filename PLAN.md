@@ -15,7 +15,7 @@
 | Node Compat | Bootstrap + host polyfills | `fs`, `path`, `http`, `crypto`, … |
 | Package Mgr | TS host + npm registry | install into VFS (+ deps + cache) |
 | Networking | Service Worker ↔ HttpBridge | Preview `/__bn_preview/:port` |
-| Host API | `@browsernode/api` | WebContainer-like DX |
+| Host API | `browsernode-runtime` (`packages/api`) | WebContainer-like DX |
 | Demo | Vanilla UI | File manager, terminal, preview |
 
 Details: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Module matrix: [`runtime/node/MODULES.md`](./runtime/node/MODULES.md)
@@ -286,7 +286,7 @@ Make BrowserNode the best runtime for AI coding agents in-browser:
 ### Pillar I — Open-source productization
 
 #### Phase 40 — Publish & docs site `M`
-- [ ] Publish `@browsernode/api` to npm with semver
+- [ ] Publish `browsernode-runtime` to npm with semver
 - [ ] API reference (TypeDoc)
 - [ ] Guide site: Boot, VFS, npm, Vite, embed
 - [ ] Migration guide from WebContainers API (method mapping table)
