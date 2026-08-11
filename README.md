@@ -1,4 +1,4 @@
-# BrowserNode
+# NodeBrowser
 
 **WebContainers-style Node.js runtime in the browser — core in C/C++ → WebAssembly.**
 
@@ -11,15 +11,15 @@ Run `node`, a virtual filesystem, CommonJS `require`, npm install into a VFS, an
 > **Note:** Replace the CI badge org/repo path with your GitHub URL after publishing.
 
 ```ts
-import { BrowserNode } from 'browsernode-runtime';
+import { NodeBrowser } from 'nodebrowser';
 
-const bn = await BrowserNode.boot();
+const bn = await NodeBrowser.boot();
 await bn.mount({
   home: {
     directory: {
       project: {
         directory: {
-          'index.js': { file: { contents: "console.log('hi from BrowserNode')" } },
+          'index.js': { file: { contents: "console.log('hi from NodeBrowser')" } },
         },
       },
     },
@@ -91,7 +91,7 @@ Templates live under [`demo/templates/`](./demo/templates/).
 ```
 kernel/           C++ VFS, processes, C ABI, QuickJS node runner
 vendor/           QuickJS (git submodule)
-packages/api/     `browsernode-runtime` npm package (TypeScript host API)
+packages/api/     `nodebrowser` npm package (TypeScript host API)
 demo/             Playground UI + templates
 docs/             Architecture & guides
 scripts/          build-wasm, serve-demo, setup-toolchain, …
@@ -113,24 +113,24 @@ Bug reports and ideas: use [GitHub Issues](../../issues). Security: [`SECURITY.m
 
 | Package | Name on npm | Notes |
 |---------|-------------|--------|
-| Host API | **`browsernode-runtime`** | Publish this (unscoped) |
-| Monorepo root | `browsernode-monorepo` | `"private": true` — do **not** publish |
+| Host API | **`nodebrowser`** | Publish this (unscoped) |
+| Monorepo root | `nodebrowser-monorepo` | `"private": true` — do **not** publish |
 | Demo | `demo` | Local only — do **not** publish |
 
-> Plain **`browsernode`** is already taken on npm by another project — we use `browsernode-runtime`.
+> Plain **`browsernode`** is already taken on npm — we publish as **`nodebrowser`**.
 
-Future optional add-ons may use `@browsernode/...`. See [`docs/PUBLISHING.md`](./docs/PUBLISHING.md).
+Future optional add-ons may use `@nodebrowser/...`. See [`docs/PUBLISHING.md`](./docs/PUBLISHING.md).
 
 ```bash
 npm login
 npm run build:api
-npm publish -w browsernode-runtime
+npm publish -w nodebrowser
 ```
 
 Users install with:
 
 ```bash
-npm install browsernode-runtime
+npm install nodebrowser
 ```
 
 Full guide: **[`docs/PUBLISHING.md`](./docs/PUBLISHING.md)**.  
@@ -138,10 +138,10 @@ Release tags: [`docs/RELEASING.md`](./docs/RELEASING.md).
 
 ## Design
 
-Shipping full Node+V8+libuv to WASM is a multi-year effort. BrowserNode embeds **QuickJS** (and a JS fallback) behind a C++/host kernel and grows Node compatibility incrementally — aimed at real `npm` / tooling workflows over time.
+Shipping full Node+V8+libuv to WASM is a multi-year effort. NodeBrowser embeds **QuickJS** (and a JS fallback) behind a C++/host kernel and grows Node compatibility incrementally — aimed at real `npm` / tooling workflows over time.
 
 ## License
 
-[MIT](./LICENSE) — © 2026 BrowserNode contributors.
+[MIT](./LICENSE) — © 2026 NodeBrowser contributors.
 
 QuickJS retains its own license — see [`vendor/quickjs/LICENSE`](./vendor/quickjs/LICENSE).

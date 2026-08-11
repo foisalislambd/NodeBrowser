@@ -16,7 +16,7 @@ function App() {
           <img src={viteLogo} className="vite" alt="Vite logo" />
         </div>
         <div>
-          <h1>BrowserNode · Vite</h1>
+          <h1>NodeBrowser · Vite</h1>
           <p>
             Real <code>create-vite</code> React app. Edit <code>src/App.jsx</code> and save to test <code>HMR</code>.
           </p>

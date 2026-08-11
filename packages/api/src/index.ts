@@ -8,7 +8,7 @@ import type { HttpRegistrar } from './kernel.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
-export class BrowserNode {
+export class NodeBrowser {
   #mod: KernelModule;
   #k: KernelHandle;
   #listeners = new Map<string, Set<Function>>();
@@ -35,7 +35,7 @@ export class BrowserNode {
       /** `auto` (default) tries WASM then JS; `true` prefers WASM; `false` forces JS */
       useWasm?: boolean | 'auto';
     } & LoadKernelOptions,
-  ): Promise<BrowserNode> {
+  ): Promise<NodeBrowser> {
     const useWasm = options?.useWasm === undefined ? 'auto' : options.useWasm;
     const mod = await loadKernel(options?.wasmUrl, { useWasm });
     const k = mod.create();
@@ -43,7 +43,7 @@ export class BrowserNode {
     const previewBase =
       options?.previewBase ??
       (typeof location !== 'undefined' ? `${location.origin}/__bn_preview` : 'http://localhost/__bn_preview');
-    return new BrowserNode(mod, k, previewBase);
+    return new NodeBrowser(mod, k, previewBase);
   }
 
   get fs() {
@@ -391,3 +391,5 @@ export type { BundleOptions } from './esbuild-bundle.js';
 export type { InstallProgress } from './npm-install.js';
 export { HttpBridge } from './http-bridge.js';
 export { resetKernelCache, type UseWasmOption } from './kernel.js';
+/** @deprecated Use `NodeBrowser` — kept for older snippets */
+export const BrowserNode = NodeBrowser;

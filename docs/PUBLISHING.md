@@ -1,31 +1,24 @@
-# Publishing BrowserNode to npm
+# Publishing NodeBrowser to npm
 
 ## Short answer
 
 | Question | Answer |
 |----------|--------|
-| Can we publish as plain **`browsernode`**? | **No — that name is already taken** on npm by another project ([browsernode@0.4.x](https://www.npmjs.com/package/browsernode), browser automation). |
-| What do we publish instead? | **`browsernode-runtime`** (chosen unscoped name — free). |
-| Will more packages appear later? | **Maybe** (`@browsernode/webcontainer-compat`, etc.). Day one = one package only. |
+| Public npm name | **`nodebrowser`** (available on npm) |
+| Import | `import { NodeBrowser } from 'nodebrowser'` |
+| More packages later? | Optional (`@nodebrowser/compat`, etc.) — day one is one package |
 
 ```bash
-npm install browsernode-runtime
+npm install nodebrowser
 ```
 
 ```ts
-import { BrowserNode } from 'browsernode-runtime';
+import { NodeBrowser } from 'nodebrowser';
+
+const bn = await NodeBrowser.boot();
 ```
 
-### Alternatives (also free today)
-
-| Name | Style | Notes |
-|------|--------|--------|
-| **`browsernode-runtime`** | unscoped | **Current choice** — clear, available |
-| `browser-node` | unscoped | Also free |
-| `@browsernode/core` | scoped | Good if you create npm org `browsernode` and expect many packages |
-| `@browsernode/api` | scoped | Free, but we avoid this name by preference |
-
-To switch the published name later, change `"name"` in `packages/api/package.json` **before the first publish** (renaming after publish requires a new package).
+> Note: plain **`browsernode`** is taken by an unrelated project — we intentionally use **`nodebrowser`**.
 
 ---
 
@@ -33,25 +26,9 @@ To switch the published name later, change `"name"` in `packages/api/package.jso
 
 | npm `name` | Path | Publish? | Role |
 |------------|------|----------|------|
-| **`browsernode-runtime`** | `packages/api` | **Yes** | Public API |
-| `browsernode-monorepo` | repo root | **No** (`private`) | Workspace root |
+| **`nodebrowser`** | `packages/api` | **Yes** | Public API |
+| `nodebrowser-monorepo` | repo root | **No** (`private`) | Workspace root |
 | `demo` | `demo/` | **No** | Playground |
-
-Root cannot also be called `browsernode-runtime` — workspace names must be unique. The published library owns the public name.
-
----
-
-## Future packages
-
-PLAN allows optional splits later:
-
-| Possible later name | When |
-|---------------------|------|
-| `@browsernode/webcontainer-compat` | StackBlitz-shaped API shim |
-| `@browsernode/kernel` | Prebuilt WASM-only artifact |
-| `@browsernode/react` | React helpers |
-
-Until then, **one package is enough**. Create npm org `browsernode` only when you add `@browsernode/*` packages.
 
 ---
 
@@ -60,7 +37,7 @@ Until then, **one package is enough**. Create npm org `browsernode` only when yo
 ```bash
 npm login
 npm whoami
-npm view browsernode-runtime   # expect 404 until first publish
+npm view nodebrowser   # expect 404 until first publish
 ```
 
 Enable 2FA on npm.
@@ -71,23 +48,30 @@ Enable 2FA on npm.
 
 ```bash
 npm run build:api
-npm pack -w browsernode-runtime --dry-run
-npm publish -w browsernode-runtime
+npm pack -w nodebrowser --dry-run
+npm publish -w nodebrowser
 ```
 
 Verify:
 
 ```bash
-npm view browsernode-runtime version
+npm view nodebrowser version
 ```
 
-Checklist / tags: [`RELEASING.md`](./RELEASING.md).
+Tags / changelog: [`RELEASING.md`](./RELEASING.md).
 
 ---
 
-## Versioning
+## Future packages (optional)
 
-SemVer in `packages/api/package.json` + git tag `vX.Y.Z` + [`CHANGELOG.md`](../CHANGELOG.md).
+When the product grows:
+
+| Name | Purpose |
+|------|---------|
+| `@nodebrowser/webcontainer-compat` | StackBlitz-shaped shim |
+| `@nodebrowser/react` | React helpers |
+
+Create npm org `nodebrowser` only when adding scoped packages.
 
 ---
 
@@ -95,6 +79,6 @@ SemVer in `packages/api/package.json` + git tag `vX.Y.Z` + [`CHANGELOG.md`](../C
 
 | Mistake | Fix |
 |---------|-----|
-| Trying to publish as `browsernode` | Name taken — use `browsernode-runtime` |
-| Publishing monorepo root | Root is private — use `-w browsernode-runtime` |
+| Publishing monorepo root | Use `-w nodebrowser` |
 | Missing `dist/` | `npm run build:api` first |
+| Using name `browsernode` | Taken — use `nodebrowser` |

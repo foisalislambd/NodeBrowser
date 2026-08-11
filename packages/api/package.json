@@ -1,7 +1,7 @@
 {
-  "name": "browsernode-runtime",
+  "name": "nodebrowser",
   "version": "0.1.0",
-  "description": "Node.js in the browser — WebContainers-style runtime (VFS, spawn, npm, HTTP preview)",
+  "description": "Node.js in the browser (NodeBrowser) — WebContainers-style runtime (VFS, spawn, npm, HTTP preview)",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -37,6 +37,7 @@
   },
   "homepage": "https://github.com/YOUR_ORG/browsernode#readme",
   "keywords": [
+    "nodebrowser",
     "browsernode",
     "webcontainers",
     "nodejs",

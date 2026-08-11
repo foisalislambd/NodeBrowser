@@ -5,7 +5,7 @@ const { createRequire } = require('module');
 const { AsyncLocalStorage } = require('async_hooks');
 
 console.log('cwd =', process.cwd());
-fs.writeFileSync('/home/project/hello.txt', 'BrowserNode VFS OK');
+fs.writeFileSync('/home/project/hello.txt', 'NodeBrowser VFS OK');
 console.log(fs.readFileSync('/home/project/hello.txt'));
 console.log('Buffer hex =', Buffer.from('hi').toString('hex'));
 console.log('randomBytes =', crypto.randomBytes(8).toString('hex'));
@@ -24,7 +24,7 @@ const HTTP_DEMO = `const http = require('http');
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end('<h1>Hello from BrowserNode</h1><p>Served without a remote server.</p><p>path=' + req.url + '</p>');
+  res.end('<h1>Hello from NodeBrowser</h1><p>Served without a remote server.</p><p>path=' + req.url + '</p>');
 });
 
 server.listen(3000, () => {
@@ -35,7 +35,7 @@ server.listen(3000, () => {
 const BUNDLE_ENTRY = `export function greet(name) {
   return 'Hello, ' + name + ' from esbuild-wasm';
 }
-console.log(greet('BrowserNode'));
+console.log(greet('NodeBrowser'));
 `;
 
 function $(id) {
@@ -270,8 +270,8 @@ async function deleteSelected() {
 
 async function boot() {
   $('status').textContent = 'booting…';
-  const { BrowserNode } = await loadApi();
-  bn = await BrowserNode.boot({ useWasm: false });
+  const { NodeBrowser } = await loadApi();
+  bn = await NodeBrowser.boot({ useWasm: false });
   appendTerm(`runtime=${bn.runtime}\n`);
   bn.attachServiceWorkerBridge('/__bn_preview');
   await bn.mount({
@@ -296,7 +296,7 @@ async function boot() {
   setCwd(projectCwd);
   await refreshTree();
   $('status').textContent = 'ready';
-  appendTerm('BrowserNode ready — VFS file manager + in-tab install/run.\n');
+  appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
 }
 
 async function runNode() {

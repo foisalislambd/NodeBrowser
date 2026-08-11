@@ -1,4 +1,4 @@
-# BrowserNode — Master Plan
+# NodeBrowser — Master Plan
 
 **North star:** Become the most capable open-source **WebContainers-class** runtime — run real Node tooling (`npm`, Vite, Next subset, tests, monorepos) **entirely in the browser tab**, with no remote compute VM.
 
@@ -15,7 +15,7 @@
 | Node Compat | Bootstrap + host polyfills | `fs`, `path`, `http`, `crypto`, … |
 | Package Mgr | TS host + npm registry | install into VFS (+ deps + cache) |
 | Networking | Service Worker ↔ HttpBridge | Preview `/__bn_preview/:port` |
-| Host API | `browsernode-runtime` (`packages/api`) | WebContainer-like DX |
+| Host API | `nodebrowser` (`packages/api`) | WebContainer-like DX |
 | Demo | Vanilla UI | File manager, terminal, preview |
 
 Details: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Module matrix: [`runtime/node/MODULES.md`](./runtime/node/MODULES.md)
@@ -30,7 +30,7 @@ Details: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Module matrix: [`ru
 | 1 WASM kernel | ✅ | VFS + process + C ABI |
 | 2 QuickJS | ✅ | `node` runner + CJS require |
 | 3 Node subset | ✅ | fs/path/http/events + fs.promises / Buffer |
-| 4 Host API | ✅ | `BrowserNode.boot/mount/spawn` |
+| 4 Host API | ✅ | `NodeBrowser.boot/mount/spawn` |
 | 5 Virtual net | ✅ | SW → handler → Response |
 | 6 npm install | ✅ | deps tree, scoped pkgs, memory cache |
 | 7 Async process | ✅ | keep-alive servers + non-blocking spawn |
@@ -56,7 +56,7 @@ Make WASM and JS kernels share one host surface; prefer auto-detect with JS fall
 - [x] Host `bn.fs`: `exists` / `stat` / recursive `rm` / **`rename`** (kernel or portable copy+rm)
 - [x] Binary files: JS VFS stores `Uint8Array`; `readFile(path, 'buffer')` → `Uint8Array`; `writeFile` accepts bytes
 - [x] `process.env` injected from `spawn(..., { env })` on **JS** runtime (WASM spawn env still ignored until C ABI grows)
-- [x] `BrowserNode.boot({ useWasm: 'auto' | true | false })` — default **`auto`**; demo uses `false` for HttpBridge keep-alive certainty
+- [x] `NodeBrowser.boot({ useWasm: 'auto' | true | false })` — default **`auto`**; demo uses `false` for HttpBridge keep-alive certainty
 - [x] `bn.runtime` exposes `'js' | 'wasm'`
 - [x] Conformance suite: `packages/api/test/conformance.mjs` via `npm run test:api`
 - [ ] Full HTTP keep-alive feature-parity on WASM (still prefer JS for servers until Phase 18 / WASM HTTP hardening)
@@ -192,7 +192,7 @@ Everything Vite’s Node side needs from Pillars A–C, plus:
 - [ ] Config: `vite.config.js` load (CJS+ESM)
 - [ ] Honest fallback: if unsupported plugin, clear error
 
-**Exit:** official `demo/templates/vite` runs **inside BrowserNode** (not host `npm run dev:vite`).
+**Exit:** official `demo/templates/vite` runs **inside NodeBrowser** (not host `npm run dev:vite`).
 
 #### Phase 29 — Vite ecosystem plugins `M`
 - [ ] `@vitejs/plugin-react` / `vue` / `svelte` smoke
@@ -248,7 +248,7 @@ Not full Next — a **supported subset**:
 - [ ] Read-only public preview boot from static snapshot
 
 #### Phase 36 — Agent / automation API `M`
-Make BrowserNode the best runtime for AI coding agents in-browser:
+Make NodeBrowser the best runtime for AI coding agents in-browser:
 
 - [ ] Stable JSON-RPC or evented API: `fs`, `spawn`, `install`, `ports`
 - [ ] Structured logs / traces for agent tools
@@ -290,13 +290,13 @@ Make BrowserNode the best runtime for AI coding agents in-browser:
 ### Pillar I — Open-source productization
 
 #### Phase 40 — Publish & docs site `M`
-- [ ] Publish `browsernode-runtime` to npm with semver
+- [ ] Publish `nodebrowser` to npm with semver
 - [ ] API reference (TypeDoc)
 - [ ] Guide site: Boot, VFS, npm, Vite, embed
 - [ ] Migration guide from WebContainers API (method mapping table)
 
 #### Phase 41 — Compatibility layer `M`
-- [ ] Optional `@browsernode/webcontainer-compat` shim mirroring StackBlitz WebContainer API shapes where possible
+- [ ] Optional `@nodebrowser/webcontainer-compat` shim mirroring StackBlitz WebContainer API shapes where possible
 - [ ] Document deltas honestly
 
 #### Phase 42 — Ecosystem `S–L`

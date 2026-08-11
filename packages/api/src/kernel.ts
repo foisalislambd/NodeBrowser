@@ -19,7 +19,7 @@ export interface KernelModule {
   rename?(k: KernelHandle, from: string, to: string): boolean;
   readdir(k: KernelHandle, path: string): string[];
   exists(k: KernelHandle, path: string): boolean;
-  /** Optional — JS fallback; WASM may use readText heuristic via BrowserNode.fs */
+  /** Optional — JS fallback; WASM may use readText heuristic via NodeBrowser.fs */
   isDir?(k: KernelHandle, path: string): boolean;
   spawn(
     k: KernelHandle,
@@ -311,7 +311,7 @@ export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Pr
   const mode: UseWasmOption = opts?.useWasm === undefined ? 'auto' : opts.useWasm;
 
   // JS kernel owns VFS in a closure — always create a fresh instance per boot
-  // so concurrent BrowserNode.boot() calls do not share filesystems.
+  // so concurrent NodeBrowser.boot() calls do not share filesystems.
   if (mode === false) {
     return createJsFallbackKernel();
   }

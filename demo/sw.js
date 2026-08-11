@@ -1,4 +1,4 @@
-/* Service Worker — routes /__bn_preview/:port/* into the BrowserNode page via MessageChannel */
+/* Service Worker — routes /__bn_preview/:port/* into the NodeBrowser page via MessageChannel */
 self.addEventListener('install', (e) => {
   e.waitUntil(self.skipWaiting());
 });
@@ -29,7 +29,7 @@ self.addEventListener('fetch', (event) => {
         clients[0];
 
       if (!client) {
-        return new Response('No BrowserNode client', { status: 503 });
+        return new Response('No NodeBrowser client', { status: 503 });
       }
 
       const port = Number(m[1]);
@@ -55,7 +55,7 @@ self.addEventListener('fetch', (event) => {
       const responsePromise = new Promise((resolve) => {
         const timer = setTimeout(() => {
           resolve(
-            new Response(`No response from BrowserNode for port ${port}`, {
+            new Response(`No response from NodeBrowser for port ${port}`, {
               status: 504,
               headers: { 'Content-Type': 'text/plain; charset=utf-8' },
             }),

@@ -9,7 +9,7 @@
 
 ## What we can help with
 
-- `browsernode-runtime` usage (`boot` / `mount` / `spawn` / `install`)
+- `nodebrowser` usage (`boot` / `mount` / `spawn` / `install`)
 - Demo playground behavior
 - Building native tests / WASM toolchain problems
 - Contributing Node API polyfills
@@ -18,7 +18,7 @@
 
 - Production SLA / paid support
 - Guaranteeing full Node.js or full Next.js compatibility
-- Debugging unrelated host apps that only embed BrowserNode as a dependency (provide a minimal repro)
+- Debugging unrelated host apps that only embed NodeBrowser as a dependency (provide a minimal repro)
 
 ## Security
 

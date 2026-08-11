@@ -12,8 +12,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "BrowserNode · Next.js",
-  description: "Real create-next-app template for BrowserNode demos",
+  title: "NodeBrowser · Next.js",
+  description: "Real create-next-app template for NodeBrowser demos",
 };
 
 export default function RootLayout({ children }) {

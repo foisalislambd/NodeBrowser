@@ -1,6 +1,6 @@
 # Frequently asked questions
 
-## Does BrowserNode run on a remote server?
+## Does NodeBrowser run on a remote server?
 
 No. The runtime executes in the browser tab (JS fallback and/or WASM). The optional demo `npm run dev` process only serves static files with COOP/COEP headers.
 
@@ -14,7 +14,7 @@ Host templates yes (`npm run dev:vite` / `dev:next`). Full CLIs inside the tab a
 
 ## WASM vs JS fallback?
 
-`BrowserNode.boot()` defaults to the JS runtime for reliability in the demo. Pass `{ useWasm: true }` when a WASM build is available.
+`NodeBrowser.boot()` defaults to the JS runtime for reliability in the demo. Pass `{ useWasm: true }` when a WASM build is available.
 
 ## Is this a security sandbox?
 

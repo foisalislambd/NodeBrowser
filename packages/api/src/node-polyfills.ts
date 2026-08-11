@@ -259,7 +259,7 @@ function __bn_load_crypto() {
     createHash: function(alg) {
       alg = String(alg || '').toLowerCase();
       if (alg !== 'sha256' && alg !== 'sha-256') {
-        throw new Error('createHash: only sha256 is supported in BrowserNode');
+        throw new Error('createHash: only sha256 is supported in NodeBrowser');
       }
       var chunks = [];
       return {

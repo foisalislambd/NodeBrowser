@@ -33,7 +33,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.startsWith('/__bn_preview/')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(
-      `<!doctype html><meta charset=utf-8><title>BrowserNode Preview</title>` +
+      `<!doctype html><meta charset=utf-8><title>NodeBrowser Preview</title>` +
         `<body style="font:14px system-ui;padding:2rem"><h1>Preview fallback</h1>` +
         `<p>Port route: ${url.pathname}</p>` +
         `<p>Service Worker should proxy this into HttpBridge. Hard-refresh if you see this.</p>`,
@@ -120,6 +120,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`BrowserNode demo → http://localhost:${port}`);
+  console.log(`NodeBrowser demo → http://localhost:${port}`);
   console.log('(COOP/COEP enabled)');
 });

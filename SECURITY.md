@@ -7,7 +7,7 @@
 | `0.1.x` (main) | ✅ |
 | older / unreleased forks | ❌ best-effort only |
 
-BrowserNode runs untrusted-looking workloads **inside the browser tab** (VFS + JS/WASM). Treat it like any other client-side sandbox: isolation is best-effort, not a hardened multi-tenant security boundary yet.
+NodeBrowser runs untrusted-looking workloads **inside the browser tab** (VFS + JS/WASM). Treat it like any other client-side sandbox: isolation is best-effort, not a hardened multi-tenant security boundary yet.
 
 ## Reporting a vulnerability
 
@@ -29,13 +29,13 @@ We aim to acknowledge within **7 days** and share a remediation plan when feasib
 
 In scope:
 
-- Escape from intended VFS / process isolation in the demo or `browsernode-runtime` package
+- Escape from intended VFS / process isolation in the demo or `nodebrowser` package
 - XSS / SW misuse that can steal host-page data beyond the preview sandbox
 - Supply-chain issues in published packages (when publishing begins)
 
 Out of scope:
 
-- “I can run `eval` / user JS inside BrowserNode” (by design)
+- “I can run `eval` / user JS inside NodeBrowser” (by design)
 - Issues only in third-party `demo/templates/*` dependencies
 - Denial of service via large npm installs in a local demo tab
 

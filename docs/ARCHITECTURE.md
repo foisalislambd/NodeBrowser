@@ -1,11 +1,11 @@
-# Architecture — BrowserNode
+# Architecture — NodeBrowser
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Browser Tab (COOP + COEP → SharedArrayBuffer)              │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │ Demo UI      │  │ browsernode- │  │ Service Worker    │  │
-│  │ Editor/Term  │◄─┤ runtime API  │◄─┤ Preview + proxy   │  │
+│  │ Demo UI      │  │ nodebrowser  │  │ Service Worker    │  │
+│  │ Editor/Term  │◄─┤ API          │◄─┤ Preview + proxy   │  │
 │  └──────────────┘  └──────┬───────┘  └─────────┬─────────┘  │
 │                           │ MessagePort / SAB               │
 │                    ┌──────▼────────────────────┐            │

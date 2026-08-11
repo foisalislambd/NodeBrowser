@@ -32,7 +32,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 ## Vite checklist
 
-- [x] `esbuild-wasm` transform path (`BrowserNode.bundle`)
+- [x] `esbuild-wasm` transform path (`NodeBrowser.bundle`)
 - [x] `fs.promises` + Buffer
 - [ ] `http` upgrade / HMR websocket via SW
 - [x] `crypto.randomFillSync`

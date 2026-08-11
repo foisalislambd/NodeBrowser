@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Phase 13:** WASM/JS host parity — `fs.rename`, binary `readFile(..., 'buffer')`, spawn `env` → `process.env` (JS), `boot({ useWasm: 'auto' })`, `bn.runtime`, conformance tests (`npm run test:api`)
-- Public npm package name set to **`browsernode-runtime`** (`browsernode` is taken on npm); monorepo root is `browsernode-monorepo`
+- Public npm package / product renamed to **`nodebrowser`** (`NodeBrowser` class); monorepo root `nodebrowser-monorepo`
 - Master future roadmap in `PLAN.md` (phases 13–42): WASM parity, OPFS, ESM, npm 2.0, Vite/Next in-tab, productization
 - Public `ROADMAP.md` summary aligned with PLAN
 - In-browser VFS file manager in the demo (browse, save, new file/dir, delete)
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - C++ kernel: VFS, processes, C ABI
 - QuickJS node runner (native) + JS fallback runtime
-- `browsernode-runtime` package: `boot`, `mount`, `spawn`, `install`, HTTP bridge, esbuild-wasm `bundle`
+- `nodebrowser` package: `boot`, `mount`, `spawn`, `install`, HTTP bridge, esbuild-wasm `bundle`
 - Demo playground with COOP/COEP service worker preview
 - npm install into VFS (deps + cache)
 - Node subset: `fs` / `path` / `http` / `crypto` / `buffer` / `module.createRequire` / stubs

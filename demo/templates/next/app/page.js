@@ -15,7 +15,7 @@ export default function Home() {
         />
         <ol>
           <li>
-            BrowserNode demo template — real <code>create-next-app</code>.
+            NodeBrowser demo template — real <code>create-next-app</code>.
           </li>
           <li>
             Edit <code>app/page.js</code> and save to see changes instantly.

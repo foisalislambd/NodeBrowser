@@ -2,7 +2,7 @@
  * Phase 13 conformance suite — runs against the JS kernel (useWasm: false).
  * Exit 0 on success.
  */
-import { BrowserNode } from '../dist/index.js';
+import { NodeBrowser } from '../dist/index.js';
 import { resetKernelCache } from '../dist/kernel.js';
 
 function assert(cond, msg) {
@@ -23,7 +23,7 @@ async function readOut(proc) {
 
 async function main() {
   resetKernelCache();
-  const bn = await BrowserNode.boot({ useWasm: false });
+  const bn = await NodeBrowser.boot({ useWasm: false });
   assert(bn.runtime === 'js', 'expected js runtime');
 
   // --- exists / mkdir / write / read utf8 ---
@@ -84,15 +84,15 @@ async function main() {
 
   // --- auto boot falls back to js in Node ---
   resetKernelCache();
-  const auto = await BrowserNode.boot({ useWasm: 'auto' });
+  const auto = await NodeBrowser.boot({ useWasm: 'auto' });
   assert(auto.runtime === 'js' || auto.runtime === 'wasm', 'auto runtime set');
   if (typeof document === 'undefined') {
     assert(auto.runtime === 'js', 'node auto → js');
   }
 
   // --- boot isolation: two JS boots must not share VFS ---
-  const a = await BrowserNode.boot({ useWasm: false });
-  const b = await BrowserNode.boot({ useWasm: false });
+  const a = await NodeBrowser.boot({ useWasm: false });
+  const b = await NodeBrowser.boot({ useWasm: false });
   await a.fs.writeFile('/iso.txt', 'A');
   assert(!(await b.fs.exists('/iso.txt')), 'boots must isolate VFS');
   await b.fs.writeFile('/iso.txt', 'B');

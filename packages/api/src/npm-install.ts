@@ -1,4 +1,4 @@
-import type { BrowserNode } from './index.js';
+import type { NodeBrowser } from './index.js';
 
 export type InstallProgress = {
   phase: 'resolve' | 'fetch' | 'extract' | 'done';
@@ -24,7 +24,7 @@ const memoryCache = new Map<string, Uint8Array>();
 const MAX_DEPTH = 8;
 
 export async function installPackage(
-  bn: BrowserNode,
+  bn: NodeBrowser,
   spec: string,
   cwd = '/',
   opts?: { onProgress?: OnProgress; withDeps?: boolean },
@@ -35,7 +35,7 @@ export async function installPackage(
 }
 
 async function installOne(
-  bn: BrowserNode,
+  bn: NodeBrowser,
   spec: string,
   cwd: string,
   depth: number,

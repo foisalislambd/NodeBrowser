@@ -1,6 +1,6 @@
 /**
  * Mount real create-vite / create-next-app templates from /templates/*
- * into the BrowserNode VFS, and drive host-style Dev/Build messaging.
+ * into the NodeBrowser VFS, and drive host-style Dev/Build messaging.
  *
  * Full Vite/Next CLIs run on the host via:
  *   npm run dev:vite | build:vite
@@ -71,7 +71,7 @@ export async function viteStaticPreview(bn, append) {
     previewHtml = html.replace(/<div id="app"><\/div>/, '<div id="app">' + notice + '</div>');
   } else {
     previewHtml =
-      '<!doctype html><html><head><meta charset="utf-8"/><title>Vite — BrowserNode</title></head><body>' +
+      '<!doctype html><html><head><meta charset="utf-8"/><title>Vite — NodeBrowser</title></head><body>' +
       notice +
       '</body></html>';
   }
@@ -94,7 +94,7 @@ export async function nextStaticPreview(bn, append) {
   await bn.fs.writeFile(
     NEXT_ROOT + '/.preview/index.html',
     `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Next.js template — BrowserNode</title></head>
+<title>Next.js template — NodeBrowser</title></head>
 <body style="margin:0;font:16px/1.5 Georgia,serif;background:#f6f1ea;color:#1c1917">
 <main style="max-width:36rem;margin:0 auto;padding:3rem 1.25rem">
 <p style="text-transform:uppercase;letter-spacing:.14em;font-size:.72rem;color:#b45309">Next.js template</p>

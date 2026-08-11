@@ -1,4 +1,4 @@
-# Contributing to BrowserNode
+# Contributing to NodeBrowser
 
 Thanks for helping build an in-browser Node runtime. This guide keeps contributions consistent and reviewable.
 
