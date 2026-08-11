@@ -123,6 +123,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           TAG="v${VERSION}"
           NOTES_FILE="$(mktemp)"
           cat > "$NOTES_FILE" <<EOF
