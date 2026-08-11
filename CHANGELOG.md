@@ -13,6 +13,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 - Automated release on `main`: npm Trusted Publisher (OIDC), GitHub Packages, GitHub Release
 - Version scheme `1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`
 - GitHub Pages demo deploy (self-contained `demo/dist`, base path `/NodeBrowser/`)
+- Release/Pages CI builds **C++ → WASM** with Emscripten before npm publish / demo deploy
 
 ### Changed
 

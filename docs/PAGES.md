@@ -10,7 +10,7 @@ Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)
 
 On every push to `main`:
 
-1. `npm run build:api`
+1. Emscripten **C++ → WASM** (`scripts/ci-build-cpp-wasm.sh`)
 2. `BASE_PATH=/NodeBrowser/ npm run build:demo` — copies API, WASM, and `esbuild-wasm` into `demo/dist`
 3. Deploys `demo/dist` via GitHub Pages
 

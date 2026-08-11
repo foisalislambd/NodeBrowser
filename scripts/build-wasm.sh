@@ -23,9 +23,8 @@ emcmake cmake -S "${ROOT}" -B "${ROOT}/build-wasm" -G Ninja \
 
 cmake --build "${ROOT}/build-wasm"
 
-# Copy artifacts
-cp -f "${ROOT}/build-wasm/kernel/browsernode_kernel.js" "${OUT}/" || \
-  cp -f "${ROOT}/build-wasm/kernel/browsernode_kernel.js" "${OUT}/"
+# Copy artifacts into the npm package tree
+cp -f "${ROOT}/build-wasm/kernel/browsernode_kernel.js" "${OUT}/"
 cp -f "${ROOT}/build-wasm/kernel/browsernode_kernel.wasm" "${OUT}/"
 
 echo "WASM kernel → ${OUT}"

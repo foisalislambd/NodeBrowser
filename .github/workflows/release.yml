@@ -1,6 +1,6 @@
 name: Release
 
-# Push to main → build/test → npm (OIDC) → GitHub Packages → GitHub Release → version commit.
+# Push to main → native C++ tests → C++/WASM (Emscripten) → npm → GitHub Packages → Release.
 # Version: 1.0.0 → 1.0.1 → … → 1.0.9 → 1.1.0 (patch/minor roll at 9).
 # Skip with commit message containing [skip release].
 
@@ -15,9 +15,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  EM_VERSION: '3.1.74'
+
 jobs:
   build-test:
-    name: Build + test
+    name: Build + test (C++/WASM)
     if: ${{ !contains(github.event.head_commit.message || '', '[skip release]') }}
     runs-on: ubuntu-latest
     steps:
@@ -32,11 +35,36 @@ jobs:
           node-version: '24'
           cache: npm
 
-      - name: Install
+      - name: Install npm deps
         run: npm install --no-fund --no-audit
 
-      - name: Build API
-        run: npm run build:api
+      - name: Install CMake / Ninja / g++
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+
+      - name: Fetch QuickJS / submodules
+        run: bash scripts/fetch-deps.sh
+
+      # Native tests MUST run before Emscripten is on PATH (emcc would hijack CC/CXX).
+      - name: Native C++ tests
+        env:
+          CC: gcc
+          CXX: g++
+        run: npm run build:native
+
+      - name: Setup Emscripten
+        uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: ${{ env.EM_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Verify Emscripten
+        run: |
+          command -v emcc
+          command -v emcmake
+          emcc -v
+
+      - name: Build C++ → WASM + TypeScript API
+        run: bash scripts/ci-build-cpp-wasm.sh
 
       - name: API conformance
         run: npm run test:api
@@ -44,14 +72,12 @@ jobs:
       - name: Build demo
         run: npm run build:demo
 
-      - name: Install native build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
-
-      - name: Fetch QuickJS if needed
-        run: bash scripts/fetch-deps.sh || true
-
-      - name: Native tests
-        run: npm run build:native
+      - name: Upload WASM artifacts (for publish job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-wasm-kernel
+          path: packages/api/wasm/
+          if-no-files-found: error
 
   publish:
     name: Publish + GitHub Release
@@ -81,7 +107,7 @@ jobs:
       - name: Ensure npm CLI supports Trusted Publishing
         run: npm install -g npm@latest
 
-      - name: Install
+      - name: Install npm deps
         run: npm install --no-fund --no-audit
 
       - name: Resolve next version
@@ -91,8 +117,22 @@ jobs:
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
           echo "Next version: $NEXT"
 
-      - name: Build API for publish
-        run: npm run build:api
+      - name: Download C++/WASM kernel from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: cpp-wasm-kernel
+          path: packages/api/wasm
+
+      - name: Build TypeScript API (uses CI-built WASM)
+        run: |
+          set -euo pipefail
+          ls -la packages/api/wasm/
+          test -f packages/api/wasm/browsernode_kernel.wasm
+          test -f packages/api/wasm/browsernode_kernel.js
+          # tsc only path: copy-wasm.mjs no-ops without build-wasm/, leaving artifact files intact
+          npm run build:api
+          test -f packages/api/wasm/browsernode_kernel.wasm
+          test -f packages/api/dist/index.js
 
       - name: Publish to npm (Trusted Publisher / OIDC)
         id: npm_publish
@@ -131,7 +171,7 @@ jobs:
           cat > "$NOTES_FILE" <<EOF
           ## \`@foisal/nodebrowser@${VERSION}\`
 
-          Automated release from \`main\`.
+          Built from **C++ → WASM** (Emscripten) in CI, then published.
 
           ### Install (npm)
 
@@ -144,10 +184,7 @@ jobs:
           \`\`\`bash
           npm install @${OWNER}/nodebrowser@${VERSION} --registry=https://npm.pkg.github.com
           \`\`\`
-
-          (GitHub Packages scope must match the repo owner: \`@${OWNER}/nodebrowser\`.)
           EOF
-          # Drop the fixed indent that YAML run blocks introduce
           sed -i 's/^          //' "$NOTES_FILE"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -165,14 +202,14 @@ jobs:
           fi
           rm -f "$NOTES_FILE"
 
-      - name: Commit version bump
+      - name: Commit version bump + WASM binaries
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/api/package.json package.json
+          git add packages/api/package.json package.json packages/api/wasm/browsernode_kernel.js packages/api/wasm/browsernode_kernel.wasm
           if git diff --staged --quiet; then
-            echo "No version file changes to commit"
+            echo "No version/WASM changes to commit"
           else
             git commit -m "chore(release): v${{ steps.ver.outputs.version }} [skip release]"
             git push
