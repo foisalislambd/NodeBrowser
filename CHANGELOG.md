@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 13:** WASM/JS host parity — `fs.rename`, binary `readFile(..., 'buffer')`, spawn `env` → `process.env` (JS), `boot({ useWasm: 'auto' })`, `bn.runtime`, conformance tests (`npm run test:api`)
 - Public npm package name set to **`browsernode-runtime`** (`browsernode` is taken on npm); monorepo root is `browsernode-monorepo`
 - Master future roadmap in `PLAN.md` (phases 13–42): WASM parity, OPFS, ESM, npm 2.0, Vite/Next in-tab, productization
 - Public `ROADMAP.md` summary aligned with PLAN

@@ -17,18 +17,27 @@ export class BrowserNode {
   #http = new HttpBridge();
   #detachSw: (() => void) | null = null;
   #portsByPid = new Map<number, Set<number>>();
+  /** Which kernel is driving this instance. */
+  readonly runtime: 'js' | 'wasm';
 
   private constructor(mod: KernelModule, k: KernelHandle, previewBase: string) {
     this.#mod = mod;
     this.#k = k;
     this.#previewBase = previewBase;
+    this.runtime = mod.runtime === 'wasm' ? 'wasm' : 'js';
     this.#wireHttp();
   }
 
   static async boot(
-    options?: { wasmUrl?: string; previewBase?: string; useWasm?: boolean } & LoadKernelOptions,
+    options?: {
+      wasmUrl?: string;
+      previewBase?: string;
+      /** `auto` (default) tries WASM then JS; `true` prefers WASM; `false` forces JS */
+      useWasm?: boolean | 'auto';
+    } & LoadKernelOptions,
   ): Promise<BrowserNode> {
-    const mod = await loadKernel(options?.wasmUrl, { useWasm: options?.useWasm });
+    const useWasm = options?.useWasm === undefined ? 'auto' : options.useWasm;
+    const mod = await loadKernel(options?.wasmUrl, { useWasm });
     const k = mod.create();
     mod.registerBuiltins(k);
     const previewBase =
@@ -43,13 +52,22 @@ export class BrowserNode {
     const isDir = (path: string): boolean => {
       if (path === '/' || path === '') return true;
       if (mod.isDir) return mod.isDir(k, path);
-      // WASM heuristic: directories exist but have no file text
       if (!mod.exists(k, path)) return false;
       return mod.readText(k, path) === null;
     };
     const joinFs = (dir: string, name: string) => {
       if (dir === '/') return `/${name}`;
       return `${dir.replace(/\/+$/, '')}/${name}`;
+    };
+    const readBytes = (path: string): Uint8Array => {
+      if (mod.readBytes) {
+        const b = mod.readBytes(k, path);
+        if (b == null) throw new Error(`ENOENT: ${path}`);
+        return b;
+      }
+      const t = mod.readText(k, path);
+      if (t == null) throw new Error(`ENOENT: ${path}`);
+      return new TextEncoder().encode(t);
     };
     const rmTree = async (path: string): Promise<void> => {
       if (!mod.exists(k, path)) return;
@@ -62,16 +80,31 @@ export class BrowserNode {
         throw new Error(`EPERM: cannot remove ${path}`);
       }
     };
+    const copyTree = async (from: string, to: string): Promise<void> => {
+      if (isDir(from)) {
+        mod.mkdir(k, to, true);
+        for (const name of mod.readdir(k, from)) {
+          await copyTree(joinFs(from, name), joinFs(to, name));
+        }
+        return;
+      }
+      const bytes = readBytes(from);
+      mod.writeBytes(k, to, bytes);
+    };
     return {
       writeFile: async (path: string, data: string | Uint8Array) => {
         if (typeof data === 'string') mod.writeText(k, path, data);
         else mod.writeBytes(k, path, data);
       },
-      readFile: async (path: string, encoding?: 'utf8') => {
+      readFile: (async (path: string, encoding?: 'utf8' | 'buffer') => {
+        if (encoding === 'buffer') return readBytes(path);
         const t = mod.readText(k, path);
         if (t == null) throw new Error(`ENOENT: ${path}`);
-        if (encoding === 'utf8' || encoding === undefined) return t;
         return t;
+      }) as {
+        (path: string, encoding: 'utf8'): Promise<string>;
+        (path: string, encoding: 'buffer'): Promise<Uint8Array>;
+        (path: string): Promise<string>;
       },
       readdir: async (path: string) => {
         if (path !== '/' && !mod.exists(k, path)) throw new Error(`ENOENT: ${path}`);
@@ -97,6 +130,15 @@ export class BrowserNode {
         }
         if (isDir(path)) throw new Error(`EISDIR: ${path} (use { recursive: true })`);
         if (!mod.unlink(k, path)) throw new Error(`ENOENT: ${path}`);
+      },
+      rename: async (from: string, to: string) => {
+        if (!mod.exists(k, from)) throw new Error(`ENOENT: ${from}`);
+        if (mod.rename) {
+          if (!mod.rename(k, from, to)) throw new Error(`EPERM: rename ${from} → ${to}`);
+          return;
+        }
+        await copyTree(from, to);
+        await rmTree(from);
       },
     };
   }
@@ -160,7 +202,7 @@ export class BrowserNode {
       this.#emit('server-ready', port, url);
     };
 
-    const pid = this.#mod.spawn(this.#k, cmd, args, cwd);
+    const pid = this.#mod.spawn(this.#k, cmd, args, cwd, opts.env);
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
 
     let exitResolve!: (code: number) => void;
@@ -348,3 +390,4 @@ export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, Browse
 export type { BundleOptions } from './esbuild-bundle.js';
 export type { InstallProgress } from './npm-install.js';
 export { HttpBridge } from './http-bridge.js';
+export { resetKernelCache, type UseWasmOption } from './kernel.js';

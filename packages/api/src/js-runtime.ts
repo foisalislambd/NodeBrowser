@@ -24,7 +24,7 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
   setHttpRegistrar: (fn: HttpRegistrar | null) => void;
 } {
   type Node =
-    | { kind: 'file'; data: string }
+    | { kind: 'file'; bytes: Uint8Array }
     | { kind: 'dir'; children: Map<string, Node> };
 
   const root: Node = { kind: 'dir', children: new Map() };
@@ -34,6 +34,8 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
     { out: string; err: string; code: number; running: boolean }
   >();
   let httpRegistrar: HttpRegistrar | null = opts?.onHttpListen ?? null;
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
 
   const norm = (path: string) => {
     const parts: string[] = [];
@@ -68,16 +70,27 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
   const writeText = (_k: number, path: string, text: string) => {
     const r = resolve(path, true);
     if (!r.parent) return false;
-    r.parent.set(r.name, { kind: 'file', data: text });
+    r.parent.set(r.name, { kind: 'file', bytes: enc.encode(text) });
     return true;
   };
-  const readText = (_k: number, path: string) => {
+  const writeBytes = (_k: number, path: string, data: Uint8Array) => {
+    const r = resolve(path, true);
+    if (!r.parent) return false;
+    r.parent.set(r.name, { kind: 'file', bytes: data.slice() });
+    return true;
+  };
+  const readBytes = (_k: number, path: string): Uint8Array | null => {
     const r = resolve(path);
     if (!r.node || r.node.kind !== 'file') return null;
-    return r.node.data;
+    return r.node.bytes.slice();
+  };
+  const readText = (_k: number, path: string) => {
+    const b = readBytes(_k, path);
+    if (b == null) return null;
+    return dec.decode(b);
   };
 
-  const runNode = (scriptPath: string, cwd: string, pid: number) => {
+  const runNode = (scriptPath: string, cwd: string, _pid: number, env?: Record<string, string>) => {
     let out = '';
     let err = '';
     let keepAlive = false;
@@ -117,12 +130,14 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
     const sandbox = {
       __bn: {
         readFile: (p: string) => readText(0, p),
+        readBytes: (p: string) => readBytes(0, p),
         writeFile: (p: string, data: string) => writeText(0, p, data),
         exists,
         isFile,
         isDir,
         readdir,
         mkdir,
+        getEnv: () => env || {},
         unlink: (p: string) => {
           const r = resolve(p);
           if (r.parent && r.node) {
@@ -210,12 +225,43 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
       return true;
     },
     writeText: (k, path, text) => writeText(k, path, text),
-    writeBytes: (k, path, data) => writeText(k, path, new TextDecoder().decode(data)),
+    writeBytes: (k, path, data) => writeBytes(k, path, data),
     readText,
+    readBytes,
     unlink: (_k, path) => {
       const r = resolve(path);
       if (!r.parent || !r.node) return false;
       r.parent.delete(r.name);
+      return true;
+    },
+    rename: (_k, from, to) => {
+      const srcPath = norm(from);
+      const dstPath = norm(to);
+      if (srcPath === dstPath) return true;
+      const a = resolve(srcPath);
+      if (!a.parent || !a.node) return false;
+      // Cannot move a directory into itself
+      if (a.node.kind === 'dir' && (dstPath === srcPath || dstPath.startsWith(srcPath + '/'))) {
+        return false;
+      }
+      // Ensure destination parent exists before removing source (avoid data loss)
+      const parts = split(dstPath);
+      if (parts.length === 0) return false;
+      let dir = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (dir.kind !== 'dir') return false;
+        let child = dir.children.get(parts[i]!);
+        if (!child) {
+          child = { kind: 'dir', children: new Map() };
+          dir.children.set(parts[i]!, child);
+        }
+        if (child.kind !== 'dir') return false;
+        dir = child;
+      }
+      const destName = parts[parts.length - 1]!;
+      const node = a.node;
+      a.parent.delete(a.name);
+      dir.children.set(destName, node);
       return true;
     },
     readdir: (_k, path) => {
@@ -230,7 +276,7 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
       const r = resolve(path);
       return !!r.node && r.node.kind === 'dir';
     },
-    spawn: (_k, cmd, argv, cwd) => {
+    spawn: (_k, cmd, argv, cwd, env) => {
       const pid = nextPid++;
       if (cmd === 'echo') {
         procs.set(pid, { out: argv.join(' ') + '\n', err: '', code: 0, running: false });
@@ -265,7 +311,7 @@ export function createJsFallbackKernel(opts?: { onHttpListen?: HttpRegistrar }):
       if (cmd === 'node') {
         const script = argv[0] ?? '';
         const path = script.startsWith('/') ? script : norm(cwd + '/' + script);
-        const result = runNode(path, cwd, pid);
+        const result = runNode(path, cwd, pid, env);
         procs.set(pid, {
           out: result.out,
           err: result.err,
@@ -314,7 +360,7 @@ const jsBootstrap = `
 var process = {
   cwd: function() { return __bn.cwd(); },
   argv: ['node'],
-  env: {},
+  env: Object.assign({}, typeof __bn.getEnv === 'function' ? __bn.getEnv() : {}),
   exitCode: 0,
   exit: function(code) { process.exitCode = code|0; throw {__bn_exit: code|0}; },
 };
@@ -385,7 +431,15 @@ function loadCore(name){
         O_RDONLY:0, O_WRONLY:1, O_RDWR:2, O_CREAT:64, O_TRUNC:512, O_APPEND:1024,
         S_IFMT:61440, S_IFREG:32768, S_IFDIR:16384,
       },
-      readFileSync:function(p,enc){ var t=__bn.readFile(String(p)); if(t===null) throw new Error('ENOENT: '+p); if(enc==='buffer'||(enc&&enc.encoding==='buffer')) return Buffer.from(t); if(enc&&typeof enc==='object'&&enc.encoding) return t; return t; },
+      readFileSync:function(p,enc){
+        if(enc==='buffer'||(enc&&enc.encoding==='buffer')) {
+          var b=__bn.readBytes?__bn.readBytes(String(p)):null;
+          if(b===null){ var t0=__bn.readFile(String(p)); if(t0===null) throw new Error('ENOENT: '+p); return Buffer.from(t0); }
+          return Buffer.from(b);
+        }
+        var t=__bn.readFile(String(p)); if(t===null) throw new Error('ENOENT: '+p);
+        if(enc&&typeof enc==='object'&&enc.encoding) return t; return t;
+      },
       writeFileSync:function(p,d){ if(Buffer.isBuffer&&Buffer.isBuffer(d)) d=d.toString(); if(!__bn.writeFile(String(p),String(d))) throw new Error('EIO'); },
       existsSync:function(p){ return !!__bn.exists(String(p)); },
       accessSync:function(p){ if(!__bn.exists(String(p))) { var e=new Error('ENOENT: '+p); e.code='ENOENT'; throw e; } },

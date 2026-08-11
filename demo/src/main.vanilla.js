@@ -271,7 +271,8 @@ async function deleteSelected() {
 async function boot() {
   $('status').textContent = 'booting…';
   const { BrowserNode } = await loadApi();
-  bn = await BrowserNode.boot();
+  bn = await BrowserNode.boot({ useWasm: false });
+  appendTerm(`runtime=${bn.runtime}\n`);
   bn.attachServiceWorkerBridge('/__bn_preview');
   await bn.mount({
     home: {

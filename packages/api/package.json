@@ -18,7 +18,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "npm run build && node ./test/conformance.mjs"
   },
   "dependencies": {
     "esbuild-wasm": "0.25.0"

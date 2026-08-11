@@ -4,9 +4,9 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | ok (subset) | + constants, accessSync, realpathSync, copyFileSync |
+| `fs` / `fs/promises` | ok (subset) | + constants, accessSync, realpathSync, copyFileSync; host `rename` + binary buffer I/O |
 | `path` | partial | posix only |
-| `process` | partial | cwd, argv, env, exit, nextTick |
+| `process` | partial | cwd, argv, **env from spawn**, exit, nextTick |
 | `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex + index Proxy |
 | `events` | ok | EventEmitter basics |
 | `stream` | stub | EE subclasses |

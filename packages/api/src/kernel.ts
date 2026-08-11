@@ -12,12 +12,22 @@ export interface KernelModule {
   writeText(k: KernelHandle, path: string, text: string): boolean;
   writeBytes(k: KernelHandle, path: string, data: Uint8Array): boolean;
   readText(k: KernelHandle, path: string): string | null;
+  /** Optional — binary read; host falls back to TextEncoder on readText */
+  readBytes?(k: KernelHandle, path: string): Uint8Array | null;
   unlink(k: KernelHandle, path: string): boolean;
+  /** Optional — host implements portable fallback if missing */
+  rename?(k: KernelHandle, from: string, to: string): boolean;
   readdir(k: KernelHandle, path: string): string[];
   exists(k: KernelHandle, path: string): boolean;
   /** Optional — JS fallback; WASM may use readText heuristic via BrowserNode.fs */
   isDir?(k: KernelHandle, path: string): boolean;
-  spawn(k: KernelHandle, cmd: string, argv: string[], cwd: string): number;
+  spawn(
+    k: KernelHandle,
+    cmd: string,
+    argv: string[],
+    cwd: string,
+    env?: Record<string, string>,
+  ): number;
   wait(k: KernelHandle, pid: number): number;
   kill(k: KernelHandle, pid: number): boolean;
   readStdout(k: KernelHandle, pid: number): string;
@@ -34,6 +44,8 @@ export interface KernelModule {
     headersJson: string,
     body: string,
   ) => string | null;
+  /** Set by loadKernel */
+  runtime?: 'js' | 'wasm';
 }
 
 type EmscriptenModule = {
@@ -171,7 +183,24 @@ function wrap(mod: EmscriptenModule): KernelModule {
         mod._free(p);
       }
     },
-    spawn: (k, cmd, argv, cwd) => {
+    isDir: (k, path) => {
+      if (path === '/' || path === '') return true;
+      const p = allocStr(path);
+      try {
+        if (!mod._bn_vfs_exists(k, p)) return false;
+      } finally {
+        mod._free(p);
+      }
+      // directories have no text content in the C++ VFS
+      const p2 = allocStr(path);
+      try {
+        const t = readCString(mod._bn_vfs_read_text(k, p2));
+        return t == null;
+      } finally {
+        mod._free(p2);
+      }
+    },
+    spawn: (k, cmd, argv, cwd, _env) => {
       const c = allocStr(cmd);
       const a = allocStr(JSON.stringify(argv));
       const d = allocStr(cwd);
@@ -218,55 +247,87 @@ function wrap(mod: EmscriptenModule): KernelModule {
 
 /** Pure-JS Node runtime (keep-alive HTTP, Buffer, fs.promises). */
 export function createJsFallbackKernel(): KernelModule {
-  return createJsRuntime();
+  const mod = createJsRuntime();
+  mod.runtime = 'js';
+  return mod;
 }
 
-let cached: KernelModule | null = null;
+let cachedWasmFactory: KernelModule | null = null;
+
+export type UseWasmOption = boolean | 'auto';
 
 export type LoadKernelOptions = {
-  /** Force the C++/WASM kernel when available (default false — JS runtime has full HTTP keep-alive). */
-  useWasm?: boolean;
+  /**
+   * - `false` — JS runtime only
+   * - `true` — prefer WASM; fall back to JS with a warning
+   * - `'auto'` — try WASM, else JS (Phase 13 default)
+   */
+  useWasm?: UseWasmOption;
 };
 
-export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Promise<KernelModule> {
-  if (cached) return cached;
+/** Clear kernel caches (tests). */
+export function resetKernelCache(): void {
+  cachedWasmFactory = null;
+}
 
-  const useWasm = opts?.useWasm === true;
-  if (useWasm) {
-    const url = wasmUrl ?? new URL('../../wasm/browsernode_kernel.js', import.meta.url).href;
-    try {
-      const factory = await import(/* @vite-ignore */ url).catch(() => null);
-      if (factory && typeof (factory as { default?: unknown }).default === 'function') {
-        const mod = (await (factory as { default: (o?: object) => Promise<EmscriptenModule> }).default({
-          locateFile: (path: string) => new URL(`../../wasm/${path}`, import.meta.url).href,
-        })) as EmscriptenModule;
-        cached = wrap(mod);
-        return cached;
-      }
-
-      if (typeof document !== 'undefined') {
-        await new Promise<void>((resolve, reject) => {
-          const s = document.createElement('script');
-          s.src = url;
-          s.onload = () => resolve();
-          s.onerror = () => reject(new Error('wasm js load failed'));
-          document.head.appendChild(s);
-        }).catch(() => undefined);
-
-        if (typeof window !== 'undefined' && window.createBrowserNodeKernel) {
-          const mod = await window.createBrowserNodeKernel({
-            locateFile: (path: string) => url.replace(/browsernode_kernel\\.js.*/, path),
-          });
-          cached = wrap(mod);
-          return cached;
-        }
-      }
-    } catch {
-      // fall through
+async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
+  const url = wasmUrl ?? new URL('../../wasm/browsernode_kernel.js', import.meta.url).href;
+  try {
+    const factory = await import(/* @vite-ignore */ url).catch(() => null);
+    if (factory && typeof (factory as { default?: unknown }).default === 'function') {
+      const mod = (await (factory as { default: (o?: object) => Promise<EmscriptenModule> }).default({
+        locateFile: (path: string) => new URL(`../../wasm/${path}`, import.meta.url).href,
+      })) as EmscriptenModule;
+      const wrapped = wrap(mod);
+      wrapped.runtime = 'wasm';
+      return wrapped;
     }
+
+    if (typeof document !== 'undefined') {
+      await new Promise<void>((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = url;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('wasm js load failed'));
+        document.head.appendChild(s);
+      }).catch(() => undefined);
+
+      if (typeof window !== 'undefined' && window.createBrowserNodeKernel) {
+        const mod = await window.createBrowserNodeKernel({
+          locateFile: (path: string) => url.replace(/browsernode_kernel\\.js.*/, path),
+        });
+        const wrapped = wrap(mod);
+        wrapped.runtime = 'wasm';
+        return wrapped;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Promise<KernelModule> {
+  const mode: UseWasmOption = opts?.useWasm === undefined ? 'auto' : opts.useWasm;
+
+  // JS kernel owns VFS in a closure — always create a fresh instance per boot
+  // so concurrent BrowserNode.boot() calls do not share filesystems.
+  if (mode === false) {
+    return createJsFallbackKernel();
+  }
+
+  if (cachedWasmFactory) return cachedWasmFactory;
+
+  const wasm = await tryLoadWasm(wasmUrl);
+  if (wasm) {
+    // WASM create() allocates a new kernel handle/VFS per boot — safe to reuse wrapper
+    cachedWasmFactory = wasm;
+    return wasm;
+  }
+
+  if (mode === true) {
     console.warn('[browsernode] WASM kernel requested but unavailable — using JS runtime');
   }
 
-  cached = createJsRuntime();
-  return cached;
+  return createJsFallbackKernel();
 }

@@ -39,6 +39,7 @@ Details: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Module matrix: [`ru
 | 10 Next.js APIs | ✅ | createRequire / async_hooks stubs / broader fs |
 | 11 Vite/Next demos | ✅ | Real templates under `demo/templates/` |
 | 12 File manager DX | ✅ | VFS explorer + install/run/save in-tab |
+| 13 WASM/JS parity | ✅ | rename, binary buffer I/O, spawn env, `useWasm: 'auto'`, conformance tests |
 
 ---
 
@@ -48,16 +49,19 @@ Phases below are ordered by **dependency** (foundation → tooling → apps → 
 
 ### Pillar A — Runtime foundation (must be rock-solid)
 
-#### Phase 13 — WASM ↔ JS parity (default boot) `M`
-Make WASM the trusted path without losing JS-fallback DX.
+#### Phase 13 — WASM ↔ JS parity (default boot) `M` ✅
 
-- [ ] Every host `bn.fs.*` / spawn / HTTP feature works identically on WASM and JS
-- [ ] `isDir` / `stat` / recursive `rm` / `rename` / binary `readFile`→`Uint8Array` on both
-- [ ] `process.env` injected from `spawn(..., { env })`
-- [ ] `BrowserNode.boot({ useWasm: 'auto' })` — WASM if available, else JS
-- [ ] Shared conformance test suite run in Node (JS kernel) + headless browser (WASM)
+Make WASM and JS kernels share one host surface; prefer auto-detect with JS fallback.
 
-**Exit:** same demo script passes on both runtimes.
+- [x] Host `bn.fs`: `exists` / `stat` / recursive `rm` / **`rename`** (kernel or portable copy+rm)
+- [x] Binary files: JS VFS stores `Uint8Array`; `readFile(path, 'buffer')` → `Uint8Array`; `writeFile` accepts bytes
+- [x] `process.env` injected from `spawn(..., { env })` on **JS** runtime (WASM spawn env still ignored until C ABI grows)
+- [x] `BrowserNode.boot({ useWasm: 'auto' | true | false })` — default **`auto`**; demo uses `false` for HttpBridge keep-alive certainty
+- [x] `bn.runtime` exposes `'js' | 'wasm'`
+- [x] Conformance suite: `packages/api/test/conformance.mjs` via `npm run test:api`
+- [ ] Full HTTP keep-alive feature-parity on WASM (still prefer JS for servers until Phase 18 / WASM HTTP hardening)
+
+**Exit (met for JS path):** conformance script green; same host FS/spawn-env APIs available; auto boot works.
 
 #### Phase 14 — Persistent VFS (OPFS) `M`
 Survive refresh like a real project disk.
@@ -307,13 +311,13 @@ Make BrowserNode the best runtime for AI coding agents in-browser:
 
 If capacity is limited, execute in this order for **maximum power per week**:
 
-1. **13** WASM/JS parity + tests  
-2. **14** OPFS persistence  
-3. **15** watch + binary files  
-4. **20** ESM  
-5. **23–24** npm bin + `npm run` / npx  
-6. **27–28** Vite in-tab  
-7. **16** process 2.0 / shell (**25**) as needed by Vite  
+1. **14** OPFS persistence  
+2. **15** watch + binary polish / symlinks  
+3. **20** ESM  
+4. **23–24** npm bin + `npm run` / npx  
+5. **27–28** Vite in-tab  
+6. **16** process 2.0 / shell (**25**) as needed by Vite  
+7. **18** Network / WASM HTTP parity remainder  
 8. **30** Next subset  
 9. Product polish (**32–34**) + publish (**40**)
 

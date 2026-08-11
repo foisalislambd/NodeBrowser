@@ -22,7 +22,9 @@
     "dev:next": "npm run dev --prefix demo/templates/next",
     "build:next": "npm run build --prefix demo/templates/next",
     "start:next": "npm run start --prefix demo/templates/next",
-    "test": "npm run build:native",
+    "test": "npm run test -w browsernode-runtime && npm run build:native",
+    "test:api": "npm run test -w browsernode-runtime",
+    "test:native": "npm run build:native",
     "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md']) require('fs').accessSync(f)\""
   },
   "engines": {
