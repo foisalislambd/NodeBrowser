@@ -4,22 +4,24 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | ok (subset) | sync + promises read/write/mkdir/readdir/unlink/stat |
+| `fs` / `fs/promises` | ok (subset) | + constants, accessSync, realpathSync, copyFileSync |
 | `path` | partial | posix only |
-| `process` | partial | cwd, argv, env, exit, **nextTick** |
-| `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex |
+| `process` | partial | cwd, argv, env, exit, nextTick |
+| `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex + index Proxy |
 | `events` | ok | EventEmitter basics |
 | `stream` | stub | EE subclasses |
 | `http` | ok (subset) | createServer + listen → HttpBridge / keep-alive |
 | `https` | todo | |
 | `net` | todo | map to virtual ports |
 | `child_process` | todo | kernel spawn |
-| `module` / `require` | ok | CJS; ESM next |
+| `module` / `require` | ok | CJS + **createRequire** |
 | `url` | stub | |
 | `util` | stub | |
 | `os` | stub | |
 | `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(sha256) |
 | `perf_hooks` | ok (subset) | performance.now + no-op PerformanceObserver |
+| `async_hooks` | stub | AsyncLocalStorage + createHook no-op |
+| `diagnostics_channel` | stub | channel subscribe/publish |
 | `worker_threads` | todo | |
 | `vm` | todo | QuickJS realms |
 | `assert` | stub | |
@@ -38,7 +40,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 ## Next.js checklist
 
-- [ ] broader `fs` + `module.createRequire`
-- [ ] `async_hooks` / `diagnostics_channel` stubs
+- [x] broader `fs` + `module.createRequire`
+- [x] `async_hooks` / `diagnostics_channel` stubs
 - [ ] edge vs node runtime split
 - [ ] large dependency install performance (OPFS cache)

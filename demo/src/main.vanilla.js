@@ -1,16 +1,23 @@
 const DEFAULT = `const fs = require('fs');
 const crypto = require('crypto');
 const { performance } = require('perf_hooks');
+const { createRequire } = require('module');
+const { AsyncLocalStorage } = require('async_hooks');
 
 console.log('cwd =', process.cwd());
 fs.writeFileSync('/home/project/hello.txt', 'BrowserNode VFS OK');
 console.log(fs.readFileSync('/home/project/hello.txt'));
 console.log('Buffer hex =', Buffer.from('hi').toString('hex'));
 console.log('randomBytes =', crypto.randomBytes(8).toString('hex'));
-console.log('sha256 =', crypto.createHash('sha256').update('browsernode').digest('hex').slice(0, 16) + '…');
+console.log('realpath =', fs.realpathSync('/home/project/hello.txt'));
+fs.copyFileSync('/home/project/hello.txt', '/home/project/hello.copy.txt');
+console.log('copy ok', fs.existsSync('/home/project/hello.copy.txt'));
+const req = createRequire('/home/project/index.js');
+console.log('createRequire(fs).F_OK =', req('fs').constants.F_OK);
+const als = new AsyncLocalStorage();
+als.run({ n: 7 }, function() { console.log('als', als.getStore().n); });
 console.log('perf.now =', performance.now());
 process.nextTick(function() { console.log('nextTick ok'); });
-console.log('2 + 2 =', 2 + 2);
 `;
 
 const HTTP_DEMO = `const http = require('http');

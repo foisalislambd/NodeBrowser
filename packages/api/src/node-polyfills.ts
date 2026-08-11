@@ -119,7 +119,9 @@ function __bn_fs_promises(fs) {
     readdir: function(p) { return Promise.resolve().then(function(){ return fs.readdirSync(p); }); },
     unlink: function(p) { return Promise.resolve().then(function(){ return fs.unlinkSync(p); }); },
     stat: function(p) { return Promise.resolve().then(function(){ return fs.statSync(p); }); },
-    access: function(p) { return Promise.resolve().then(function(){ if (!fs.existsSync(p)) throw new Error('ENOENT'); }); },
+    access: function(p) { return Promise.resolve().then(function(){ return fs.accessSync ? fs.accessSync(p) : (function(){ if (!fs.existsSync(p)) throw new Error('ENOENT'); })(); }); },
+    realpath: function(p) { return Promise.resolve().then(function(){ return fs.realpathSync(p); }); },
+    copyFile: function(src, dest) { return Promise.resolve().then(function(){ return fs.copyFileSync(src, dest); }); },
     rm: function(p) { return Promise.resolve().then(function(){ return fs.unlinkSync(p); }); },
   };
 }

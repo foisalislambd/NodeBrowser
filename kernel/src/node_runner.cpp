@@ -376,6 +376,9 @@ function __bn_fs_promises(fs) {
     readdir: function(p) { return Promise.resolve().then(function(){ return fs.readdirSync(p); }); },
     unlink: function(p) { return Promise.resolve().then(function(){ return fs.unlinkSync(p); }); },
     stat: function(p) { return Promise.resolve().then(function(){ return fs.statSync(p); }); },
+    access: function(p) { return Promise.resolve().then(function(){ return fs.accessSync(p); }); },
+    realpath: function(p) { return Promise.resolve().then(function(){ return fs.realpathSync(p); }); },
+    copyFile: function(src, dest) { return Promise.resolve().then(function(){ return fs.copyFileSync(src, dest); }); },
   };
 }
 
@@ -447,7 +450,8 @@ function resolveFrom(fromDir, request) {
   if (request === 'fs' || request === 'path' || request === 'http' || request === 'url' ||
       request === 'events' || request === 'util' || request === 'stream' || request === 'os' ||
       request === 'module' || request === 'buffer' || request === 'assert' || request === 'querystring' ||
-      request === 'crypto' || request === 'perf_hooks') {
+      request === 'crypto' || request === 'perf_hooks' || request === 'async_hooks' ||
+      request === 'diagnostics_channel') {
     return 'node:' + request;
   }
   throw new Error('Cannot find module \'' + request + '\'');
@@ -456,6 +460,11 @@ function resolveFrom(fromDir, request) {
 function loadCore(name) {
   if (name === 'fs') {
     var fs = {
+      constants: {
+        F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+        O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_TRUNC: 512, O_APPEND: 1024,
+        S_IFMT: 61440, S_IFREG: 32768, S_IFDIR: 16384,
+      },
       readFileSync: function(p, enc) {
         var t = __bn.readFile(String(p));
         if (t === null) throw new Error('ENOENT: ' + p);
@@ -467,6 +476,11 @@ function loadCore(name) {
         if (!__bn.writeFile(String(p), String(data))) throw new Error('EIO');
       },
       existsSync: function(p) { return !!__bn.exists(String(p)); },
+      accessSync: function(p) {
+        if (!__bn.exists(String(p))) {
+          var e = new Error('ENOENT: ' + p); e.code = 'ENOENT'; throw e;
+        }
+      },
       mkdirSync: function(p, opts) { __bn.mkdir(String(p), !!(opts && opts.recursive)); },
       readdirSync: function(p) {
         var a = __bn.readdir(String(p));
@@ -474,6 +488,29 @@ function loadCore(name) {
         return a;
       },
       unlinkSync: function(p) { if (!__bn.unlink(String(p))) throw new Error('ENOENT'); },
+      realpathSync: function(p) {
+        var path = String(p);
+        if (path[0] !== '/') path = join(process.cwd(), path);
+        var parts = [], segs = path.split('/');
+        for (var i = 0; i < segs.length; i++) {
+          var s = segs[i];
+          if (!s || s === '.') continue;
+          if (s === '..') parts.pop();
+          else parts.push(s);
+        }
+        path = '/' + parts.join('/');
+        if (!__bn.exists(path)) {
+          var e = new Error('ENOENT: ' + path); e.code = 'ENOENT'; throw e;
+        }
+        return path;
+      },
+      copyFileSync: function(src, dest) {
+        var t = __bn.readFile(String(src));
+        if (t === null) {
+          var e = new Error('ENOENT: ' + src); e.code = 'ENOENT'; throw e;
+        }
+        if (!__bn.writeFile(String(dest), t)) throw new Error('EIO');
+      },
       statSync: function(p) {
         var path = String(p);
         if (!__bn.exists(path)) throw new Error('ENOENT: ' + path);
@@ -482,6 +519,7 @@ function loadCore(name) {
         return {
           isFile: function() { return file; },
           isDirectory: function() { return dir; },
+          isSymbolicLink: function() { return false; },
         };
       },
     };
@@ -719,7 +757,67 @@ function loadCore(name) {
       constants: {},
     };
   }
-  if (name === 'module') return { wrap: function(s){return s;}, builtinModules: ['fs','path','http','crypto','perf_hooks'] };
+  if (name === 'module') return {
+    wrap: function(s){ return s; },
+    builtinModules: ['fs','path','http','crypto','perf_hooks','async_hooks','diagnostics_channel','module'],
+    createRequire: function(filename) {
+      var file = String(filename || process.cwd() + '/.');
+      if (file.indexOf('file:///') === 0) file = file.slice(7);
+      else if (file.indexOf('file://') === 0) {
+        file = file.slice(7);
+        if (file.charAt(0) !== '/') file = '/' + file.replace(/^[^/]+/, '');
+      }
+      else if (file.indexOf('file:') === 0) file = file.slice(5);
+      return createRequire(file);
+    },
+  };
+  if (name === 'async_hooks') {
+    function AsyncLocalStorage() { this._store = undefined; }
+    AsyncLocalStorage.prototype.run = function(store, fn) {
+      var prev = this._store; this._store = store;
+      try { return fn.apply(null, Array.prototype.slice.call(arguments, 2)); }
+      finally { this._store = prev; }
+    };
+    AsyncLocalStorage.prototype.getStore = function() { return this._store; };
+    AsyncLocalStorage.prototype.enterWith = function(store) { this._store = store; };
+    AsyncLocalStorage.prototype.disable = function() { this._store = undefined; };
+    return {
+      AsyncLocalStorage: AsyncLocalStorage,
+      createHook: function() { return { enable: function(){}, disable: function(){} }; },
+      executionAsyncId: function() { return 1; },
+      triggerAsyncId: function() { return 0; },
+    };
+  }
+  if (name === 'diagnostics_channel') {
+    var channels = Object.create(null);
+    function Channel(name) { this.name = name; this._subs = []; this.hasSubscribers = false; }
+    Channel.prototype.subscribe = function(fn) {
+      this._subs.push(fn); this.hasSubscribers = this._subs.length > 0;
+    };
+    Channel.prototype.unsubscribe = function(fn) {
+      this._subs = this._subs.filter(function(f) { return f !== fn; });
+      this.hasSubscribers = this._subs.length > 0;
+    };
+    Channel.prototype.publish = function(msg) {
+      for (var i = 0; i < this._subs.length; i++) try { this._subs[i](msg); } catch (e) {}
+    };
+    return {
+      channel: function(name) {
+        name = String(name);
+        return channels[name] || (channels[name] = new Channel(name));
+      },
+      hasSubscribers: function(name) {
+        var ch = channels[String(name)];
+        return !!(ch && ch.hasSubscribers);
+      },
+      tracingChannel: function() {
+        return {
+          start: function(){}, asyncStart: function(){}, asyncEnd: function(){},
+          error: function(){}, end: function(){}, subscribe: function(){}, unsubscribe: function(){},
+        };
+      },
+    };
+  }
   throw new Error('Unknown core module ' + name);
 }
 

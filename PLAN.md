@@ -27,48 +27,33 @@
 | 7 Async process | ✅ | **keep-alive servers + non-blocking spawn** |
 | 8 Vite path | ✅ | **esbuild-wasm transform demo** |
 | 9 Vite Node APIs | ✅ | **crypto / nextTick / perf_hooks** |
-| 10 Next.js | 🔜 | Incremental API coverage |
-
-## Phase 7 — Async / keep-alive processes (detail)
-
-**Done:** `listen()` keep-alive, HttpBridge, `wait === -1`, JS runtime default.
-
-## Phase 8 — Real HTTP preview (detail)
-
-SW ↔ MessageChannel ↔ HttpBridge ↔ Node handler; demo also paints via `srcdoc` fallback.
+| 10 Next.js APIs | ✅ | **createRequire / async_hooks stubs / broader fs** |
+| 11 Next.js app | 🔜 | Run a tiny Next subset later |
 
 ## Phase 9 — Vite Node API enablers (detail)
 
-1. `require('crypto')`: `randomFillSync`, `randomBytes`, `createHash('sha256')`
-2. `process.nextTick` via `queueMicrotask`
-3. `require('perf_hooks')`: `performance.now`, no-op `PerformanceObserver`
-4. Shared snippets in `packages/api/src/node-polyfills.ts`; mirrored in QuickJS bootstrap
+Done: crypto, nextTick, perf_hooks.
 
-## Phase 10 — Next.js (later)
+## Phase 10 — Next.js incremental APIs (detail)
 
-Incremental API coverage (`async_hooks` stubs, broader `fs`, OPFS cache, …).
+**Goal:** Unblock packages that import Next-ish Node builtins without full Next yet.
 
-## Directory layout
+1. `module.createRequire(filename)` → require function bound to that path
+2. `async_hooks` stub: `AsyncLocalStorage`, `createHook` no-ops
+3. `diagnostics_channel` stub: `channel().subscribe/publish` no-ops
+4. Broader `fs`: `constants`, `accessSync`, `realpathSync`, `copyFileSync`
+5. Mirror in QuickJS bootstrap
 
-```
-browsernode/
-├── PLAN.md
-├── kernel/
-├── vendor/quickjs/
-├── runtime/node/
-├── packages/api/
-│   └── src/
-│       ├── http-bridge.ts
-│       ├── npm-install.ts
-│       ├── esbuild-bundle.ts
-│       ├── js-runtime.ts
-│       ├── node-polyfills.ts
-│       └── …
-├── demo/
-└── scripts/
-```
+**Out of this slice:** full Next server, OPFS cache, edge runtime split, HMR websocket.
 
-## Success criteria (current milestone)
+## Success criteria (Phase 10)
+
+- [x] `require('module').createRequire('/x.js')('fs')` works
+- [x] `require('async_hooks').AsyncLocalStorage` runs `run()`
+- [x] `fs.accessSync` / `realpathSync` / `constants` / `copyFileSync` work
+- [x] Smoke test + MODULES.md updated
+
+## Success criteria (prior milestones)
 
 - [x] Boot kernel / JS fallback; mount VFS; run `node`
 - [x] `require` + node_modules resolution
