@@ -34,13 +34,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/foisalislambd/BrowserNode.git",
+    "url": "git+https://github.com/foisalislambd/NodeBrowser.git",
     "directory": "packages/api"
   },
   "bugs": {
-    "url": "https://github.com/foisalislambd/BrowserNode/issues"
+    "url": "https://github.com/foisalislambd/NodeBrowser/issues"
   },
-  "homepage": "https://github.com/foisalislambd/BrowserNode#readme",
+  "homepage": "https://github.com/foisalislambd/NodeBrowser#readme",
   "keywords": [
     "nodebrowser",
     "browsernode",

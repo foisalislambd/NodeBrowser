@@ -35,6 +35,6 @@ First automated npm release of `@foisal/nodebrowser`.
 - **Phase 13:** WASM/JS host parity — `fs.rename`, binary `readFile`, spawn `env`, `boot({ useWasm })`, conformance tests
 - In-browser VFS file manager; Vite/Next host templates
 
-[Unreleased]: https://github.com/foisalislambd/BrowserNode/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/foisalislambd/BrowserNode/releases/tag/v1.0.0
-[0.1.0]: https://github.com/foisalislambd/BrowserNode/releases/tag/v0.1.0
+[Unreleased]: https://github.com/foisalislambd/NodeBrowser/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/foisalislambd/NodeBrowser/releases/tag/v1.0.0
+[0.1.0]: https://github.com/foisalislambd/NodeBrowser/releases/tag/v0.1.0

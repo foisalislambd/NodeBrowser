@@ -50,7 +50,7 @@ On every push to `main` (unless the commit message contains `[skip release]`):
 1. Claim / create **`@foisal/nodebrowser`** on [npmjs.com](https://www.npmjs.com) under the **`foisal`** scope.
 2. Package → **Settings** → **Trusted Publisher** → **GitHub Actions**:
    - **Organization or user:** `foisalislambd`
-   - **Repository:** `BrowserNode`
+   - **Repository:** `NodeBrowser`
    - **Workflow filename:** `release.yml` (filename only)
    - Allowed action: **`npm publish`**
 3. Use a **public** repo for automatic provenance.

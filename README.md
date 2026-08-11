@@ -4,8 +4,8 @@
 
 Run `node`, a virtual filesystem, CommonJS `require`, npm install into a VFS, and HTTP preview — entirely in the tab. No remote compute server.
 
-[![CI](https://github.com/foisalislambd/BrowserNode/actions/workflows/ci.yml/badge.svg)](https://github.com/foisalislambd/BrowserNode/actions/workflows/ci.yml)
-[![Release](https://github.com/foisalislambd/BrowserNode/actions/workflows/release.yml/badge.svg)](https://github.com/foisalislambd/BrowserNode/actions/workflows/release.yml)
+[![CI](https://github.com/foisalislambd/NodeBrowser/actions/workflows/ci.yml/badge.svg)](https://github.com/foisalislambd/NodeBrowser/actions/workflows/ci.yml)
+[![Release](https://github.com/foisalislambd/NodeBrowser/actions/workflows/release.yml/badge.svg)](https://github.com/foisalislambd/NodeBrowser/actions/workflows/release.yml)
 [![npm](https://img.shields.io/npm/v/@foisal/nodebrowser.svg)](https://www.npmjs.com/package/@foisal/nodebrowser)
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](./package.json)
@@ -49,8 +49,8 @@ Honest roadmap & architecture: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](
 ## Quick start
 
 ```bash
-git clone --recurse-submodules https://github.com/foisalislambd/BrowserNode.git
-cd BrowserNode
+git clone --recurse-submodules https://github.com/foisalislambd/NodeBrowser.git
+cd NodeBrowser
 
 # Optional: toolchain (Node, CMake, Ninja, Emscripten) — see scripts/setup-toolchain.sh
 npm install
