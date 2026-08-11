@@ -15,7 +15,7 @@
 | Node Compat | Bootstrap + host polyfills | `fs`, `path`, `http`, `crypto`, … |
 | Package Mgr | TS host + npm registry | install into VFS (+ deps + cache) |
 | Networking | Service Worker ↔ HttpBridge | Preview `/__bn_preview/:port` |
-| Host API | `nodebrowser` (`packages/api`) | WebContainer-like DX |
+| Host API | `@foisal/nodebrowser` (`packages/api`) | WebContainer-like DX |
 | Demo | Vanilla UI | File manager, terminal, preview |
 
 Details: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Module matrix: [`runtime/node/MODULES.md`](./runtime/node/MODULES.md)
@@ -290,13 +290,14 @@ Make NodeBrowser the best runtime for AI coding agents in-browser:
 ### Pillar I — Open-source productization
 
 #### Phase 40 — Publish & docs site `M`
-- [ ] Publish `nodebrowser` to npm with semver
+- [ ] Publish `@foisal/nodebrowser` to npm with semver (automated Trusted Publisher on `main`)
+- [x] Release workflow: npm OIDC + GitHub Packages + GitHub Release (`1.0.0`…`1.0.9`→`1.1.0`)
 - [ ] API reference (TypeDoc)
 - [ ] Guide site: Boot, VFS, npm, Vite, embed
 - [ ] Migration guide from WebContainers API (method mapping table)
 
 #### Phase 41 — Compatibility layer `M`
-- [ ] Optional `@nodebrowser/webcontainer-compat` shim mirroring StackBlitz WebContainer API shapes where possible
+- [ ] Optional `@foisal/nodebrowser-compat` shim mirroring StackBlitz WebContainer API shapes where possible
 - [ ] Document deltas honestly
 
 #### Phase 42 — Ecosystem `S–L`

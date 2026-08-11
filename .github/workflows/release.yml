@@ -1,0 +1,151 @@
+name: Release
+
+# Push to main → build/test → npm (Trusted Publisher / OIDC) → GitHub Packages → GitHub Release.
+# Version: 1.0.0 → 1.0.1 → … → 1.0.9 → 1.1.0 (patch/minor roll at 9).
+# Skip with commit message containing [skip release].
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build + test
+    if: ${{ !contains(github.event.head_commit.message || '', '[skip release]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm install --no-fund --no-audit
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: API conformance
+        run: npm run test:api
+
+      - name: Build demo
+        run: npm run build:demo
+
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+
+      - name: Fetch QuickJS if needed
+        run: bash scripts/fetch-deps.sh || true
+
+      - name: Native tests
+        run: npm run build:native
+
+  publish:
+    name: Publish + GitHub Release
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    env:
+      NPM_PACKAGE: '@foisal/nodebrowser'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node (npmjs + OIDC)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Ensure npm CLI supports Trusted Publishing
+        run: npm install -g npm@latest
+
+      - name: Install
+        run: npm install --no-fund --no-audit
+
+      - name: Resolve next version
+        id: ver
+        run: |
+          NEXT=$(node scripts/next-version.mjs --set)
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
+      - name: Build API for publish
+        run: npm run build:api
+
+      - name: Publish to npm (Trusted Publisher / OIDC)
+        run: npm publish -w "$NPM_PACKAGE" --access public
+        env:
+          NPM_CONFIG_PROVENANCE: true
+
+      - name: Publish to GitHub Packages
+        env:
+          OWNER: ${{ github.repository_owner }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: node scripts/publish-github-packages.mjs
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/api/package.json package.json
+          if git diff --staged --quiet; then
+            echo "No version file changes to commit"
+          else
+            git commit -m "chore(release): v${{ steps.ver.outputs.version }} [skip release]"
+            git push
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          TAG="v${VERSION}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          NOTES="$(cat <<EOF
+          ## \`@foisal/nodebrowser@${VERSION}\`
+
+          Automated release from \`main\`.
+
+          ### Install (npm)
+
+          \`\`\`bash
+          npm install @foisal/nodebrowser@${VERSION}
+          \`\`\`
+
+          ### GitHub Packages
+
+          \`\`\`bash
+          npm install @${OWNER}/nodebrowser@${VERSION} --registry=https://npm.pkg.github.com
+          \`\`\`
+
+          (GitHub Packages scope must match the repo owner: \`@${OWNER}/nodebrowser\`.)
+
+          EOF
+          )"
+          gh release create "$TAG" --title "$TAG" --notes "$NOTES"

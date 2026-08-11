@@ -9,7 +9,7 @@
 
 ## What we can help with
 
-- `nodebrowser` usage (`boot` / `mount` / `spawn` / `install`)
+- `@foisal/nodebrowser` usage (`boot` / `mount` / `spawn` / `install`)
 - Demo playground behavior
 - Building native tests / WASM toolchain problems
 - Contributing Node API polyfills

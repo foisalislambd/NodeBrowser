@@ -1,6 +1,6 @@
 {
-  "name": "nodebrowser",
-  "version": "0.1.0",
+  "name": "@foisal/nodebrowser",
+  "version": "1.0.0",
   "description": "Node.js in the browser (NodeBrowser) — WebContainers-style runtime (VFS, spawn, npm, HTTP preview)",
   "license": "MIT",
   "type": "module",
@@ -27,15 +27,20 @@
   "devDependencies": {
     "typescript": "^5.8.2"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "provenance": true
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_ORG/browsernode.git",
+    "url": "git+https://github.com/foisalislambd/BrowserNode.git",
     "directory": "packages/api"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_ORG/browsernode/issues"
+    "url": "https://github.com/foisalislambd/BrowserNode/issues"
   },
-  "homepage": "https://github.com/YOUR_ORG/browsernode#readme",
+  "homepage": "https://github.com/foisalislambd/BrowserNode#readme",
   "keywords": [
     "nodebrowser",
     "browsernode",

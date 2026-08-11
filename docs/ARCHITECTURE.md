@@ -4,8 +4,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  Browser Tab (COOP + COEP → SharedArrayBuffer)              │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │ Demo UI      │  │ nodebrowser  │  │ Service Worker    │  │
-│  │ Editor/Term  │◄─┤ API          │◄─┤ Preview + proxy   │  │
+│  │ Demo UI      │  │ @foisal/     │  │ Service Worker    │  │
+│  │ Editor/Term  │◄─┤ nodebrowser  │◄─┤ Preview + proxy   │  │
 │  └──────────────┘  └──────┬───────┘  └─────────┬─────────┘  │
 │                           │ MessagePort / SAB               │
 │                    ┌──────▼────────────────────┐            │

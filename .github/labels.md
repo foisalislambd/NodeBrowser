@@ -9,5 +9,5 @@ question: Further information requested
 security: Security-related (prefer private advisory)
 ci: Continuous integration
 kernel: C++ / WASM kernel
-api: nodebrowser (packages/api)
+api: @foisal/nodebrowser (packages/api)
 demo: Demo playground

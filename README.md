@@ -4,14 +4,14 @@
 
 Run `node`, a virtual filesystem, CommonJS `require`, npm install into a VFS, and HTTP preview — entirely in the tab. No remote compute server.
 
-[![CI](https://github.com/browsernode/browsernode/actions/workflows/ci.yml/badge.svg)](https://github.com/browsernode/browsernode/actions/workflows/ci.yml)
+[![CI](https://github.com/foisalislambd/BrowserNode/actions/workflows/ci.yml/badge.svg)](https://github.com/foisalislambd/BrowserNode/actions/workflows/ci.yml)
+[![Release](https://github.com/foisalislambd/BrowserNode/actions/workflows/release.yml/badge.svg)](https://github.com/foisalislambd/BrowserNode/actions/workflows/release.yml)
+[![npm](https://img.shields.io/npm/v/@foisal/nodebrowser.svg)](https://www.npmjs.com/package/@foisal/nodebrowser)
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](./package.json)
 
-> **Note:** Replace the CI badge org/repo path with your GitHub URL after publishing.
-
 ```ts
-import { NodeBrowser } from 'nodebrowser';
+import { NodeBrowser } from '@foisal/nodebrowser';
 
 const bn = await NodeBrowser.boot();
 await bn.mount({
@@ -49,8 +49,8 @@ Honest roadmap & architecture: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](
 ## Quick start
 
 ```bash
-git clone --recurse-submodules https://github.com/YOUR_ORG/browsernode.git
-cd browsernode
+git clone --recurse-submodules https://github.com/foisalislambd/BrowserNode.git
+cd BrowserNode
 
 # Optional: toolchain (Node, CMake, Ninja, Emscripten) — see scripts/setup-toolchain.sh
 npm install
@@ -91,10 +91,10 @@ Templates live under [`demo/templates/`](./demo/templates/).
 ```
 kernel/           C++ VFS, processes, C ABI, QuickJS node runner
 vendor/           QuickJS (git submodule)
-packages/api/     `nodebrowser` npm package (TypeScript host API)
+packages/api/     `@foisal/nodebrowser` (TypeScript host API)
 demo/             Playground UI + templates
 docs/             Architecture & guides
-scripts/          build-wasm, serve-demo, setup-toolchain, …
+scripts/          build-wasm, serve-demo, setup-toolchain, release helpers, …
 ```
 
 ```bash
@@ -109,32 +109,22 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md). Please read the [Code of Conduct](./
 
 Bug reports and ideas: use [GitHub Issues](../../issues). Security: [`SECURITY.md`](./SECURITY.md).
 
-## npm package name & publishing
+## npm package & publishing
 
-| Package | Name on npm | Notes |
-|---------|-------------|--------|
-| Host API | **`nodebrowser`** | Publish this (unscoped) |
+| Package | Name | Notes |
+|---------|------|--------|
+| Host API | **`@foisal/nodebrowser`** | Published on every `main` push |
 | Monorepo root | `nodebrowser-monorepo` | `"private": true` — do **not** publish |
 | Demo | `demo` | Local only — do **not** publish |
 
-> Plain **`browsernode`** is already taken on npm — we publish as **`nodebrowser`**.
-
-Future optional add-ons may use `@nodebrowser/...`. See [`docs/PUBLISHING.md`](./docs/PUBLISHING.md).
-
 ```bash
-npm login
-npm run build:api
-npm publish -w nodebrowser
+npm install @foisal/nodebrowser
 ```
 
-Users install with:
-
-```bash
-npm install nodebrowser
-```
+Push to **`main`** builds, publishes to **npm** (Trusted Publisher / OIDC) and **GitHub Packages**, then creates a **GitHub Release** starting at `1.0.0` (`1.0.9` → `1.1.0`).
 
 Full guide: **[`docs/PUBLISHING.md`](./docs/PUBLISHING.md)**.  
-Release tags: [`docs/RELEASING.md`](./docs/RELEASING.md).
+Release process: [`docs/RELEASING.md`](./docs/RELEASING.md).
 
 ## Design
 

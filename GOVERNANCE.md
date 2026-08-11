@@ -21,7 +21,7 @@ NodeBrowser is an early (v0.1) open-source project. Day-to-day decisions are mad
 
 - Version lives in root / workspace `package.json` files.
 - Tag releases as `vX.Y.Z` and update [`CHANGELOG.md`](./CHANGELOG.md).
-- npm publish of `nodebrowser` is optional until the API is declared stable.
+- npm publish of `@foisal/nodebrowser` is automated from `main` (Trusted Publisher).
 
 ## Becoming a maintainer
 

@@ -27,7 +27,7 @@ Open-source **WebContainers-class** runtime: real `npm` / Vite / Next-subset **i
 ## Then
 
 - Terminal (xterm) + stronger IDE UX  
-- Publish `nodebrowser` + docs site  
+- Publish `@foisal/nodebrowser` + docs site
 - WebContainer API compat shim  
 - Performance benchmarks vs WebContainers  
 - Agent/automation headless API  

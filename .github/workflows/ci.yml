@@ -1,10 +1,9 @@
 name: CI
 
 on:
-  push:
-    branches: [main, master]
   pull_request:
     branches: [main, master]
+  # main pushes are covered by release.yml (build + publish)
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

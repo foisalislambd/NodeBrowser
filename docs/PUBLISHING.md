@@ -1,24 +1,22 @@
-# Publishing NodeBrowser to npm
+# Publishing `@foisal/nodebrowser`
 
 ## Short answer
 
 | Question | Answer |
 |----------|--------|
-| Public npm name | **`nodebrowser`** (available on npm) |
-| Import | `import { NodeBrowser } from 'nodebrowser'` |
-| More packages later? | Optional (`@nodebrowser/compat`, etc.) — day one is one package |
+| Public npm name | **`@foisal/nodebrowser`** |
+| Import | `import { NodeBrowser } from '@foisal/nodebrowser'` |
+| Auto release | Push to **`main`** → build → npm (Trusted Publisher) → GitHub Packages → GitHub Release |
 
 ```bash
-npm install nodebrowser
+npm install @foisal/nodebrowser
 ```
 
 ```ts
-import { NodeBrowser } from 'nodebrowser';
+import { NodeBrowser } from '@foisal/nodebrowser';
 
 const bn = await NodeBrowser.boot();
 ```
-
-> Note: plain **`browsernode`** is taken by an unrelated project — we intentionally use **`nodebrowser`**.
 
 ---
 
@@ -26,52 +24,63 @@ const bn = await NodeBrowser.boot();
 
 | npm `name` | Path | Publish? | Role |
 |------------|------|----------|------|
-| **`nodebrowser`** | `packages/api` | **Yes** | Public API |
+| **`@foisal/nodebrowser`** | `packages/api` | **Yes** (npm) | Public API |
+| `@<github-owner>/nodebrowser` | same tarball | **Yes** (GitHub Packages) | Mirror; scope must match GitHub owner |
 | `nodebrowser-monorepo` | repo root | **No** (`private`) | Workspace root |
 | `demo` | `demo/` | **No** | Playground |
 
+> GitHub Packages requires the package scope to equal the repository owner. This repo is under **`foisalislambd`**, so the GitHub Packages name is **`@foisalislambd/nodebrowser`**. Canonical install path for everyone else is still **`@foisal/nodebrowser`** on the public npm registry.
+
 ---
 
-## One-time setup
+## Automated release (preferred)
+
+Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+
+On every push to `main` (unless the commit message contains `[skip release]`):
+
+1. Build + test (API, demo, native)
+2. Bump version (`1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`; patch/minor roll at **9**)
+3. Publish to **npm** via **Trusted Publisher (OIDC)** — no long-lived `NPM_TOKEN`
+4. Publish to **GitHub Packages**
+5. Commit version bump (`[skip release]`), tag `vX.Y.Z`, create **GitHub Release**
+
+### One-time npm Trusted Publisher setup
+
+1. Claim / create **`@foisal/nodebrowser`** on [npmjs.com](https://www.npmjs.com) under the **`foisal`** scope.
+2. Package → **Settings** → **Trusted Publisher** → **GitHub Actions**:
+   - **Organization or user:** `foisalislambd`
+   - **Repository:** `BrowserNode`
+   - **Workflow filename:** `release.yml` (filename only)
+   - Allowed action: **`npm publish`**
+3. Use a **public** repo for automatic provenance.
+4. No `NPM_TOKEN` secret is required for publish.
+
+Requirements: GitHub-hosted runner, Node 24 + npm ≥ 11.5.1 (workflow installs latest npm).
+
+### GitHub Packages
+
+Uses `GITHUB_TOKEN` (`packages: write`). Consumers:
 
 ```bash
-npm login
-npm whoami
-npm view nodebrowser   # expect 404 until first publish
-```
+# ~/.npmrc
+@foisalislambd:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_GH_TOKEN
 
-Enable 2FA on npm.
+npm install @foisalislambd/nodebrowser
+```
 
 ---
 
-## Publish
+## Manual publish (emergency only)
 
 ```bash
 npm run build:api
-npm pack -w nodebrowser --dry-run
-npm publish -w nodebrowser
+npm pack -w @foisal/nodebrowser --dry-run
+npm publish -w @foisal/nodebrowser --access public
 ```
 
-Verify:
-
-```bash
-npm view nodebrowser version
-```
-
-Tags / changelog: [`RELEASING.md`](./RELEASING.md).
-
----
-
-## Future packages (optional)
-
-When the product grows:
-
-| Name | Purpose |
-|------|---------|
-| `@nodebrowser/webcontainer-compat` | StackBlitz-shaped shim |
-| `@nodebrowser/react` | React helpers |
-
-Create npm org `nodebrowser` only when adding scoped packages.
+Prefer the Trusted Publisher workflow instead of long-lived tokens.
 
 ---
 
@@ -79,6 +88,8 @@ Create npm org `nodebrowser` only when adding scoped packages.
 
 | Mistake | Fix |
 |---------|-----|
-| Publishing monorepo root | Use `-w nodebrowser` |
-| Missing `dist/` | `npm run build:api` first |
-| Using name `browsernode` | Taken — use `nodebrowser` |
+| Publishing monorepo root | Use `-w @foisal/nodebrowser` |
+| Trusted Publisher workflow name typo | Must be exactly `release.yml` |
+| Missing `id-token: write` | Required for OIDC |
+| Expecting `@foisal/…` on GitHub Packages | Scope must match GitHub owner |
+| Using name `browsernode` | Taken — use `@foisal/nodebrowser` |
