@@ -98,6 +98,7 @@ async function showPreview(port, url, opts = {}) {
     $('preview').removeAttribute('srcdoc');
     $('preview').src = url;
     appendTerm(`[preview] iframe → ${url}\n`);
+    if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
     return;
   }
   if (bn && port != null) {
@@ -114,6 +115,7 @@ async function showPreview(port, url, opts = {}) {
           $('preview').removeAttribute('src');
           $('preview').srcdoc = res.body;
           appendTerm(`[preview] rendered port ${port} via HttpBridge (${res.status})\n`);
+          if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
           return;
         }
       }
@@ -125,6 +127,7 @@ async function showPreview(port, url, opts = {}) {
   if (url) {
     $('preview').removeAttribute('srcdoc');
     $('preview').src = url;
+    if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
   }
 }
 
@@ -194,6 +197,7 @@ async function onTreeClick(path, isDirectory) {
   setEditorPath(path);
   setCwd(dirname(path));
   await refreshTree();
+  if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('editor');
 }
 
 async function saveFile() {
@@ -296,6 +300,7 @@ async function boot() {
 
 async function runNode() {
   if (!bn) return;
+  if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('term');
   if (dirty) await saveFile();
   const script = openPath.endsWith('.js') || openPath.endsWith('.mjs') || openPath.endsWith('.cjs')
     ? openPath
@@ -474,6 +479,19 @@ $('btn-vite-load')?.addEventListener('click', () => viteLoad().catch((e) => appe
 $('btn-vite-preview')?.addEventListener('click', () => vitePreview().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-load')?.addEventListener('click', () => nextLoad().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-preview')?.addEventListener('click', () => nextPreview().catch((e) => appendTerm(String(e) + '\n')));
+
+function setMobilePane(name) {
+  const stage = document.querySelector('.stage');
+  if (!stage) return;
+  stage.dataset.pane = name;
+  document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.pane === name);
+  });
+}
+
+document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
+  btn.addEventListener('click', () => setMobilePane(btn.dataset.pane));
+});
 
 async function registerSw() {
   if (!('serviceWorker' in navigator)) return;

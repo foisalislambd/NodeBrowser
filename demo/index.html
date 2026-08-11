@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>BrowserNode</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,66 +13,92 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="grid-bg" aria-hidden="true"></div>
-    <header class="top">
-      <div class="brand">
-        <span class="mark" aria-hidden="true"></span>
-        <h1>BrowserNode</h1>
-      </div>
-      <p class="tag">Runs in this tab (VFS) — no remote Node server</p>
-    </header>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="grid-bg"></div>
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+    </div>
 
-    <main class="stage">
-      <section class="pane files-pane">
-        <div class="pane-head">
-          <span>files</span>
-          <div class="actions">
-            <button type="button" id="btn-fs-refresh" class="btn" title="Refresh">↻</button>
-            <button type="button" id="btn-fs-newfile" class="btn" title="New file">+ file</button>
-            <button type="button" id="btn-fs-newdir" class="btn" title="New folder">+ dir</button>
-            <button type="button" id="btn-fs-delete" class="btn" title="Delete">del</button>
+    <div class="shell">
+      <header class="top">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div class="brand-text">
+            <h1>BrowserNode</h1>
+            <p class="tag">Node in the tab — VFS, install, run. No remote server.</p>
           </div>
         </div>
-        <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
-        <div class="cwd-bar">
-          <span class="cwd-label">cwd</span>
-          <code id="cwd-path">/home/project</code>
+        <div class="top-meta">
+          <span class="pill">in-browser</span>
+          <span class="pill soft" id="status">booting…</span>
         </div>
-      </section>
+      </header>
 
-      <section class="pane editor-pane">
-        <div class="pane-head">
-          <span id="editor-path">/home/project/index.js</span>
-          <div class="actions">
-            <button type="button" id="btn-save" class="btn">Save</button>
-            <button type="button" id="btn-run" class="btn primary">Run</button>
-            <button type="button" id="btn-install" class="btn">Install</button>
-            <button type="button" id="btn-http" class="btn">HTTP</button>
-            <button type="button" id="btn-bundle" class="btn">Bundle</button>
+      <main class="stage" data-pane="editor">
+        <section class="pane files-pane" data-panel="files">
+          <div class="pane-head">
+            <span class="pane-title">files</span>
+            <div class="actions">
+              <button type="button" id="btn-fs-refresh" class="btn ghost" title="Refresh">↻</button>
+              <button type="button" id="btn-fs-newfile" class="btn ghost" title="New file">+ file</button>
+              <button type="button" id="btn-fs-newdir" class="btn ghost" title="New folder">+ dir</button>
+              <button type="button" id="btn-fs-delete" class="btn ghost danger" title="Delete">del</button>
+            </div>
           </div>
-        </div>
-        <div class="app-bar" aria-label="Templates">
-          <span class="app-bar-label">Templates</span>
-          <div class="actions">
-            <button type="button" id="btn-vite-load" class="btn">Load Vite</button>
-            <button type="button" id="btn-vite-preview" class="btn">Vite preview</button>
-            <button type="button" id="btn-next-load" class="btn">Load Next</button>
-            <button type="button" id="btn-next-preview" class="btn">Next preview</button>
+          <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
+          <div class="cwd-bar">
+            <span class="cwd-label">cwd</span>
+            <code id="cwd-path">/home/project</code>
           </div>
-        </div>
-        <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
-      </section>
+        </section>
 
-      <section class="pane term-pane">
-        <div class="pane-head"><span>terminal</span><span id="status" class="status">booting…</span></div>
-        <pre id="term" class="term" aria-live="polite"></pre>
-      </section>
+        <section class="pane editor-pane" data-panel="editor">
+          <div class="pane-head">
+            <span class="path-chip" id="editor-path" title="/home/project/index.js">/home/project/index.js</span>
+            <div class="actions scroll-x">
+              <button type="button" id="btn-save" class="btn">Save</button>
+              <button type="button" id="btn-run" class="btn primary">Run</button>
+              <button type="button" id="btn-install" class="btn">Install</button>
+              <button type="button" id="btn-http" class="btn">HTTP</button>
+              <button type="button" id="btn-bundle" class="btn">Bundle</button>
+            </div>
+          </div>
+          <div class="app-bar" aria-label="Templates">
+            <span class="app-bar-label">Templates</span>
+            <div class="actions scroll-x">
+              <button type="button" id="btn-vite-load" class="btn ghost">Load Vite</button>
+              <button type="button" id="btn-vite-preview" class="btn ghost">Vite preview</button>
+              <button type="button" id="btn-next-load" class="btn ghost">Load Next</button>
+              <button type="button" id="btn-next-preview" class="btn ghost">Next preview</button>
+            </div>
+          </div>
+          <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
+        </section>
 
-      <section class="pane preview-pane">
-        <div class="pane-head"><span>preview</span><span id="preview-url" class="status"></span></div>
-        <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin"></iframe>
-      </section>
-    </main>
+        <section class="pane term-pane" data-panel="term">
+          <div class="pane-head">
+            <span class="pane-title">terminal</span>
+            <span class="live-dot" aria-hidden="true"></span>
+          </div>
+          <pre id="term" class="term" aria-live="polite"></pre>
+        </section>
+
+        <section class="pane preview-pane" data-panel="preview">
+          <div class="pane-head">
+            <span class="pane-title">preview</span>
+            <span id="preview-url" class="status url-chip"></span>
+          </div>
+          <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin"></iframe>
+        </section>
+      </main>
+
+      <nav class="mobile-nav" aria-label="Panels">
+        <button type="button" class="mobile-nav-btn active" data-pane="files">Files</button>
+        <button type="button" class="mobile-nav-btn" data-pane="editor">Editor</button>
+        <button type="button" class="mobile-nav-btn" data-pane="term">Term</button>
+        <button type="button" class="mobile-nav-btn" data-pane="preview">Preview</button>
+      </nav>
+    </div>
 
     <script type="importmap">
       {
