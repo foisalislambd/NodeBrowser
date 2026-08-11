@@ -479,6 +479,3 @@ These are **not** required for “most powerful WebContainers-class” and shoul
 - Architecture: `[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)`
 
 Update this file when a phase starts/finishes — status table at the top of “Future roadmap” can gain ✅ rows over time.
-
-
-
