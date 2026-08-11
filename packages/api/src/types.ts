@@ -18,7 +18,15 @@ export interface BrowserNodeProcess {
   write(data: string): void;
 }
 
+export type InstallProgressEvent = {
+  phase: 'resolve' | 'fetch' | 'extract' | 'done';
+  name: string;
+  version?: string;
+  message?: string;
+};
+
 export type BrowserNodeEventMap = {
   'server-ready': [port: number, url: string];
+  'install-progress': [progress: InstallProgressEvent];
   error: [error: Error];
 };

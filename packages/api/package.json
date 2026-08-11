@@ -18,6 +18,9 @@
     "build": "tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "esbuild-wasm": "0.25.0"
+  },
   "devDependencies": {
     "typescript": "^5.8.2"
   }

@@ -30,6 +30,7 @@
             <button type="button" id="btn-run" class="btn primary">Run node</button>
             <button type="button" id="btn-install" class="btn">npm install ms</button>
             <button type="button" id="btn-http" class="btn">HTTP demo</button>
+            <button type="button" id="btn-bundle" class="btn">Bundle esbuild</button>
           </div>
         </div>
         <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
@@ -46,6 +47,13 @@
       </section>
     </main>
 
+    <script type="importmap">
+      {
+        "imports": {
+          "esbuild-wasm": "/node_modules/esbuild-wasm/esm/browser.js"
+        }
+      }
+    </script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

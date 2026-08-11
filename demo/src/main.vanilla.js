@@ -1,22 +1,28 @@
 const DEFAULT = `const fs = require('fs');
-const path = require('path');
 
 console.log('cwd =', process.cwd());
 fs.writeFileSync('/home/project/hello.txt', 'BrowserNode VFS OK');
 console.log(fs.readFileSync('/home/project/hello.txt'));
+console.log('Buffer hex =', Buffer.from('hi').toString('hex'));
 console.log('2 + 2 =', 2 + 2);
 `;
 
 const HTTP_DEMO = `const http = require('http');
 
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end('<h1>Hello from BrowserNode</h1><p>Served without a remote server.</p>');
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end('<h1>Hello from BrowserNode</h1><p>Served without a remote server.</p><p>path=' + req.url + '</p>');
 });
 
 server.listen(3000, () => {
   console.log('listening on 3000');
 });
+`;
+
+const BUNDLE_ENTRY = `export function greet(name) {
+  return 'Hello, ' + name + ' from esbuild-wasm';
+}
+console.log(greet('BrowserNode'));
 `;
 
 function $(id) {
@@ -30,11 +36,9 @@ function appendTerm(text) {
 }
 
 async function loadApi() {
-  // Served from monorepo paths by serve-demo.mjs
   try {
     return await import('/packages/api/dist/index.js');
   } catch {
-    // relative when opened from demo/dist with copied stubs
     return await import('./browsernode-api.js');
   }
 }
@@ -43,13 +47,15 @@ const editor = $('editor');
 editor.value = DEFAULT;
 
 let bn = null;
+let httpProc = null;
 
 async function boot() {
   $('status').textContent = 'booting…';
   const { BrowserNode } = await loadApi();
   bn = await BrowserNode.boot();
+  bn.attachServiceWorkerBridge('/__bn_preview');
   await bn.mount({
-    'home': {
+    home: {
       directory: {
         project: {
           directory: {
@@ -64,8 +70,11 @@ async function boot() {
     $('preview').src = url;
     appendTerm(`\n[server-ready] port=${port} url=${url}\n`);
   });
+  bn.on('install-progress', (p) => {
+    appendTerm(`[install] ${p.phase} ${p.name}${p.version ? '@' + p.version : ''}${p.message ? ' — ' + p.message : ''}\n`);
+  });
   $('status').textContent = 'ready';
-  appendTerm('BrowserNode ready.\n');
+  appendTerm('BrowserNode ready (JS runtime + HttpBridge).\n');
 }
 
 async function runNode() {
@@ -100,38 +109,68 @@ console.log(ms('1h'));
 
 async function httpDemo() {
   if (!bn) return;
+  if (httpProc) {
+    try {
+      httpProc.kill();
+    } catch {
+      /* ignore */
+    }
+    httpProc = null;
+  }
   editor.value = HTTP_DEMO;
   await bn.fs.writeFile('/home/project/server.js', HTTP_DEMO);
   $('term').textContent = '';
-  const proc = await bn.spawn('node', ['/home/project/server.js'], { cwd: '/home/project' });
-  const reader = proc.output.getReader();
+  httpProc = await bn.spawn('node', ['/home/project/server.js'], { cwd: '/home/project' });
+  const reader = httpProc.output.getReader();
   (async () => {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       appendTerm(value);
     }
+    appendTerm('\n[http process ended]\n');
   })();
-  // Fallback preview page if SW not active
-  setTimeout(() => {
-    if (!$('preview').src) {
-      $('preview').srcdoc =
-        '<h1 style="font-family:sans-serif">HTTP server registered in-kernel</h1>' +
-        '<p>Full request proxy lands with Service Worker (sw.js).</p>';
-      $('preview-url').textContent = '/__bn_preview/3000/';
-    }
-  }, 200);
+  appendTerm('(server keep-alive — preview via Service Worker)\n');
+}
+
+async function bundleDemo() {
+  if (!bn) return;
+  $('term').textContent = '';
+  appendTerm('esbuild-wasm bundle …\n');
+  try {
+    await bn.fs.mkdir('/src', { recursive: true });
+    await bn.fs.writeFile('/src/main.js', BUNDLE_ENTRY);
+    await bn.fs.writeFile(
+      '/dist/index.html',
+      '<!doctype html><meta charset=utf-8><title>bundle</title><body><pre id=o>bundled</pre><script src="./bundle.js"></script></body>',
+    );
+    const { outfile } = await bn.bundle({ entry: '/src/main.js', outfile: '/dist/bundle.js', format: 'iife' });
+    appendTerm(`wrote ${outfile}\n`);
+    editor.value = BUNDLE_ENTRY;
+  } catch (e) {
+    appendTerm(String(e) + '\n');
+  }
 }
 
 $('btn-run').addEventListener('click', () => runNode().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-install').addEventListener('click', () => installMs().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-http').addEventListener('click', () => httpDemo().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-bundle')?.addEventListener('click', () => bundleDemo().catch((e) => appendTerm(String(e) + '\n')));
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+async function registerSw() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('./sw.js');
+    await navigator.serviceWorker.ready;
+    appendTerm(`service worker ready (${reg.scope})\n`);
+  } catch (e) {
+    appendTerm('SW register failed: ' + e + '\n');
+  }
 }
 
-boot().catch((e) => {
-  $('status').textContent = 'boot failed';
-  appendTerm(String(e) + '\n');
-});
+registerSw()
+  .then(() => boot())
+  .catch((e) => {
+    $('status').textContent = 'boot failed';
+    appendTerm(String(e) + '\n');
+  });

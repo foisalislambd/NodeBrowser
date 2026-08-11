@@ -2,114 +2,108 @@
 
 **Goal:** Run Node.js / npm / Vite / Next.js entirely in the browser, with no remote compute server. Core runtime in C/C++ → WebAssembly.
 
-## Why this architecture
-
-StackBlitz WebContainers is a proprietary WASM OS + Node runtime. We cannot clone it; we rebuild the same *capabilities* with an open design:
+## Architecture (summary)
 
 | Layer | Technology | Role |
 |-------|------------|------|
-| Kernel | C++ → WASM (Emscripten) | VFS, processes, pipes, signals, virtual TCP |
-| JS Engine | QuickJS (C, linked into WASM) | Execute JS/CJS like `node` |
-| Node Compat | C++ bindings + JS polyfills | `fs`, `path`, `buffer`, `events`, `stream`, `http`, `net`, `child_process`, `module` |
-| Package Mgr | TS host + registry fetch | `npm install` via npm registry / CDN into VFS |
-| Networking | Service Worker + MessageChannel | Preview `localhost:port` without real sockets |
-| Host API | TypeScript (`@browsernode/api`) | Boot, mount FS, spawn, events — WebContainer-like DX |
+| Kernel | C++ → WASM (Emscripten) | VFS, processes, pipes, virtual ports |
+| JS Engine | QuickJS (submodule `vendor/quickjs`) + JS fallback | Execute JS/CJS like `node` |
+| Node Compat | Bootstrap + host polyfills | `fs`, `path`, `buffer`, `http`, … |
+| Package Mgr | TS host + npm registry | install into VFS (+ deps + cache) |
+| Networking | Service Worker ↔ HttpBridge | Preview `/__bn_preview/:port` |
+| Host API | `@browsernode/api` | WebContainer-like DX |
 
-## Reality check (honest roadmap)
+## Phase status
 
-A *perfect* full Node.js (native addons, all of Next.js SSR edge cases) takes years. This plan ships a **working, extensible** runtime in phases so each phase is usable:
+| Phase | Status | Deliverable |
+|-------|--------|-------------|
+| 0 Toolchain | ✅ | Emscripten, CMake, demo COOP/COEP |
+| 1 WASM kernel | ✅ | VFS + process + C ABI |
+| 2 QuickJS | ✅ | `node` runner + CJS require |
+| 3 Node subset | ✅ | fs/path/http/events + **fs.promises / Buffer** |
+| 4 Host API | ✅ | `BrowserNode.boot/mount/spawn` |
+| 5 Virtual net | ✅ | **Real SW → handler → Response** |
+| 6 npm install | ✅ | **deps tree, scoped pkgs, cache** |
+| 7 Async process | ✅ | **keep-alive servers + non-blocking spawn** |
+| 8 Vite path | ✅ | **esbuild-wasm transform demo** |
+| 9 Next.js | 🔜 | Incremental API coverage |
 
-1. **MVP** — `node script.js`, CommonJS `require`, `fs`/`path`/`process`, terminal I/O
-2. **Packages** — resolve `node_modules`, install from registry into VFS
-3. **Servers** — `http.createServer` + Service Worker preview iframe
-4. **Tooling** — `npm` CLI subset, run Vite (esbuild WASM path)
-5. **Frameworks** — Next.js (hardest; incremental API coverage)
+## Phase 7 — Async / keep-alive processes (detail)
 
-## Phase plan
+**Problem:** MVP `spawn('node')` runs sync and exits — `listen()` cannot serve later requests.
 
-### Phase 0 — Toolchain & scaffold ✅
-- Emscripten, CMake, Node for host tooling
-- Repo layout, build scripts, COOP/COEP demo server
+**Done:**
+1. Script calling `server.listen(port)` marks process **Running** (keep-alive).
+2. HTTP handler registered in host `HttpBridge` (port → handler).
+3. `wait(pid)` returns `-1` until `kill` or `process.exit`.
+4. Demo boots the **JS runtime** by default (full HTTP); WASM via `boot({ useWasm: true })`.
 
-### Phase 1 — WASM Kernel
-- In-memory VFS (POSIX-ish: open/read/write/stat/mkdir/readdir/unlink/rename)
-- Process table: spawn, exit, stdin/stdout/stderr pipes
-- Shared host bridge (`EM_ASM` / `EM_JS` / exported C API)
-- Unit tests via native `g++` build of kernel (no browser)
+## Phase 8 — Real HTTP preview (detail)
 
-### Phase 2 — QuickJS engine
-- Vendor QuickJS sources
-- `node` binary = QuickJS + our Node bootstrap
-- Eval scripts from VFS; print to process stdout
-
-### Phase 3 — Node.js compatibility
-- Core modules implemented progressively (see `runtime/node/MODULES.md`)
-- Module loader: CJS `require`, then ESM
-- `Buffer`, `EventEmitter`, streams duplex basics
-- Timers (`setTimeout`/`setInterval`) wired to browser event loop via Asyncify / proxy
-
-### Phase 4 — Host API
-```ts
-const bn = await BrowserNode.boot();
-await bn.mount({ 'index.js': { file: { contents: 'console.log(1)' } } });
-const proc = await bn.spawn('node', ['index.js']);
-proc.output.pipeTo(...);
-bn.on('server-ready', (port, url) => { iframe.src = url });
+```
+iframe → GET /__bn_preview/3000/
+     → Service Worker
+     → postMessage(bn-http-request)
+     → page BrowserNode / HttpBridge
+     → HttpBridge.dispatch(port, req)
+     → Node handler (req, res)
+     → bn-http-response → SW → Response
 ```
 
-### Phase 5 — Virtual networking
-- Kernel `listen(port)` registers with host
-- Service Worker intercepts `/__bn_preview/:port/*`
-- Request forwarded into Node `http.Server` callback
+Mock IncomingMessage / ServerResponse with `url`, `method`, `headers`, `writeHead`, `end`.
 
-### Phase 6 — Package install
-- Fetch tarball from `registry.npmjs.org`
-- Extract (JS untar/inflate) into VFS `node_modules`
-- Resolve package.json `main`/`exports`
+## Phase 9 — fs.promises + Buffer (detail)
 
-### Phase 7 — Vite / Next path
-- Prefer Vite first (simpler; esbuild-wasm)
-- Next.js: document missing APIs; polyfill iteratively
+- `fs.promises.readFile/writeFile/mkdir/readdir/unlink/stat`
+- `Buffer.alloc/from/concat/isBuffer`, basic encoding utf8/base64/hex
+- Shared snippets in `packages/api/src/node-polyfills.ts` (+ `runtime/node/`)
+
+## Phase 10 — Solid npm install (detail)
+
+1. Resolve version + `dependencies` recursively (depth-capped).
+2. Scoped names `@scope/pkg` → correct registry URL.
+3. Memory + `caches` API tarball cache keyed by integrity/version.
+4. Install progress events (`bn.on('install-progress', …)`).
+
+## Phase 11 — Vite-ready path (detail)
+
+1. Ship `esbuild-wasm` helper: transform TS/JSX in-browser into VFS.
+2. Demo button: “Bundle esbuild” → write `/dist` → static preview via HttpBridge.
+3. Full `vite` CLI later (needs more Node APIs + HMR websocket).
 
 ## Directory layout
 
 ```
 browsernode/
 ├── PLAN.md
-├── README.md
-├── docs/
-│   └── ARCHITECTURE.md
 ├── kernel/                 # C++ WASM OS
-│   ├── CMakeLists.txt
-│   ├── include/bn/
-│   ├── src/
-│   └── tests/
-├── vendor/
-│   └── quickjs/            # git submodule (bellard/quickjs)
-├── runtime/
-│   ├── node/               # Node polyfills (JS)
-│   └── bootstrap.js
-├── packages/
-│   └── api/                # @browsernode/api (TypeScript)
-├── demo/                   # Browser playground
-├── scripts/
-│   ├── build-kernel.sh
-│   └── serve-demo.mjs
-└── CMakeLists.txt
+├── vendor/quickjs/         # git submodule
+├── runtime/node/           # shared Node polyfill notes
+├── packages/api/           # @browsernode/api
+│   └── src/
+│       ├── http-bridge.ts
+│       ├── npm-install.ts
+│       ├── esbuild-bundle.ts
+│       ├── js-runtime.ts
+│       ├── node-polyfills.ts
+│       └── …
+├── demo/
+└── scripts/
 ```
 
-## Success criteria (MVP)
+## Success criteria (current milestone)
 
-- [ ] Boot WASM kernel in browser under COOP/COEP
-- [ ] Mount a file tree into VFS
-- [ ] `spawn('node', ['hello.js'])` prints to terminal
-- [ ] `require('fs').writeFileSync` / `readFileSync` work
-- [ ] Simple `http.createServer` serves HTML in preview iframe
-- [ ] Install a tiny npm package (e.g. `left-pad` / `ms`) into VFS and require it
+- [x] Boot kernel / JS fallback; mount VFS; run `node`
+- [x] `require` + node_modules resolution
+- [x] `http.createServer` serves real HTML in preview iframe via SW
+- [x] Keep-alive after `listen()` until kill
+- [x] `fs.promises` + usable `Buffer`
+- [x] `install(['ms'])` pulls transitive deps with cache
+- [x] esbuild-wasm can bundle a tiny entry to `/dist`
 
-## Non-goals (v1)
+## Non-goals (still)
 
-- Native Node addons (`.node` binaries)
-- Full POSIX (`fork`, real threads) — cooperative processes only
-- Raw TCP/UDP outside HTTP/WebSocket mapping
-- Perfect Node version parity (we target Node 20 API surface subset)
+- Native `.node` addons
+- Full POSIX fork/threads
+- Raw TCP/UDP
+- Perfect Node 20 parity / full Next.js (later)

@@ -8,6 +8,10 @@
 #include "quickjs.h"
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 namespace bn {
 namespace {
 
@@ -221,6 +225,23 @@ static JSValue js_bn_server_ready(JSContext* ctx, JSValueConst, int argc, JSValu
   return JS_UNDEFINED;
 }
 
+static JSValue js_bn_register_http(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  int32_t port = 0;
+  JS_ToInt32(ctx, &port, argv[0]);
+  nc->proc->keep_alive = true;
+  nc->kernel->notify_server_ready(nc->proc->pid, port);
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    if (typeof globalThis.__bn_on_http_listen === 'function') {
+      globalThis.__bn_on_http_listen($0);
+    }
+  }, port);
+#endif
+  return JS_UNDEFINED;
+}
+
 // Embedded Node bootstrap (CommonJS-ish require + fs + http stub)
 static const char kBootstrap[] = R"JS(
 var __bn = globalThis.__bn;
@@ -235,14 +256,99 @@ var process = {
 };
 globalThis.process = process;
 
-var Buffer = {
-  from: function(v, enc) {
-    if (typeof v === 'string') return v;
-    return String(v);
-  },
-  isBuffer: function() { return false; },
-};
+// Usable Buffer (utf8 / base64 / hex)
+var Buffer = (function() {
+  function Buffer(arg, enc) {
+    if (!(this instanceof Buffer)) return new Buffer(arg, enc);
+    if (typeof arg === 'number') {
+      this._data = [];
+      for (var i = 0; i < arg; i++) this._data.push(0);
+    } else if (typeof arg === 'string') {
+      this._data = Buffer._encode(arg, enc || 'utf8');
+    } else if (Array.isArray(arg)) {
+      this._data = arg.slice();
+    } else {
+      this._data = [];
+    }
+    this.length = this._data.length;
+  }
+  Buffer._encode = function(s, enc) {
+    enc = (enc || 'utf8').toLowerCase();
+    var a = [];
+    if (enc === 'hex') {
+      var clean = String(s).replace(/[^0-9a-f]/gi, '');
+      for (var j = 0; j < clean.length; j += 2) a.push(parseInt(clean.substr(j, 2), 16) || 0);
+      return a;
+    }
+    if (enc === 'base64') {
+      // minimal: treat as latin1 of decoded-ish string
+      for (var k = 0; k < s.length; k++) a.push(s.charCodeAt(k) & 255);
+      return a;
+    }
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c < 128) a.push(c);
+      else if (c < 2048) { a.push(192 | (c >> 6)); a.push(128 | (c & 63)); }
+      else { a.push(224 | (c >> 12)); a.push(128 | ((c >> 6) & 63)); a.push(128 | (c & 63)); }
+    }
+    return a;
+  };
+  Buffer._decode = function(arr, enc) {
+    enc = (enc || 'utf8').toLowerCase();
+    if (enc === 'hex') {
+      var h = '';
+      for (var j = 0; j < arr.length; j++) h += ((arr[j] & 255) + 256).toString(16).slice(1);
+      return h;
+    }
+    if (enc === 'base64') {
+      var bin = '';
+      for (var k = 0; k < arr.length; k++) bin += String.fromCharCode(arr[k] & 255);
+      return bin;
+    }
+    var out = '', i = 0;
+    while (i < arr.length) {
+      var c = arr[i++];
+      if (c < 128) out += String.fromCharCode(c);
+      else if (c >= 192 && c < 224 && i < arr.length) {
+        out += String.fromCharCode(((c & 31) << 6) | (arr[i++] & 63));
+      } else if (i + 1 < arr.length) {
+        out += String.fromCharCode(((c & 15) << 12) | ((arr[i++] & 63) << 6) | (arr[i++] & 63));
+      }
+    }
+    return out;
+  };
+  Buffer.alloc = function(n, fill) {
+    var b = new Buffer(n);
+    if (typeof fill === 'number') for (var i = 0; i < b.length; i++) b._data[i] = fill & 255;
+    return b;
+  };
+  Buffer.from = function(arg, enc) { return new Buffer(arg, enc); };
+  Buffer.isBuffer = function(x) { return x instanceof Buffer; };
+  Buffer.concat = function(list, len) {
+    if (!len) { len = 0; for (var i = 0; i < list.length; i++) len += list[i].length; }
+    var out = [];
+    for (var j = 0; j < list.length; j++) {
+      var d = list[j]._data || list[j];
+      for (var k = 0; k < d.length; k++) out.push(d[k]);
+    }
+    return Buffer.from(out.slice(0, len));
+  };
+  Buffer.prototype.toString = function(enc) { return Buffer._decode(this._data, enc || 'utf8'); };
+  Buffer.prototype.slice = function(s, e) { return Buffer.from(this._data.slice(s || 0, e)); };
+  return Buffer;
+})();
 globalThis.Buffer = Buffer;
+
+function __bn_fs_promises(fs) {
+  return {
+    readFile: function(p, enc) { return Promise.resolve().then(function(){ return fs.readFileSync(p, enc); }); },
+    writeFile: function(p, data, enc) { return Promise.resolve().then(function(){ return fs.writeFileSync(p, data, enc); }); },
+    mkdir: function(p, opts) { return Promise.resolve().then(function(){ return fs.mkdirSync(p, opts); }); },
+    readdir: function(p) { return Promise.resolve().then(function(){ return fs.readdirSync(p); }); },
+    unlink: function(p) { return Promise.resolve().then(function(){ return fs.unlinkSync(p); }); },
+    stat: function(p) { return Promise.resolve().then(function(){ return fs.statSync(p); }); },
+  };
+}
 
 var moduleCache = Object.create(null);
 
@@ -319,13 +425,17 @@ function resolveFrom(fromDir, request) {
 
 function loadCore(name) {
   if (name === 'fs') {
-    return {
+    var fs = {
       readFileSync: function(p, enc) {
         var t = __bn.readFile(String(p));
         if (t === null) throw new Error('ENOENT: ' + p);
+        if (enc === 'buffer') return Buffer.from(t);
         return t;
       },
-      writeFileSync: function(p, data) { if (!__bn.writeFile(String(p), String(data))) throw new Error('EIO'); },
+      writeFileSync: function(p, data) {
+        if (Buffer.isBuffer(data)) data = data.toString();
+        if (!__bn.writeFile(String(p), String(data))) throw new Error('EIO');
+      },
       existsSync: function(p) { return !!__bn.exists(String(p)); },
       mkdirSync: function(p, opts) { __bn.mkdir(String(p), !!(opts && opts.recursive)); },
       readdirSync: function(p) {
@@ -345,6 +455,8 @@ function loadCore(name) {
         };
       },
     };
+    fs.promises = __bn_fs_promises(fs);
+    return fs;
   }
   if (name === 'path') {
     var pathApi = {
@@ -388,21 +500,20 @@ function loadCore(name) {
   }
   if (name === 'http') {
     var EE = loadCore('events').EventEmitter;
-    function Server() { EE.call(this); this._port = 0; }
+    function Server(handler) { EE.call(this); this._port = 0; this._handler = handler; }
     Server.prototype = Object.create(EE.prototype);
     Server.prototype.listen = function(port, cb) {
       this._port = port|0;
-      __bn.serverReady(this._port);
       var self = this;
+      var h = this._handler || function(req, res) { self.emit('request', req, res); };
+      if (typeof __bn.registerHttp === 'function') __bn.registerHttp(this._port, h);
+      else __bn.serverReady(this._port);
       if (typeof cb === 'function') setTimeout(function(){ cb(); }, 0);
       return self;
     };
     return {
       createServer: function(handler) {
-        var s = new Server();
-        if (handler) s.on('request', handler);
-        s._handler = handler;
-        return s;
+        return new Server(handler);
       },
     };
   }
@@ -555,6 +666,7 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "eprint", JS_NewCFunction(ctx, js_bn_eprint, "eprint", 0));
   JS_SetPropertyStr(ctx, bn, "cwd", JS_NewCFunction(ctx, js_bn_cwd, "cwd", 0));
   JS_SetPropertyStr(ctx, bn, "serverReady", JS_NewCFunction(ctx, js_bn_server_ready, "serverReady", 1));
+  JS_SetPropertyStr(ctx, bn, "registerHttp", JS_NewCFunction(ctx, js_bn_register_http, "registerHttp", 2));
   JS_SetPropertyStr(ctx, global, "__bn", bn);
 
   JSValue boot = JS_Eval(ctx, kBootstrap, std::strlen(kBootstrap), "<bootstrap>", JS_EVAL_TYPE_GLOBAL);
@@ -610,6 +722,14 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
     }
     JS_FreeValue(ctx, result);
     JS_FreeValue(ctx, global);
+    if (proc.keep_alive) {
+      // Leave runtime alive for future HTTP dispatch (host may kill later).
+      // Context retention for full request proxy lands with bn_http_dispatch.
+      // For now mark keep-alive and tear down JS — host JS runtime covers preview.
+      JS_FreeContext(ctx);
+      JS_FreeRuntime(rt);
+      return -1;
+    }
     JS_FreeContext(ctx);
     JS_FreeRuntime(rt);
     return code;

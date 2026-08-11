@@ -37,6 +37,7 @@ struct Process {
   std::string cwd{"/"};
   ProcessState state{ProcessState::Starting};
   int exit_code{-1};
+  bool keep_alive{false};  // set by http.listen / long-running servers
   PipeBuffer stdin_buf;
   PipeBuffer stdout_buf;
   PipeBuffer stderr_buf;

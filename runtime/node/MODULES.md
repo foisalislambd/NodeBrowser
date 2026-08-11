@@ -4,13 +4,13 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | partial | sync MVP; promises next |
+| `fs` / `fs/promises` | ok (subset) | sync + promises read/write/mkdir/readdir/unlink/stat |
 | `path` | partial | posix only |
 | `process` | partial | cwd, argv, env, exit |
-| `buffer` | stub | string-backed |
+| `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex |
 | `events` | ok | EventEmitter basics |
 | `stream` | stub | EE subclasses |
-| `http` | partial | createServer + listen → host preview |
+| `http` | ok (subset) | createServer + listen → HttpBridge / keep-alive |
 | `https` | todo | |
 | `net` | todo | map to virtual ports |
 | `child_process` | todo | kernel spawn |
@@ -29,8 +29,8 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 ## Vite checklist
 
-- [ ] `esbuild-wasm` or oxc wasm transform path
-- [ ] `fs.promises` + watch stubs
+- [x] `esbuild-wasm` transform path (`BrowserNode.bundle`)
+- [x] `fs.promises` + Buffer
 - [ ] `http` upgrade / HMR websocket via SW
 - [ ] `crypto.randomFillSync`
 - [ ] `perf_hooks`

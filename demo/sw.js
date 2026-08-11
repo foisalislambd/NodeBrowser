@@ -14,8 +14,8 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     (async () => {
-      const clients = await self.clients.matchAll({ type: 'window' });
-      const client = clients[0];
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const client = clients.find((c) => c.frameType === 'top-level') || clients[0];
       if (!client) {
         return new Response('No BrowserNode client', { status: 503 });
       }
@@ -23,6 +23,22 @@ self.addEventListener('fetch', (event) => {
       const port = Number(m[1]);
       const path = m[2] || '/';
       const id = Math.random().toString(36).slice(2);
+
+      let headers = {};
+      try {
+        headers = Object.fromEntries(event.request.headers.entries());
+      } catch {
+        /* ignore */
+      }
+      let body;
+      try {
+        if (event.request.method !== 'GET' && event.request.method !== 'HEAD') {
+          body = await event.request.text();
+        }
+      } catch {
+        /* ignore */
+      }
+
       const responsePromise = new Promise((resolve) => {
         const onMsg = (ev) => {
           if (!ev.data || ev.data.type !== 'bn-http-response' || ev.data.id !== id) return;
@@ -35,15 +51,16 @@ self.addEventListener('fetch', (event) => {
           );
         };
         self.addEventListener('message', onMsg);
+        // Long timeout — real handlers should reply quickly; avoid racing stub HTML
         setTimeout(() => {
           self.removeEventListener('message', onMsg);
           resolve(
-            new Response(
-              `<!doctype html><h1>BrowserNode</h1><p>Listening on virtual port ${port}</p><p>${path}</p>`,
-              { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
-            ),
+            new Response(`No response from BrowserNode for port ${port}`, {
+              status: 504,
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            }),
           );
-        }, 500);
+        }, 15000);
       });
 
       client.postMessage({
@@ -52,6 +69,8 @@ self.addEventListener('fetch', (event) => {
         port,
         path,
         method: event.request.method,
+        headers,
+        body,
       });
 
       return responsePromise;

@@ -29,16 +29,35 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || '/', `http://localhost:${port}`);
 
-  // Virtual preview path (Service Worker will own this in production demo)
+  // Fallback only when no controlling Service Worker (SW owns this path in the demo)
   if (url.pathname.startsWith('/__bn_preview/')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(
       `<!doctype html><meta charset=utf-8><title>BrowserNode Preview</title>` +
-        `<body style="font:14px system-ui;padding:2rem"><h1>Preview</h1>` +
+        `<body style="font:14px system-ui;padding:2rem"><h1>Preview fallback</h1>` +
         `<p>Port route: ${url.pathname}</p>` +
-        `<p>Register <code>sw.js</code> to proxy into the in-browser HTTP server.</p>`,
+        `<p>Service Worker should proxy this into HttpBridge. Hard-refresh if you see this.</p>`,
     );
     return;
+  }
+
+  // Serve workspace node_modules (esbuild-wasm) with CORP for COEP pages
+  if (url.pathname.startsWith('/node_modules/')) {
+    const mapped = join(root, url.pathname.replace(/^\//, ''));
+    if (existsSync(mapped)) {
+      try {
+        const data = await readFile(mapped);
+        res.writeHead(200, {
+          'Content-Type': mime[extname(mapped)] || 'application/octet-stream',
+          'Cache-Control': 'no-store',
+        });
+        res.end(data);
+        return;
+      } catch {
+        res.writeHead(500).end('error');
+        return;
+      }
+    }
   }
 
   let path = decodeURIComponent(url.pathname);

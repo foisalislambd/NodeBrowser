@@ -1,7 +1,10 @@
 import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
-import { loadKernel, type KernelModule, type KernelHandle } from './kernel.js';
+import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from './kernel.js';
 import { flattenTree } from './fs-tree.js';
 import { installPackage } from './npm-install.js';
+import { HttpBridge } from './http-bridge.js';
+import { bundleWithEsbuild, type BundleOptions } from './esbuild-bundle.js';
+import type { HttpRegistrar } from './kernel.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -11,16 +14,20 @@ export class BrowserNode {
   #listeners = new Map<string, Set<Function>>();
   #previewBase: string;
   #booted = true;
+  #http = new HttpBridge();
+  #detachSw: (() => void) | null = null;
 
   private constructor(mod: KernelModule, k: KernelHandle, previewBase: string) {
     this.#mod = mod;
     this.#k = k;
     this.#previewBase = previewBase;
-    // Wire server-ready from kernel callbacks later; for now poll after spawn of http apps
+    this.#wireHttp();
   }
 
-  static async boot(options?: { wasmUrl?: string; previewBase?: string }): Promise<BrowserNode> {
-    const mod = await loadKernel(options?.wasmUrl);
+  static async boot(
+    options?: { wasmUrl?: string; previewBase?: string; useWasm?: boolean } & LoadKernelOptions,
+  ): Promise<BrowserNode> {
+    const mod = await loadKernel(options?.wasmUrl, { useWasm: options?.useWasm });
     const k = mod.create();
     mod.registerBuiltins(k);
     const previewBase =
@@ -53,6 +60,36 @@ export class BrowserNode {
     };
   }
 
+  get http(): HttpBridge {
+    return this.#http;
+  }
+
+  /** Attach Service Worker ↔ HttpBridge message bridge (call once after SW registers). */
+  attachServiceWorkerBridge(previewBasePath = '/__bn_preview'): () => void {
+    this.#detachSw?.();
+    this.#detachSw = this.#http.attachServiceWorkerBridge(previewBasePath);
+    return this.#detachSw;
+  }
+
+  /** Dispatch a preview HTTP request (used by tests / manual bridge). */
+  async handleHttp(req: {
+    id: string;
+    port: number;
+    method?: string;
+    path?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  }) {
+    return this.#http.dispatch({
+      id: req.id,
+      port: req.port,
+      method: req.method || 'GET',
+      path: req.path || '/',
+      headers: req.headers,
+      body: req.body,
+    });
+  }
+
   async mount(tree: FileSystemTree, mountPoint = '/'): Promise<void> {
     const files = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
     for (const [path, contents] of Object.entries(files)) {
@@ -78,11 +115,10 @@ export class BrowserNode {
           if (err) controller.enqueue(err);
           const code = this.#mod.wait(this.#k, pid);
           if (code === -1) {
-            // Still running (future async). For sync MVP, shouldn't happen often.
-            queueMicrotask(poll);
+            // Yield to the event loop so HTTP / timers can run while keep-alive
+            setTimeout(poll, 16);
             return;
           }
-          // Final drain
           const out2 = this.#mod.readStdout(this.#k, pid);
           const err2 = this.#mod.readStderr(this.#k, pid);
           if (out2) controller.enqueue(out2);
@@ -94,10 +130,16 @@ export class BrowserNode {
       },
     });
 
-    // Detect listen() by scanning for registered servers — exposed via JS __bn.serverReady
-    // Host maps port notifications through a global hook set by kernel glue.
-    const notify = (globalThis as unknown as { __bn_on_server_ready?: (port: number) => void });
+    const notify = globalThis as unknown as {
+      __bn_on_server_ready?: (port: number) => void;
+      __bn_on_http_listen?: (port: number) => void;
+    };
     notify.__bn_on_server_ready = (port: number) => {
+      const url = `${this.#previewBase}/${port}/`;
+      this.#emit('server-ready', port, url);
+    };
+    notify.__bn_on_http_listen = (port: number) => {
+      this.#ensureWasmHttpHandler(port);
       const url = `${this.#previewBase}/${port}/`;
       this.#emit('server-ready', port, url);
     };
@@ -111,11 +153,48 @@ export class BrowserNode {
     };
   }
 
-  /** Install an npm package into /node_modules (registry fetch in browser). */
+  /** Install npm packages into cwd/node_modules (deps + cache). */
   async install(packages: string[], cwd = '/'): Promise<void> {
     for (const pkg of packages) {
-      await installPackage(this, pkg, cwd);
+      await installPackage(this, pkg, cwd, {
+        withDeps: true,
+        onProgress: (p) => this.#emit('install-progress', p),
+      });
     }
+  }
+
+  /** Bundle a VFS entry with esbuild-wasm into /dist (Vite-ready path). */
+  async bundle(opts: BundleOptions): Promise<{ outfile: string; code: string }> {
+    const result = await bundleWithEsbuild(this.fs, opts);
+    // Serve /dist statically on a virtual port for preview
+    const distPort = 4173;
+    this.#http.listen(distPort, (req, res) => {
+      const urlPath = (req.url || '/').split('?')[0] || '/';
+      const filePath =
+        urlPath === '/' || urlPath === ''
+          ? '/dist/index.html'
+          : urlPath.startsWith('/dist')
+            ? urlPath
+            : `/dist${urlPath}`;
+      void this.fs
+        .readFile(filePath, 'utf8')
+        .then((body) => {
+          const type = filePath.endsWith('.js')
+            ? 'application/javascript'
+            : filePath.endsWith('.css')
+              ? 'text/css'
+              : 'text/html; charset=utf-8';
+          res.writeHead(200, { 'Content-Type': type });
+          res.end(body);
+        })
+        .catch(() => {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end(`Not found: ${filePath}`);
+        });
+    });
+    const url = `${this.#previewBase}/${distPort}/`;
+    this.#emit('server-ready', distPort, url);
+    return result;
   }
 
   on<K extends keyof BrowserNodeEventMap>(event: K, fn: Listener<K>): void {
@@ -133,10 +212,55 @@ export class BrowserNode {
     }
   }
 
+  #wireHttp(): void {
+    const registrar: HttpRegistrar = (port, handler) => {
+      this.#http.listen(port, handler as Parameters<HttpBridge['listen']>[1]);
+    };
+    this.#mod.setHttpRegistrar?.(registrar);
+  }
+
+  #ensureWasmHttpHandler(port: number): void {
+    if (this.#http.has(port)) return;
+    const dispatch = this.#mod.httpDispatch;
+    if (!dispatch) return;
+    this.#http.listen(port, (req, res) => {
+      const raw = dispatch(
+        this.#k,
+        port,
+        req.method,
+        req.url,
+        JSON.stringify(req.headers || {}),
+        req.body || '',
+      );
+      if (!raw) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('WASM HTTP dispatch failed');
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw) as {
+          status?: number;
+          headers?: Record<string, string>;
+          body?: string;
+        };
+        res.writeHead(parsed.status || 200, parsed.headers || {});
+        res.end(parsed.body || '');
+      } catch {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end(raw);
+      }
+    });
+  }
+
   teardown(): void {
+    this.#detachSw?.();
+    this.#detachSw = null;
     this.#mod.destroy(this.#k);
     this.#booted = false;
   }
 }
 
-export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess } from './types.js';
+export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
+export type { BundleOptions } from './esbuild-bundle.js';
+export type { InstallProgress } from './npm-install.js';
+export { HttpBridge } from './http-bridge.js';

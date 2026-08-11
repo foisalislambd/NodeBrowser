@@ -84,6 +84,13 @@ Pid Kernel::spawn(std::string cmd,
     proc->stderr_buf.write(reinterpret_cast<const uint8_t*>(msg.data()), msg.size());
     code = 1;
   }
+  // Keep-alive servers (http.listen) stay Running until kill/exit
+  if (proc->keep_alive || code == -1) {
+    proc->state = ProcessState::Running;
+    proc->exit_code = -1;
+    proc->keep_alive = true;
+    return proc->pid;
+  }
   proc->state = ProcessState::Exited;
   proc->exit_code = code;
   proc->stdout_buf.closed = true;
@@ -96,8 +103,11 @@ bool Kernel::kill(Pid pid, int /*signal*/) {
   auto it = procs_.find(pid);
   if (it == procs_.end()) return false;
   if (it->second->state == ProcessState::Running) {
+    it->second->keep_alive = false;
     it->second->state = ProcessState::Killed;
     it->second->exit_code = 137;
+    it->second->stdout_buf.closed = true;
+    it->second->stderr_buf.closed = true;
   }
   return true;
 }
