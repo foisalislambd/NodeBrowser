@@ -56,7 +56,6 @@ function appendTerm(text, which) {
   term.textContent += text;
   term.scrollTop = term.scrollHeight;
 }
-}
 
 function dirname(p) {
   const i = p.lastIndexOf('/');
