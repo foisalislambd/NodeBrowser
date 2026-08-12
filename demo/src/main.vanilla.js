@@ -280,7 +280,7 @@ async function boot() {
   const previewPath = new URL('__bn_preview', import.meta.url).pathname.replace(/\/$/, '');
   const previewBase = new URL('__bn_preview', import.meta.url).href.replace(/\/$/, '');
   // Primary path: C++ kernel via WASM (JS only if WASM fails to load)
-  bn = await NodeBrowser.boot({ useWasm: true, previewBase });
+  bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true });
   appendTerm(`runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}\n`);
   bn.attachServiceWorkerBridge(previewPath);
   if (bn.runtime === 'wasm') {
@@ -488,6 +488,32 @@ $('btn-fs-refresh')?.addEventListener('click', () => refreshTree().catch((e) => 
 $('btn-fs-newfile')?.addEventListener('click', () => newFile().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-fs-newdir')?.addEventListener('click', () => newDir().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-fs-delete')?.addEventListener('click', () => deleteSelected().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-fs-clear')?.addEventListener('click', () => {
+  (async () => {
+    if (!bn) return;
+    if (!confirm('Clear /home workspace?')) return;
+    await bn.clearWorkspace();
+    editor.value = DEFAULT;
+    setEditorPath('/home/project/index.js');
+    await bn.fs.writeFile('/home/project/index.js', DEFAULT);
+    dirty = false;
+    await refreshTree();
+    appendTerm('[workspace] cleared\n');
+  })().catch((e) => appendTerm(String(e) + '\n'));
+});
+$('btn-fs-export')?.addEventListener('click', () => {
+  (async () => {
+    if (!bn) return;
+    const bytes = await bn.exportSnapshot();
+    const blob = new Blob([bytes], { type: 'application/gzip' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'nodebrowser-home.tgz';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    appendTerm(`[workspace] exported ${bytes.length} bytes\n`);
+  })().catch((e) => appendTerm(String(e) + '\n'));
+});
 $('btn-vite-load')?.addEventListener('click', () => viteLoad().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-vite-preview')?.addEventListener('click', () => vitePreview().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-load')?.addEventListener('click', () => nextLoad().catch((e) => appendTerm(String(e) + '\n')));

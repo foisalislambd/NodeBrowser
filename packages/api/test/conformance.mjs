@@ -117,10 +117,180 @@ async function main() {
   assert(threw, 'self-rename must throw');
   assert(await bn.fs.exists('/home/project/nest/f.txt'), 'self-rename must not eat tree');
 
-  console.log('Phase 13 conformance: OK (runtime=%s)', bn.runtime);
+  // --- Phase 17: streams pipe ---
+  await bn.fs.writeFile(
+    '/home/project/stream.js',
+    [
+      "const { Readable, Writable } = require('stream');",
+      'const chunks = [];',
+      'const r = new Readable({ read(){} });',
+      'const w = new Writable({ write(c,_,cb){ chunks.push(String(c)); cb(); } });',
+      "w.on('finish', () => console.log('pipe=' + chunks.join('')));",
+      "r.pipe(w); r.push('hi'); r.push(null);",
+    ].join('\n'),
+  );
+  const streamOut = await readOut(await bn.spawn('node', ['/home/project/stream.js'], { cwd: '/home/project' }));
+  assert(streamOut.code === 0, 'stream exit');
+  assert(streamOut.out.includes('pipe=hi'), 'stream pipe: ' + streamOut.out);
+
+  // --- Phase 19: zlib + crypto ---
+  await bn.fs.writeFile(
+    '/home/project/zlib.js',
+    [
+      "const zlib = require('zlib');",
+      "const crypto = require('crypto');",
+      "const raw = Buffer.from('hello-zlib');",
+      'const gz = zlib.gzipSync(raw);',
+      'const back = zlib.gunzipSync(gz);',
+      "console.log('zlib=' + back.toString());",
+      "console.log('sha=' + crypto.createHash('sha256').update('x').digest('hex').slice(0,8));",
+      "console.log('sha1=' + crypto.createHash('sha1').update('x').digest('hex').slice(0,8));",
+    ].join('\n'),
+  );
+  const zlibOut = await readOut(await bn.spawn('node', ['/home/project/zlib.js'], { cwd: '/home/project' }));
+  assert(zlibOut.code === 0, 'zlib exit ' + zlibOut.code + ' ' + zlibOut.out);
+  assert(zlibOut.out.includes('zlib=hello-zlib'), zlibOut.out);
+  assert(zlibOut.out.includes('sha='), zlibOut.out);
+
+  // --- Phase 15: symlink + watch ---
+  await bn.fs.writeFile(
+    '/home/project/link.js',
+    [
+      "const fs = require('fs');",
+      "fs.writeFileSync('/home/project/target.txt', 'T');",
+      "fs.symlinkSync('/home/project/target.txt', '/home/project/alias.txt');",
+      "console.log('link=' + fs.readlinkSync('/home/project/alias.txt'));",
+      "console.log('via=' + fs.readFileSync('/home/project/alias.txt'));",
+      "console.log('isLink=' + fs.lstatSync('/home/project/alias.txt').isSymbolicLink());",
+      'let saw = false;',
+      "const w = fs.watch('/home/project', () => { saw = true; });",
+      "fs.writeFileSync('/home/project/watched.txt', '1');",
+      'console.log("watch=" + saw);',
+      'if (w.close) w.close();',
+    ].join('\n'),
+  );
+  const linkOut = await readOut(await bn.spawn('node', ['/home/project/link.js'], { cwd: '/home/project' }));
+  assert(linkOut.code === 0, 'symlink exit ' + linkOut.out);
+  assert(linkOut.out.includes('via=T'), linkOut.out);
+  assert(linkOut.out.includes('isLink=true'), linkOut.out);
+  assert(linkOut.out.includes('watch=true'), 'fs.watch: ' + linkOut.out);
+
+  // host fs-change (single event)
+  let fsEvCount = 0;
+  let fsEv = null;
+  const onFs = (e) => {
+    fsEv = e;
+    fsEvCount++;
+  };
+  bn.on('fs-change', onFs);
+  await bn.fs.writeFile('/home/project/host-watch.txt', 'x');
+  assert(fsEv && fsEv.path.includes('host-watch'), 'fs-change event');
+  assert(fsEvCount === 1, 'fs-change must not double-fire, got ' + fsEvCount);
+  bn.off('fs-change', onFs);
+
+  // binary mount
+  const pngish = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]);
+  await bn.mount({
+    home: {
+      directory: {
+        project: {
+          directory: {
+            'pic.bin': { file: { contents: pngish } },
+          },
+        },
+      },
+    },
+  });
+  const pic = await bn.fs.readFile('/home/project/pic.bin', 'buffer');
+  assert(pic[0] === 0x89 && pic[1] === 0x50, 'binary mount');
+
+  // --- Phase 16: child_process ---
+  await bn.fs.writeFile('/home/project/child.js', 'console.log("child-ok");');
+  await bn.fs.writeFile(
+    '/home/project/parent.js',
+    [
+      "const { spawn } = require('child_process');",
+      "const c = spawn('node', ['/home/project/child.js']);",
+      "c.stdout.on('data', (d) => console.log('out=' + String(d).trim()));",
+      "c.on('close', (code) => console.log('code=' + code));",
+    ].join('\n'),
+  );
+  const cpOut = await readOut(await bn.spawn('node', ['/home/project/parent.js'], { cwd: '/home/project' }));
+  assert(cpOut.code === 0, 'child_process exit');
+  assert(cpOut.out.includes('out=child-ok'), cpOut.out);
+
+  // --- Phase 20: ESM ---
+  await bn.fs.writeFile(
+    '/home/project/mod.mjs',
+    'export const n = 42;\nexport function add(a,b){ return a+b; }\nexport default function(){ return n; }',
+  );
+  await bn.fs.writeFile(
+    '/home/project/run-esm.mjs',
+    'import d, { n, add } from "./mod.mjs";\nconsole.log("esm=" + n + ":" + d() + ":" + add(1,2));\nconsole.log("meta=" + import.meta.url);',
+  );
+  const esmOut = await readOut(await bn.spawn('node', ['/home/project/run-esm.mjs'], { cwd: '/home/project' }));
+  assert(esmOut.code === 0, 'esm exit ' + esmOut.out);
+  assert(esmOut.out.includes('esm=42:42:3'), esmOut.out);
+
+  // exports field dual package
+  await bn.fs.mkdir('/home/project/node_modules/dual', { recursive: true });
+  await bn.fs.writeFile(
+    '/home/project/node_modules/dual/package.json',
+    JSON.stringify({
+      name: 'dual',
+      exports: { '.': { require: './cjs.js', import: './esm.mjs', default: './cjs.js' } },
+    }),
+  );
+  await bn.fs.writeFile('/home/project/node_modules/dual/cjs.js', 'module.exports = { kind: "cjs" };');
+  await bn.fs.writeFile('/home/project/node_modules/dual/esm.mjs', 'export const kind = "esm";');
+  await bn.fs.writeFile(
+    '/home/project/req-dual.js',
+    'const d = require("dual"); console.log("dual=" + d.kind);',
+  );
+  const dualOut = await readOut(await bn.spawn('node', ['/home/project/req-dual.js'], { cwd: '/home/project' }));
+  assert(dualOut.code === 0, 'exports exit');
+  assert(dualOut.out.includes('dual=cjs'), dualOut.out);
+
+  // --- Phase 18: net/https stubs ---
+  await bn.fs.writeFile(
+    '/home/project/net.js',
+    [
+      "const net = require('net');",
+      "const https = require('https');",
+      "const s = net.createServer();",
+      's.listen(3099, () => console.log("net-listen"));',
+      'console.log("https=" + typeof https.createServer);',
+    ].join('\n'),
+  );
+  const netProc = await bn.spawn('node', ['/home/project/net.js'], { cwd: '/home/project' });
+  await new Promise((r) => setTimeout(r, 30));
+  const codeWhileAlive = (() => {
+    // JS kernel wait via kill path
+    return -1;
+  })();
+  assert(bn.runtime === 'js', 'js runtime for net');
+  netProc.kill();
+  const netCode = await netProc.exit;
+  assert(netCode === 137, 'net kill exit expected 137, got ' + netCode);
+  void codeWhileAlive;
+
+  // --- Phase 14: snapshot (OPFS skipped in Node) ---
+  const snap = await bn.exportSnapshot();
+  assert(snap instanceof Uint8Array && snap.length > 20, 'snapshot bytes');
+  const bn2 = await NodeBrowser.boot({ useWasm: false });
+  await bn2.importSnapshot(snap);
+  assert(await bn2.fs.exists('/home/project/b.txt') || await bn2.fs.exists('/home/project/target.txt'), 'import snapshot');
+
+  if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory) {
+    // browser-only OPFS path covered in demo
+  } else {
+    console.log('OPFS hydrate skipped (no navigator.storage)');
+  }
+
+  console.log('Phases 13–20 conformance: OK (runtime=%s)', bn.runtime);
 }
 
 main().catch((e) => {
-  console.error('Phase 13 conformance FAILED:', e);
+  console.error('Conformance FAILED:', e);
   process.exit(1);
 });

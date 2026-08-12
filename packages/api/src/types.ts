@@ -25,8 +25,11 @@ export type InstallProgressEvent = {
   message?: string;
 };
 
+export type FsChangeEvent = { type: string; path: string };
+
 export type BrowserNodeEventMap = {
   'server-ready': [port: number, url: string];
   'install-progress': [progress: InstallProgressEvent];
+  'fs-change': [event: FsChangeEvent];
   error: [error: Error];
 };

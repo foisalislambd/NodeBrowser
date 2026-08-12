@@ -160,7 +160,7 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
   return ab;
 }
 
-async function untarGzip(data: Uint8Array): Promise<Record<string, string>> {
+async function untarGzip(data: Uint8Array): Promise<Record<string, Uint8Array>> {
   const ds = new DecompressionStream('gzip');
   const copy = new Uint8Array(data.byteLength);
   copy.set(data);
@@ -169,8 +169,8 @@ async function untarGzip(data: Uint8Array): Promise<Record<string, string>> {
   return parseTar(new Uint8Array(ab));
 }
 
-function parseTar(buf: Uint8Array): Record<string, string> {
-  const out: Record<string, string> = {};
+function parseTar(buf: Uint8Array): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
   const decoder = new TextDecoder();
   let offset = 0;
   const readStr = (start: number, len: number) => {
@@ -194,7 +194,7 @@ function parseTar(buf: Uint8Array): Record<string, string> {
     offset += 512;
     const content = buf.subarray(offset, offset + size);
     if ((type === 0 || type === 48) && fullName) {
-      out[fullName] = decoder.decode(content);
+      out[fullName] = content.slice();
     }
     offset += Math.ceil(size / 512) * 512;
   }

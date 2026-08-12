@@ -5,6 +5,14 @@ import { installPackage } from './npm-install.js';
 import { HttpBridge } from './http-bridge.js';
 import { bundleWithEsbuild, type BundleOptions } from './esbuild-bundle.js';
 import type { HttpRegistrar } from './kernel.js';
+import {
+  createOpfsFlusher,
+  exportHomeTarGz,
+  hydrateFromOpfs,
+  importHomeTarGz,
+  opfsAvailable,
+} from './opfs.js';
+import { zlibPureSync } from './zlib-pure.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -17,15 +25,27 @@ export class NodeBrowser {
   #http = new HttpBridge();
   #detachSw: (() => void) | null = null;
   #portsByPid = new Map<number, Set<number>>();
+  #persist = false;
+  #opfsFlusher: ReturnType<typeof createOpfsFlusher> | null = null;
   /** Which kernel is driving this instance. */
   readonly runtime: 'js' | 'wasm';
 
-  private constructor(mod: KernelModule, k: KernelHandle, previewBase: string) {
+  private constructor(
+    mod: KernelModule,
+    k: KernelHandle,
+    previewBase: string,
+    persist: boolean,
+  ) {
     this.#mod = mod;
     this.#k = k;
     this.#previewBase = previewBase;
+    this.#persist = persist;
     this.runtime = mod.runtime === 'wasm' ? 'wasm' : 'js';
     this.#wireHttp();
+    this.#wireFsChange();
+    if (persist) {
+      this.#opfsFlusher = createOpfsFlusher(this.fs);
+    }
   }
 
   static async boot(
@@ -34,9 +54,12 @@ export class NodeBrowser {
       previewBase?: string;
       /** Prefer C++/WASM kernel (`true` default). `false` forces JS. `'auto'` tries WASM then JS quietly. */
       useWasm?: boolean | 'auto';
+      /** Persist `/home` to Origin Private File System (browser). Default false. */
+      persist?: boolean;
     } & LoadKernelOptions,
   ): Promise<NodeBrowser> {
     const useWasm = options?.useWasm === undefined ? true : options.useWasm;
+    const persist = !!options?.persist;
     const mod = await loadKernel(options?.wasmUrl, { useWasm });
     const k = mod.create();
     mod.registerBuiltins(k);
@@ -48,12 +71,21 @@ export class NodeBrowser {
             typeof document !== 'undefined' && document.baseURI ? document.baseURI : location.href,
           ).href.replace(/\/$/, '')
         : 'http://localhost/__bn_preview');
-    return new NodeBrowser(mod, k, previewBase);
+    const bn = new NodeBrowser(mod, k, previewBase, persist);
+    if (persist && opfsAvailable()) {
+      await hydrateFromOpfs(bn.fs);
+    }
+    return bn;
+  }
+
+  get persistEnabled(): boolean {
+    return this.#persist;
   }
 
   get fs() {
     const mod = this.#mod;
     const k = this.#k;
+    const self = this;
     const isDir = (path: string): boolean => {
       if (path === '/' || path === '') return true;
       if (mod.isDir) return mod.isDir(k, path);
@@ -100,6 +132,11 @@ export class NodeBrowser {
       writeFile: async (path: string, data: string | Uint8Array) => {
         if (typeof data === 'string') mod.writeText(k, path, data);
         else mod.writeBytes(k, path, data);
+        // JS kernel emits via setFsChangeListener; WASM needs host emit.
+        if (!mod.setFsChangeListener) {
+          self.#emit('fs-change', { type: 'change', path });
+          self.#opfsFlusher?.mark(path, 'write');
+        }
       },
       readFile: (async (path: string, encoding?: 'utf8' | 'buffer') => {
         if (encoding === 'buffer') return readBytes(path);
@@ -117,6 +154,10 @@ export class NodeBrowser {
       },
       mkdir: async (path: string, opts?: { recursive?: boolean }) => {
         mod.mkdir(k, path, opts?.recursive ?? true);
+        if (!mod.setFsChangeListener) {
+          self.#emit('fs-change', { type: 'rename', path });
+          self.#opfsFlusher?.mark(path, 'write');
+        }
       },
       exists: async (path: string) => path === '/' || mod.exists(k, path),
       stat: async (path: string) => {
@@ -131,19 +172,33 @@ export class NodeBrowser {
         if (!mod.exists(k, path) && path !== '/') throw new Error(`ENOENT: ${path}`);
         if (opts?.recursive) {
           await rmTree(path);
+          if (!mod.setFsChangeListener) {
+            self.#emit('fs-change', { type: 'rename', path });
+            self.#opfsFlusher?.mark(path, 'delete');
+          }
           return;
         }
         if (isDir(path)) throw new Error(`EISDIR: ${path} (use { recursive: true })`);
         if (!mod.unlink(k, path)) throw new Error(`ENOENT: ${path}`);
+        if (!mod.setFsChangeListener) {
+          self.#emit('fs-change', { type: 'rename', path });
+          self.#opfsFlusher?.mark(path, 'delete');
+        }
       },
       rename: async (from: string, to: string) => {
         if (!mod.exists(k, from)) throw new Error(`ENOENT: ${from}`);
         if (mod.rename) {
           if (!mod.rename(k, from, to)) throw new Error(`EPERM: rename ${from} → ${to}`);
-          return;
+        } else {
+          await copyTree(from, to);
+          await rmTree(from);
         }
-        await copyTree(from, to);
-        await rmTree(from);
+        if (!mod.setFsChangeListener) {
+          self.#emit('fs-change', { type: 'rename', path: from });
+          self.#emit('fs-change', { type: 'rename', path: to });
+          self.#opfsFlusher?.mark(from, 'delete');
+          self.#opfsFlusher?.mark(to, 'write');
+        }
       },
     };
   }
@@ -181,7 +236,41 @@ export class NodeBrowser {
   async mount(tree: FileSystemTree, mountPoint = '/'): Promise<void> {
     const files = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
     for (const [path, contents] of Object.entries(files)) {
-      this.#mod.writeText(this.#k, path, contents);
+      if (typeof contents === 'string') this.#mod.writeText(this.#k, path, contents);
+      else this.#mod.writeBytes(this.#k, path, contents);
+      if (!this.#mod.setFsChangeListener) {
+        this.#emit('fs-change', { type: 'change', path });
+        this.#opfsFlusher?.mark(path, 'write');
+      }
+    }
+  }
+
+  /** Export `/home` as gzipped tar bytes. */
+  async exportSnapshot(): Promise<Uint8Array> {
+    await this.#opfsFlusher?.flush();
+    return exportHomeTarGz(this.fs, (data) => zlibPureSync('gzip', data));
+  }
+
+  /** Import a gzipped tar into the VFS (and OPFS if persist). */
+  async importSnapshot(bytes: Uint8Array): Promise<number> {
+    const n = await importHomeTarGz(
+      this.fs,
+      bytes,
+      (data) => zlibPureSync('gunzip', data),
+    );
+    if (this.#persist) await this.#opfsFlusher?.flush();
+    return n;
+  }
+
+  /** Clear `/home` workspace (VFS + OPFS when persist). */
+  async clearWorkspace(): Promise<void> {
+    if (await this.fs.exists('/home')) {
+      await this.fs.rm('/home', { recursive: true });
+    }
+    await this.fs.mkdir('/home/project', { recursive: true });
+    if (this.#persist) {
+      await this.#opfsFlusher?.clearHome();
+      await this.#opfsFlusher?.flush();
     }
   }
 
@@ -197,12 +286,14 @@ export class NodeBrowser {
     // Hooks must be installed BEFORE spawn — listen() runs synchronously inside it.
     notify.__bn_on_server_ready = (port: number) => {
       pendingPorts.add(port | 0);
+      this.#ensureWasmHttpHandler(port | 0);
       const url = `${this.#previewBase}/${port}/`;
       this.#emit('server-ready', port, url);
     };
     notify.__bn_on_http_listen = (port: number) => {
+      // Legacy alias — same as server-ready (deduped via pendingPorts / has(port)).
       pendingPorts.add(port | 0);
-      this.#ensureWasmHttpHandler(port);
+      this.#ensureWasmHttpHandler(port | 0);
       const url = `${this.#previewBase}/${port}/`;
       this.#emit('server-ready', port, url);
     };
@@ -334,13 +425,105 @@ export class NodeBrowser {
       this.#http.listen(port, handler as Parameters<HttpBridge['listen']>[1]);
     };
     this.#mod.setHttpRegistrar?.(registrar);
+    if (typeof globalThis !== 'undefined') {
+      const g = globalThis as unknown as {
+        __bn_wasm_http_handlers?: Map<
+          number,
+          (req: {
+            method: string;
+            url: string;
+            headers: Record<string, string>;
+            body?: string;
+          }) => { status: number; headers: Record<string, string>; body: string }
+        >;
+        __bn_wasm_http_dispatch?: (
+          port: number,
+          method: string,
+          path: string,
+          headers: string,
+          body: string,
+        ) => string | null;
+      };
+      if (!g.__bn_wasm_http_handlers) g.__bn_wasm_http_handlers = new Map();
+      g.__bn_wasm_http_dispatch = (port, method, path, headersJson, body) => {
+        const handler = g.__bn_wasm_http_handlers?.get(port);
+        if (!handler) return null;
+        let headers: Record<string, string> = {};
+        try {
+          headers = JSON.parse(headersJson || '{}') as Record<string, string>;
+        } catch {
+          headers = {};
+        }
+        try {
+          const out = handler({ method, url: path, headers, body });
+          return JSON.stringify({
+            status: out.status || 200,
+            headers: out.headers || {},
+            body: out.body || '',
+          });
+        } catch (e) {
+          return JSON.stringify({
+            status: 500,
+            headers: { 'Content-Type': 'text/plain' },
+            body: String(e),
+          });
+        }
+      };
+    }
+  }
+
+  #wireFsChange(): void {
+    this.#mod.setFsChangeListener?.((ev) => {
+      this.#emit('fs-change', ev);
+      // mkdir/symlink/unlink use type "rename"; only treat explicit deletes as delete.
+      // Paths that still exist after the event should be flushed as writes.
+      const kind =
+        ev.type === 'rename' && !this.#mod.exists(this.#k, ev.path) ? 'delete' : 'write';
+      this.#opfsFlusher?.mark(ev.path, kind);
+    });
   }
 
   #ensureWasmHttpHandler(port: number): void {
     if (this.#http.has(port)) return;
     const dispatch = this.#mod.httpDispatch;
-    if (!dispatch) return;
+    // Prefer guest-registered host bridge table (filled by WASM EM_ASM / QuickJS retain)
+    const g = globalThis as unknown as {
+      __bn_wasm_http_handlers?: Map<
+        number,
+        (req: {
+          method: string;
+          url: string;
+          headers: Record<string, string>;
+          body?: string;
+        }) => { status: number; headers: Record<string, string>; body: string }
+      >;
+    };
+    if (!g.__bn_wasm_http_handlers) g.__bn_wasm_http_handlers = new Map();
+
     this.#http.listen(port, (req, res) => {
+      const handler = g.__bn_wasm_http_handlers?.get(port);
+      if (handler) {
+        try {
+          const out = handler({
+            method: req.method,
+            url: req.url,
+            headers: req.headers || {},
+            body: req.body,
+          });
+          res.writeHead(out.status || 200, out.headers || {});
+          res.end(out.body || '');
+          return;
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end(String(e));
+          return;
+        }
+      }
+      if (!dispatch) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('WASM HTTP dispatch unavailable');
+        return;
+      }
       const raw = dispatch(
         this.#k,
         port,

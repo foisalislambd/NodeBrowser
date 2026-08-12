@@ -1,4 +1,5 @@
 #include "bn/process.hpp"
+#include "bn/node_runner.hpp"
 
 #include <cstring>
 
@@ -99,17 +100,22 @@ Pid Kernel::spawn(std::string cmd,
 }
 
 bool Kernel::kill(Pid pid, int /*signal*/) {
-  std::lock_guard lock(mu_);
-  auto it = procs_.find(pid);
-  if (it == procs_.end()) return false;
-  if (it->second->state == ProcessState::Running) {
-    it->second->keep_alive = false;
-    it->second->state = ProcessState::Killed;
-    it->second->exit_code = 137;
-    it->second->stdout_buf.closed = true;
-    it->second->stderr_buf.closed = true;
+  bool ok = false;
+  {
+    std::lock_guard lock(mu_);
+    auto it = procs_.find(pid);
+    if (it == procs_.end()) return false;
+    if (it->second->state == ProcessState::Running) {
+      it->second->keep_alive = false;
+      it->second->state = ProcessState::Killed;
+      it->second->exit_code = 137;
+      it->second->stdout_buf.closed = true;
+      it->second->stderr_buf.closed = true;
+    }
+    ok = true;
   }
-  return true;
+  release_retained_http_for_pid(pid);
+  return ok;
 }
 
 std::shared_ptr<Process> Kernel::get(Pid pid) {

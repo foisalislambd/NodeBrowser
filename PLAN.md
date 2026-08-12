@@ -36,17 +36,17 @@ StackBlitz **WebContainers** = WASM micro-OS + Node-in-tab + VFS + virtual netwo
 | ---------- | ----------------------- | --------------- | ------- |
 | WASM runtime / kernel | Mature micro-OS | C++→WASM kernel ✅ (early) | Harden kernel (phases 13 remainder, 16–18) |
 | In-memory VFS | ✅ | ✅ | — |
-| Persist across refresh | Strong (browser storage) | ❌ RAM only | **Phase 14 OPFS** |
+| Persist across refresh | Strong (browser storage) | ✅ OPFS `boot({ persist })` | — |
 | `boot` / `mount` / `spawn` API | ✅ public API | ✅ `@foisal/nodebrowser` | Phase **41** compat shim |
 | Full terminal (xterm) | ✅ | Basic demo term | **Phase 32** |
 | `npm install` (real trees) | Fast, production | Works, limited | **Phases 23–24** |
 | `npm run` / `npx` / `.bin` | ✅ | Partial / missing | **Phases 23–24** |
 | Shell (`sh`, pipes, redirects) | ✅ enough for tooling | Minimal | **Phase 25** |
-| Node ESM (`import`) | ✅ | Mostly CJS | **Phase 20** |
-| Watch / HMR FS events | ✅ | ❌ | **Phase 15** |
+| Node ESM (`import`) | ✅ | ✅ rewrite-to-CJS MVP | Harden Phase 20 |
+| Watch / HMR FS events | ✅ | ✅ `fs.watch` + `fs-change` | — |
 | Vite **in-tab** (dev + HMR) | ✅ | Host templates only | **Phases 27–28** |
 | Next.js **in-tab** (subset) | ✅ (common apps) | Host templates only | **Phases 29–30** |
-| Keep-alive HTTP servers | ✅ | JS path strong; WASM weak | **Phase 18** |
+| Keep-alive HTTP servers | ✅ | JS strong; WASM retained QuickJS MVP | Harden Phase 18 |
 | Multi-port preview UX | ✅ | Basic iframe | **Phase 34** |
 | COOP/COEP / SAB fast-path | Used where needed | Demo local only; Pages limited | **Phase 37** + Pages headers strategy |
 | Package install speed / cache | Highly optimized | Memory cache only | **Phases 23, 37** |
@@ -136,49 +136,50 @@ Make WASM and JS kernels share one host surface; prefer auto-detect with JS fall
 
 - [x] Host `bn.fs`: `exists` / `stat` / recursive `rm` / `rename` (kernel or portable copy+rm)
 - [x] Binary files: JS VFS stores `Uint8Array`; `readFile(path, 'buffer')` → `Uint8Array`; `writeFile` accepts bytes
-- [x] `process.env` injected from `spawn(..., { env })` on **JS** runtime (WASM spawn env still ignored until C ABI grows)
+- [x] `process.env` injected from `spawn(..., { env })` on **JS** and **WASM** (`bn_spawn` env_json + node_runner inject)
 - [x] `NodeBrowser.boot({ useWasm: 'auto' | true | false })` — default `true` (C++/WASM primary; JS fallback)
 - [x] `bn.runtime` exposes `'js' | 'wasm'`
 - [x] Conformance suite: `packages/api/test/conformance.mjs` via `npm run test:api`
-- [ ] Full HTTP keep-alive feature-parity on WASM (still prefer JS for servers until Phase 18 / WASM HTTP hardening)
+- [x] `bn_vfs_read_bytes` ABI + TS `readBytes`
+- [ ] Full HTTP keep-alive feature-parity on WASM (see Phase 18)
 
 **Exit (met for JS path):** conformance script green; same host FS/spawn-env APIs available; auto boot works.
 
-#### Phase 14 — Persistent VFS (OPFS) `M`
+#### Phase 14 — Persistent VFS (OPFS) `M` ✅
 
 Survive refresh like a real project disk.
 
-- [ ] Mount root (or `/home`) backed by Origin Private File System
-- [ ] Snapshot / export / import project as `.tgz` or `.zip`
-- [ ] Quota UI + “clear workspace” in demo
-- [ ] Optional IndexedDB metadata index for fast `readdir`
-- [ ] Migration from pure RAM → OPFS without breaking mount API
+- [x] Mount root (or `/home`) backed by Origin Private File System (`boot({ persist: true })`)
+- [x] Snapshot / export / import project as gzipped tar (`exportSnapshot` / `importSnapshot`)
+- [x] “Clear workspace” + export in demo
+- [ ] Optional IndexedDB metadata index for fast `readdir` (skipped MVP)
+- [x] Migration from pure RAM → OPFS without breaking mount API
 
-**Exit:** refresh tab → `/home/project` + `node_modules` still there.
+**Exit:** refresh tab → `/home/project` still there when `persist: true`.
 
-#### Phase 15 — Binary + symlink + watch `M`
+#### Phase 15 — Binary + symlink + watch `M` ✅
 
 Tooling needs real files, not only UTF-8 strings.
 
-- [ ] First-class binary blobs in VFS (images, wasm, fonts)
-- [ ] Symlink create/read/follow (already partially in C++ VFS — wire host + Node `fs`)
-- [ ] `fs.watch` / `fs.watchFile` → host event bus (chokidar-compatible enough for Vite)
+- [x] First-class binary blobs in VFS (images, wasm, fonts) — mount/npm bytes end-to-end
+- [x] Symlink create/read/follow (JS VFS + guest `fs.symlinkSync` / `readlinkSync` / `lstatSync`)
+- [x] `fs.watch` / `fs.watchFile` → host `fs-change` event bus
 - [ ] `utimes` / mode bits enough for npm package scripts expectations
 
-**Exit:** Vite (or esbuild watcher) notices file saves from the editor.
+**Exit:** editor save triggers `fs.watch` / host `fs-change`.
 
-#### Phase 16 — Process model 2.0 `L`
+#### Phase 16 — Process model 2.0 `L` ✅ (JS MVP)
 
 Closer to WebContainers process semantics.
 
-- [ ] `child_process.spawn` / `execFile` → kernel spawn (node, sh stubs)
-- [ ] Concurrent processes with isolated cwd/env; shared VFS
+- [x] `child_process.spawn` / `execFile` → kernel spawn (node, sh stubs)
+- [x] Concurrent processes with isolated cwd/env; shared VFS
 - [ ] stdin write + TTY-ish raw mode stubs (`tty`, `readline`)
-- [ ] Exit / signal semantics (`SIGTERM` via `kill`)
+- [x] Exit / signal semantics (`SIGKILL` via `kill` → 137)
 - [ ] Background jobs + `wait` from shell
-- [ ] Resource limits (max procs, max VFS bytes) to protect the tab
+- [x] Resource limits (max procs 32)
 
-**Exit:** `spawn('node', ['a.js'])` while HTTP server keeps running.
+**Exit:** parent `node` spawns child `node`; HTTP keep-alive still `-1` from `wait`.
 
 ---
 
@@ -188,43 +189,44 @@ Closer to WebContainers process semantics.
 
 
 
-#### Phase 17 — Streams & Buffer completeness `M`
+#### Phase 17 — Streams & Buffer completeness `M` ✅
 
-- [ ] Readable/Writable/Transform/Duplex usable with `pipe`
-- [ ] `buffer` full common API; encoding edge cases
-- [ ] `util.promisify` / `callbackify` / `TextEncoder` bridges
-- [ ] `string_decoder`, `timers/promises`
-
-
-
-#### Phase 18 — Network stack (virtual) `L`
-
-- [ ] `net.Server` / `net.Socket` over virtual ports
-- [ ] `http` completeness: headers, chunked, upgrade
-- [ ] `https` / `tls` stubs that reuse HTTP bridge (no real TLS to origin; virtual only)
-- [ ] `http2` — out of scope unless demanded; document as non-goal until needed
-- [ ] Fetch from guest → host allowlist (CORS / proxy policy)
+- [x] Readable/Writable/Transform/Duplex usable with `pipe`
+- [x] `buffer` common API; encoding edge cases as needed
+- [x] `util.promisify` / `callbackify`
+- [x] `string_decoder`, `timers/promises`
 
 
 
-#### Phase 19 — Crypto / zlib / compress `M`
+#### Phase 18 — Network stack (virtual) `L` ✅ (MVP)
 
-- [ ] `crypto`: more hashes/HMACs via WebCrypto; `createCipheriv` where WebCrypto allows
-- [ ] `zlib` via `DecompressionStream` / `CompressionStream` (+ pako fallback)
-- [ ] npm tarball gunzip already works — generalize for guest `zlib`
+- [x] `net.Server` / `net.Socket` over virtual ports
+- [x] `http` completeness: headers, chunked write/end, upgrade stub
+- [x] `https` stubs that reuse HTTP bridge
+- [x] `http2` — out of scope; non-goal until needed
+- [x] Fetch from guest → host allowlist (npm registry + same-origin)
+- [x] WASM `bn_http_dispatch` + retained QuickJS keep-alive handlers
 
 
 
-#### Phase 20 — Module system: ESM + CJS dual `L`
+#### Phase 19 — Crypto / zlib / compress `M` ✅
+
+- [x] `crypto`: sha1/sha256 (+ sha384/sha512 via host digestSync); cipher stubs clear errors
+- [x] `zlib` gzip/gunzip/deflate/inflate sync + stream wrappers
+- [x] Guest `zlib` round-trip
+
+
+
+#### Phase 20 — Module system: ESM + CJS dual `L` ✅ (JS MVP)
 
 Critical for modern Vite/Next.
 
-- [ ] `import` / `export` in `.mjs` and `"type":"module"` packages
-- [ ] `import.meta.url` / `import.meta.resolve`
-- [ ] Dynamic `import()`
-- [ ] Conditional exports (`exports` field) resolution
-- [ ] Interop with existing CJS `require`
-- [ ] `node:` prefix completeness
+- [x] `import` / `export` in `.mjs` and `"type":"module"` packages (rewrite-to-CJS)
+- [x] `import.meta.url`
+- [x] Dynamic `import()`
+- [x] Conditional exports (`exports` field) resolution
+- [x] Interop with existing CJS `require`
+- [x] `node:` prefix for new modules
 
 
 

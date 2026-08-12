@@ -147,7 +147,8 @@ process.nextTick = function(fn) {
 
 /**
  * crypto subset: randomFillSync / randomBytes via WebCrypto getRandomValues.
- * createHash('sha256') uses a small sync pure-JS implementation.
+ * createHash: sync pure-JS for sha1 + sha256; sha384/sha512 throw (use WebCrypto async outside createHash).
+ * Ciphers (createCipheriv etc.) are intentionally stubbed — document as unsupported.
  */
 export const CRYPTO_POLYFILL = `
 function __bn_crypto_random_fill(u8) {
@@ -157,6 +158,57 @@ function __bn_crypto_random_fill(u8) {
   }
   for (var i = 0; i < u8.length; i++) u8[i] = (Math.random() * 256) | 0;
   return u8;
+}
+function __bn_sha1(bytes) {
+  function rotr(n, x) { return (x << (32 - n)) | (x >>> n); }
+  var h0=0x67452301,h1=0xEFCDAB89,h2=0x98BADCFE,h3=0x10325476,h4=0xC3D2E1F0;
+  var l = bytes.length;
+  var bitLenHi = Math.floor(l / 0x20000000);
+  var bitLenLo = (l << 3) >>> 0;
+  var withPad = l + 1;
+  while (withPad % 64 !== 56) withPad++;
+  var total = withPad + 8;
+  var msg = new Uint8Array(total);
+  msg.set(bytes);
+  msg[l] = 0x80;
+  msg[total - 8] = (bitLenHi >>> 24) & 255;
+  msg[total - 7] = (bitLenHi >>> 16) & 255;
+  msg[total - 6] = (bitLenHi >>> 8) & 255;
+  msg[total - 5] = bitLenHi & 255;
+  msg[total - 4] = (bitLenLo >>> 24) & 255;
+  msg[total - 3] = (bitLenLo >>> 16) & 255;
+  msg[total - 2] = (bitLenLo >>> 8) & 255;
+  msg[total - 1] = bitLenLo & 255;
+  for (var i = 0; i < total; i += 64) {
+    var w = new Array(80);
+    for (var j = 0; j < 16; j++) {
+      var o = i + j * 4;
+      w[j] = ((msg[o] << 24) | (msg[o+1] << 16) | (msg[o+2] << 8) | msg[o+3]) >>> 0;
+    }
+    for (var j = 16; j < 80; j++) {
+      w[j] = rotr(31, w[j-3] ^ w[j-8] ^ w[j-14] ^ w[j-16]) >>> 0;
+    }
+    var a=h0,b=h1,c=h2,d=h3,e=h4;
+    for (var j = 0; j < 80; j++) {
+      var f, k;
+      if (j < 20) { f = (b & c) | ((~b) & d); k = 0x5A827999; }
+      else if (j < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1; }
+      else if (j < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+      else { f = b ^ c ^ d; k = 0xCA62C1D6; }
+      var temp = (rotr(27, a) + f + e + k + w[j]) >>> 0;
+      e = d; d = c; c = rotr(2, b) >>> 0; b = a; a = temp;
+    }
+    h0=(h0+a)>>>0; h1=(h1+b)>>>0; h2=(h2+c)>>>0; h3=(h3+d)>>>0; h4=(h4+e)>>>0;
+  }
+  var out = new Uint8Array(20);
+  var hs = [h0,h1,h2,h3,h4];
+  for (var i = 0; i < 5; i++) {
+    out[i*4] = (hs[i] >>> 24) & 255;
+    out[i*4+1] = (hs[i] >>> 16) & 255;
+    out[i*4+2] = (hs[i] >>> 8) & 255;
+    out[i*4+3] = hs[i] & 255;
+  }
+  return out;
 }
 function __bn_sha256(bytes) {
   var K = [
@@ -257,9 +309,13 @@ function __bn_load_crypto() {
       return Buffer.from(u8);
     },
     createHash: function(alg) {
-      alg = String(alg || '').toLowerCase();
-      if (alg !== 'sha256' && alg !== 'sha-256') {
-        throw new Error('createHash: only sha256 is supported in NodeBrowser');
+      alg = String(alg || '').toLowerCase().replace(/^sha-/, 'sha');
+      var supported = { sha1:1, sha256:1 };
+      if (!supported[alg]) {
+        if (alg === 'sha384' || alg === 'sha512') {
+          throw new Error('createHash: ' + alg + ' not available sync (supported: sha1, sha256)');
+        }
+        throw new Error('createHash: unsupported algorithm ' + alg + ' (supported: sha1, sha256)');
       }
       var chunks = [];
       return {
@@ -275,7 +331,7 @@ function __bn_load_crypto() {
           for (var i = 0; i < chunks.length; i++) len += chunks[i].length;
           var all = new Uint8Array(len), o = 0;
           for (var j = 0; j < chunks.length; j++) { all.set(chunks[j], o); o += chunks[j].length; }
-          var dig = __bn_sha256(all);
+          var dig = alg === 'sha1' ? __bn_sha1(all) : __bn_sha256(all);
           if (enc === 'hex') {
             var h = '';
             for (var k = 0; k < dig.length; k++) h += (dig[k] + 256).toString(16).slice(1);
@@ -284,6 +340,21 @@ function __bn_load_crypto() {
           return Buffer.from(dig);
         },
       };
+    },
+    createHmac: function() {
+      throw new Error('crypto.createHmac: not implemented in NodeBrowser');
+    },
+    createCipher: function() {
+      throw new Error('crypto.createCipher: unsupported in NodeBrowser (ciphers stubbed)');
+    },
+    createCipheriv: function() {
+      throw new Error('crypto.createCipheriv: unsupported in NodeBrowser (ciphers stubbed)');
+    },
+    createDecipher: function() {
+      throw new Error('crypto.createDecipher: unsupported in NodeBrowser (ciphers stubbed)');
+    },
+    createDecipheriv: function() {
+      throw new Error('crypto.createDecipheriv: unsupported in NodeBrowser (ciphers stubbed)');
     },
   };
 }
@@ -302,6 +373,373 @@ function __bn_load_perf_hooks() {
     performance: { now: nowFn, timeOrigin: 0 },
     PerformanceObserver: PerformanceObserver,
     constants: {},
+  };
+}
+`;
+
+/** Readable/Writable/Duplex/Transform with .pipe() */
+export const STREAM_POLYFILL = `
+function __bn_load_stream() {
+  var EE = loadCore('events').EventEmitter;
+  function Readable(opts) {
+    EE.call(this);
+    this._readableState = { ended: false, flowing: null };
+    this.readable = true;
+    this._buf = [];
+    if (opts && typeof opts.read === 'function') this._read = opts.read;
+  }
+  Readable.prototype = Object.create(EE.prototype);
+  Readable.prototype._read = function() {};
+  Readable.prototype.push = function(chunk) {
+    if (chunk === null) {
+      this._readableState.ended = true;
+      if (this._readableState.flowing) this.emit('end');
+      else this._pendingEnd = true;
+      return false;
+    }
+    if (typeof chunk === 'string') chunk = Buffer.from(chunk);
+    if (this._readableState.flowing) {
+      this.emit('data', chunk);
+    } else {
+      this._buf.push(chunk);
+    }
+    return true;
+  };
+  Readable.prototype.read = function() {
+    if (!this._buf.length) return null;
+    return this._buf.shift();
+  };
+  Readable.prototype.on = function(ev, fn) {
+    EE.prototype.on.call(this, ev, fn);
+    if (ev === 'data') {
+      this._readableState.flowing = true;
+      while (this._buf.length) this.emit('data', this._buf.shift());
+      if (this._pendingEnd) {
+        this._pendingEnd = false;
+        this.emit('end');
+      }
+    }
+    return this;
+  };
+  Readable.prototype.pipe = function(dest) {    var self = this;
+    this.on('data', function(chunk) {
+      if (dest.write) dest.write(chunk);
+      else if (typeof dest === 'function') dest(chunk);
+    });
+    this.on('end', function() {
+      if (dest.end) dest.end();
+      else if (dest.emit) dest.emit('finish');
+    });
+    if (typeof this._read === 'function') {
+      try { this._read(0); } catch (e) {}
+    }
+    return dest;
+  };
+  Readable.prototype.destroy = function(err) {
+    if (err) this.emit('error', err);
+    this.emit('close');
+    return this;
+  };
+  function Writable(opts) {
+    EE.call(this);
+    this.writable = true;
+    this._chunks = [];
+    if (opts && typeof opts.write === 'function') this._write = opts.write;
+  }
+  Writable.prototype = Object.create(EE.prototype);
+  Writable.prototype._write = function(chunk, enc, cb) { if (cb) cb(); };
+  Writable.prototype.write = function(chunk, enc, cb) {
+    if (typeof enc === 'function') { cb = enc; enc = undefined; }
+    if (typeof chunk === 'string') chunk = Buffer.from(chunk, enc || 'utf8');
+    this._chunks.push(chunk);
+    var self = this;
+    this._write(chunk, enc || 'utf8', function(err) {
+      if (err) self.emit('error', err);
+      if (cb) cb(err);
+    });
+    return true;
+  };
+  Writable.prototype.end = function(chunk, enc, cb) {
+    if (typeof chunk === 'function') { cb = chunk; chunk = undefined; }
+    else if (typeof enc === 'function') { cb = enc; enc = undefined; }
+    if (chunk != null) this.write(chunk, enc);
+    this.emit('finish');
+    if (cb) cb();
+    return this;
+  };
+  function Duplex(opts) {
+    Readable.call(this, opts);
+    Writable.call(this, opts);
+  }
+  Duplex.prototype = Object.create(Readable.prototype);
+  Object.assign(Duplex.prototype, Writable.prototype);
+  Duplex.prototype.constructor = Duplex;
+  function Transform(opts) {
+    Duplex.call(this, opts);
+    if (opts && typeof opts.transform === 'function') this._transform = opts.transform;
+  }
+  Transform.prototype = Object.create(Duplex.prototype);
+  Transform.prototype._transform = function(chunk, enc, cb) { this.push(chunk); if (cb) cb(); };
+  Transform.prototype.write = function(chunk, enc, cb) {
+    var self = this;
+    if (typeof enc === 'function') { cb = enc; enc = undefined; }
+    this._transform(chunk, enc || 'utf8', function(err, out) {
+      if (err) { self.emit('error', err); if (cb) cb(err); return; }
+      if (out != null) self.push(out);
+      if (cb) cb();
+    });
+    return true;
+  };
+  Transform.prototype.end = function(chunk, enc, cb) {
+    if (typeof chunk === 'function') { cb = chunk; chunk = undefined; }
+    else if (typeof enc === 'function') { cb = enc; enc = undefined; }
+    if (chunk != null) this.write(chunk, enc);
+    this.push(null);
+    this.emit('finish');
+    if (cb) cb();
+    return this;
+  };
+  function PassThrough(opts) { Transform.call(this, opts); }
+  PassThrough.prototype = Object.create(Transform.prototype);
+  Readable.from = function(iterable) {
+    var r = new Readable();
+    setTimeout(function() {
+      try {
+        if (typeof iterable === 'string' || Buffer.isBuffer(iterable) || iterable instanceof Uint8Array) {
+          r.push(iterable);
+        } else if (Array.isArray(iterable)) {
+          for (var i = 0; i < iterable.length; i++) r.push(iterable[i]);
+        }
+        r.push(null);
+      } catch (e) { r.emit('error', e); }
+    }, 0);
+    return r;
+  };
+  return { Readable: Readable, Writable: Writable, Duplex: Duplex, Transform: Transform, PassThrough: PassThrough };
+}
+`;
+
+export const UTIL_POLYFILL = `
+function __bn_load_util() {
+  function promisify(fn) {
+    return function() {
+      var args = Array.prototype.slice.call(arguments);
+      var self = this;
+      return new Promise(function(resolve, reject) {
+        args.push(function(err, result) {
+          if (err) reject(err);
+          else resolve(result);
+        });
+        try { fn.apply(self, args); } catch (e) { reject(e); }
+      });
+    };
+  }
+  function callbackify(fn) {
+    return function() {
+      var args = Array.prototype.slice.call(arguments);
+      var cb = typeof args[args.length - 1] === 'function' ? args.pop() : function() {};
+      var self = this;
+      Promise.resolve().then(function() { return fn.apply(self, args); }).then(
+        function(r) { cb(null, r); },
+        function(e) { cb(e); }
+      );
+    };
+  }
+  return {
+    inherits: function(c, s) { c.prototype = Object.create(s.prototype); c.prototype.constructor = c; },
+    format: function() {
+      var args = Array.prototype.slice.call(arguments);
+      var f = String(args.shift());
+      return f.replace(/%[sdj%]/g, function(x) {
+        if (x === '%%') return '%';
+        if (!args.length) return x;
+        if (x === '%s') return String(args.shift());
+        if (x === '%d') return Number(args.shift());
+        if (x === '%j') try { return JSON.stringify(args.shift()); } catch (e) { return '[Circular]'; }
+        return x;
+      });
+    },
+    inspect: function(v) { try { return JSON.stringify(v); } catch (e) { return String(v); } },
+    promisify: promisify,
+    callbackify: callbackify,
+    types: { isPromise: function(v) { return !!v && typeof v.then === 'function'; } },
+  };
+}
+function __bn_load_string_decoder() {
+  function StringDecoder(encoding) {
+    this.encoding = encoding || 'utf8';
+  }
+  StringDecoder.prototype.write = function(buf) {
+    if (typeof buf === 'string') return buf;
+    if (Buffer.isBuffer && Buffer.isBuffer(buf)) return buf.toString(this.encoding);
+    if (buf instanceof Uint8Array) return Buffer.from(buf).toString(this.encoding);
+    return String(buf);
+  };
+  StringDecoder.prototype.end = function(buf) { return buf ? this.write(buf) : ''; };
+  return { StringDecoder: StringDecoder };
+}
+function __bn_load_timers_promises() {
+  return {
+    setTimeout: function(ms, value) {
+      return new Promise(function(resolve) {
+        setTimeout(function() { resolve(value); }, ms | 0);
+      });
+    },
+    setImmediate: function(value) {
+      return new Promise(function(resolve) {
+        setTimeout(function() { resolve(value); }, 0);
+      });
+    },
+    scheduler: {
+      wait: function(ms) {
+        return new Promise(function(resolve) { setTimeout(resolve, ms | 0); });
+      },
+    },
+  };
+}
+`;
+
+export const ZLIB_POLYFILL = `
+function __bn_concat_u8(chunks) {
+  var n = 0;
+  for (var i = 0; i < chunks.length; i++) n += chunks[i].length;
+  var out = new Uint8Array(n), o = 0;
+  for (var j = 0; j < chunks.length; j++) { out.set(chunks[j], o); o += chunks[j].length; }
+  return out;
+}
+function __bn_to_u8(data) {
+  if (Buffer.isBuffer && Buffer.isBuffer(data)) return data._data;
+  if (data instanceof Uint8Array) return data;
+  if (typeof data === 'string') return Buffer._encode(data, 'utf8');
+  return new Uint8Array(0);
+}
+function __bn_crc32_table() {
+  if (__bn_crc32_table._t) return __bn_crc32_table._t;
+  var t = new Uint32Array(256);
+  for (var n = 0; n < 256; n++) {
+    var c = n;
+    for (var k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  __bn_crc32_table._t = t;
+  return t;
+}
+function __bn_crc32(buf) {
+  var table = __bn_crc32_table();
+  var c = 0xffffffff;
+  for (var i = 0; i < buf.length; i++) c = table[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function __bn_adler32(buf) {
+  var a = 1, b = 0;
+  for (var i = 0; i < buf.length; i++) { a = (a + buf[i]) % 65521; b = (b + a) % 65521; }
+  return ((b << 16) | a) >>> 0;
+}
+function __bn_deflate_stored(data) {
+  if (data.length === 0) return new Uint8Array([0x01, 0x00, 0x00, 0xff, 0xff]);
+  var chunks = [], offset = 0;
+  while (offset < data.length) {
+    var take = Math.min(65535, data.length - offset);
+    var isLast = offset + take >= data.length;
+    var block = new Uint8Array(5 + take);
+    block[0] = isLast ? 0x01 : 0x00;
+    block[1] = take & 0xff; block[2] = (take >>> 8) & 0xff;
+    var nlen = (~take) & 0xffff;
+    block[3] = nlen & 0xff; block[4] = (nlen >>> 8) & 0xff;
+    block.set(data.subarray(offset, offset + take), 5);
+    chunks.push(block);
+    offset += take;
+  }
+  return __bn_concat_u8(chunks);
+}
+function __bn_inflate_stored(deflateData) {
+  var out = [], i = 0;
+  while (i < deflateData.length) {
+    var hdr = deflateData[i++];
+    var bfinal = hdr & 1;
+    var btype = (hdr >>> 1) & 3;
+    if (btype !== 0) throw new Error('zlib-pure: only stored DEFLATE blocks supported');
+    var len = deflateData[i] | (deflateData[i+1] << 8);
+    var nlen = deflateData[i+2] | (deflateData[i+3] << 8);
+    i += 4;
+    if (((len ^ 0xffff) & 0xffff) !== nlen) throw new Error('zlib-pure: invalid NLEN');
+    for (var j = 0; j < len; j++) out.push(deflateData[i++]);
+    if (bfinal) break;
+  }
+  return new Uint8Array(out);
+}
+function __bn_zlib_pure(op, data) {
+  var u8 = __bn_to_u8(data);
+  if (op === 'gzip') {
+    var body = __bn_deflate_stored(u8);
+    var out = new Uint8Array(10 + body.length + 8);
+    out[0]=0x1f; out[1]=0x8b; out[2]=8; out[9]=0xff;
+    out.set(body, 10);
+    var crc = __bn_crc32(u8), isize = u8.length >>> 0, t = 10 + body.length;
+    out[t]=crc&255; out[t+1]=(crc>>>8)&255; out[t+2]=(crc>>>16)&255; out[t+3]=(crc>>>24)&255;
+    out[t+4]=isize&255; out[t+5]=(isize>>>8)&255; out[t+6]=(isize>>>16)&255; out[t+7]=(isize>>>24)&255;
+    return out;
+  }
+  if (op === 'gunzip') {
+    if (u8.length < 18 || u8[0] !== 0x1f || u8[1] !== 0x8b) throw new Error('zlib-pure: not gzip');
+    var flg = u8[3], i = 10;
+    if (flg & 4) { var xlen = u8[i] | (u8[i+1] << 8); i += 2 + xlen; }
+    if (flg & 8) { while (i < u8.length && u8[i++] !== 0) {} }
+    if (flg & 16) { while (i < u8.length && u8[i++] !== 0) {} }
+    if (flg & 2) i += 2;
+    return __bn_inflate_stored(u8.subarray(i, u8.length - 8));
+  }
+  if (op === 'deflate') {
+    var body2 = __bn_deflate_stored(u8);
+    var out2 = new Uint8Array(2 + body2.length + 4);
+    out2[0]=0x78; out2[1]=0x01; out2.set(body2, 2);
+    var ad = __bn_adler32(u8), t2 = 2 + body2.length;
+    out2[t2]=(ad>>>24)&255; out2[t2+1]=(ad>>>16)&255; out2[t2+2]=(ad>>>8)&255; out2[t2+3]=ad&255;
+    return out2;
+  }
+  if (op === 'inflate') {
+    return __bn_inflate_stored(u8.subarray(2, u8.length - 4));
+  }
+  throw new Error('zlib-pure: unknown op ' + op);
+}
+function __bn_load_zlib() {
+  function syncViaHost(op, data) {
+    if (typeof __bn.zlibSync === 'function') {
+      var out = __bn.zlibSync(op, __bn_to_u8(data));
+      return Buffer.from(out);
+    }
+    return Buffer.from(__bn_zlib_pure(op, data));
+  }
+  function wrapStream(op) {
+    var Transform = loadCore('stream').Transform;
+    var t = new Transform();
+    var chunks = [];
+    t._transform = function(chunk, enc, cb) {
+      chunks.push(__bn_to_u8(chunk));
+      if (cb) cb();
+    };
+    t.end = function(chunk, enc, cb) {
+      if (typeof chunk === 'function') { cb = chunk; chunk = undefined; }
+      if (chunk != null) chunks.push(__bn_to_u8(chunk));
+      try {
+        var out = syncViaHost(op, __bn_concat_u8(chunks));
+        t.push(out);
+        t.push(null);
+      } catch (e) { t.emit('error', e); }
+      if (cb) cb();
+      return t;
+    };
+    return t;
+  }
+  return {
+    gzipSync: function(data) { return syncViaHost('gzip', data); },
+    gunzipSync: function(data) { return syncViaHost('gunzip', data); },
+    deflateSync: function(data) { return syncViaHost('deflate', data); },
+    inflateSync: function(data) { return syncViaHost('inflate', data); },
+    createGzip: function() { return wrapStream('gzip'); },
+    createGunzip: function() { return wrapStream('gunzip'); },
+    createDeflate: function() { return wrapStream('deflate'); },
+    createInflate: function() { return wrapStream('inflate'); },
   };
 }
 `;

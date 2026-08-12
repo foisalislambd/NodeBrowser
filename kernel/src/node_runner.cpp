@@ -3,6 +3,8 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #if defined(BN_HAS_QUICKJS)
 #include "quickjs.h"
@@ -13,6 +15,187 @@
 #endif
 
 namespace bn {
+
+#if defined(BN_HAS_QUICKJS)
+struct NodeCtx {
+  Kernel* kernel{};
+  Process* proc{};
+  JSContext* ctx{};
+};
+
+struct RetainedHttp {
+  JSRuntime* rt{};
+  JSContext* ctx{};
+  NodeCtx* nc{};
+  JSValue handler{JS_UNDEFINED};
+  Pid pid{};
+};
+
+static std::unordered_map<int, RetainedHttp>& http_retain() {
+  static std::unordered_map<int, RetainedHttp> m;
+  return m;
+}
+
+/** Free handler only; free shared rt/ctx/nc once no ports reference them. */
+static void free_retained_slot(int port) {
+  auto& m = http_retain();
+  auto it = m.find(port);
+  if (it == m.end()) return;
+  RetainedHttp slot = it->second;
+  m.erase(it);
+  if (slot.ctx && !JS_IsUndefined(slot.handler)) {
+    JS_FreeValue(slot.ctx, slot.handler);
+    slot.handler = JS_UNDEFINED;
+  }
+  // Shared runtime: free only when no other ports share the same ctx pointer.
+  bool shared = false;
+  for (auto& kv : m) {
+    if (kv.second.ctx == slot.ctx && slot.ctx) {
+      shared = true;
+      break;
+    }
+  }
+  if (!shared && slot.ctx) {
+    JS_FreeContext(slot.ctx);
+    if (slot.rt) JS_FreeRuntime(slot.rt);
+    delete slot.nc;
+  }
+}
+
+void release_retained_http_port(int port) {
+  free_retained_slot(port);
+}
+
+void release_retained_http_for_pid(Pid pid) {
+  auto& m = http_retain();
+  std::vector<int> ports;
+  for (auto& kv : m) {
+    if (kv.second.pid == pid) ports.push_back(kv.first);
+  }
+  for (int p : ports) free_retained_slot(p);
+}
+
+void release_all_retained_http() {
+  auto& m = http_retain();
+  std::vector<int> ports;
+  for (auto& kv : m) ports.push_back(kv.first);
+  for (int p : ports) free_retained_slot(p);
+}
+
+std::string http_dispatch_json(int port, const char* method, const char* path,
+                               const char* headers_json, const char* body) {
+  auto& m = http_retain();
+  auto it = m.find(port);
+  if (it == m.end() || !it->second.ctx || JS_IsUndefined(it->second.handler)) return {};
+  auto& h = it->second;
+  JSContext* ctx = h.ctx;
+
+  JSValue req = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, req, "method", JS_NewString(ctx, method ? method : "GET"));
+  JS_SetPropertyStr(ctx, req, "url", JS_NewString(ctx, path ? path : "/"));
+  if (headers_json && headers_json[0]) {
+    JSValue hj = JS_ParseJSON(ctx, headers_json, std::strlen(headers_json), "<headers>");
+    if (!JS_IsException(hj)) JS_SetPropertyStr(ctx, req, "headers", hj);
+    else {
+      JS_FreeValue(ctx, JS_GetException(ctx));
+      JS_SetPropertyStr(ctx, req, "headers", JS_NewObject(ctx));
+    }
+  } else {
+    JS_SetPropertyStr(ctx, req, "headers", JS_NewObject(ctx));
+  }
+
+  const char* bridge = R"JS(
+(function(){
+  var bag = { status: 200, headers: {}, body: '', ended: false };
+  globalThis.__bn_http_bag = bag;
+  return {
+    statusCode: 200,
+    setHeader: function(k,v){ bag.headers[k]=String(v); },
+    writeHead: function(code, h){ bag.status=code|0; this.statusCode=bag.status; if(h){ for(var k in h) bag.headers[k]=h[k]; } },
+    write: function(c){ bag.body += String(c==null?'':c); return true; },
+    end: function(c){ if(c!=null) bag.body += String(c); bag.ended=true; }
+  };
+})()
+)JS";
+  JSValue res = JS_Eval(ctx, bridge, std::strlen(bridge), "<http-res>", JS_EVAL_TYPE_GLOBAL);
+  if (JS_IsException(res)) {
+    JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, req);
+    return {};
+  }
+
+  JSValue argv_call[2] = {req, res};
+  JSValue ret = JS_Call(ctx, h.handler, JS_UNDEFINED, 2, argv_call);
+  if (JS_IsException(ret)) {
+    JSValue ex = JS_GetException(ctx);
+    const char* msg = JS_ToCString(ctx, ex);
+    std::string err = msg ? msg : "handler exception";
+    if (msg) JS_FreeCString(ctx, msg);
+    JS_FreeValue(ctx, ex);
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, res);
+    JS_FreeValue(ctx, req);
+    std::ostringstream oss;
+    oss << "{\"status\":500,\"headers\":{\"Content-Type\":\"text/plain\"},\"body\":\"";
+    for (char c : err) {
+      if (c == '"' || c == '\\') oss << '\\' << c;
+      else if (c == '\n') oss << "\\n";
+      else if (c == '\r') oss << "\\r";
+      else oss << c;
+    }
+    oss << "\"}";
+    return oss.str();
+  }
+  JS_FreeValue(ctx, ret);
+  JS_FreeValue(ctx, res);
+  JS_FreeValue(ctx, req);
+
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue bag = JS_GetPropertyStr(ctx, global, "__bn_http_bag");
+  JS_FreeValue(ctx, global);
+  if (JS_IsException(bag) || JS_IsUndefined(bag) || JS_IsNull(bag)) {
+    JS_FreeValue(ctx, bag);
+    return "{\"status\":200,\"headers\":{},\"body\":\"\"}";
+  }
+  JSValue status = JS_GetPropertyStr(ctx, bag, "status");
+  JSValue bodyV = JS_GetPropertyStr(ctx, bag, "body");
+  JSValue headersV = JS_GetPropertyStr(ctx, bag, "headers");
+  int32_t st = 200;
+  JS_ToInt32(ctx, &st, status);
+  const char* bodyStr = JS_ToCString(ctx, bodyV);
+  JSValue headersJson = JS_JSONStringify(ctx, headersV, JS_UNDEFINED, JS_UNDEFINED);
+  const char* hdrStr = JS_ToCString(ctx, headersJson);
+
+  std::ostringstream oss;
+  oss << "{\"status\":" << st << ",\"headers\":" << (hdrStr ? hdrStr : "{}") << ",\"body\":\"";
+  if (bodyStr) {
+    for (const char* p = bodyStr; *p; ++p) {
+      char c = *p;
+      if (c == '"' || c == '\\') oss << '\\' << c;
+      else if (c == '\n') oss << "\\n";
+      else if (c == '\r') oss << "\\r";
+      else if (c == '\t') oss << "\\t";
+      else oss << c;
+    }
+  }
+  oss << "\"}";
+
+  if (bodyStr) JS_FreeCString(ctx, bodyStr);
+  if (hdrStr) JS_FreeCString(ctx, hdrStr);
+  JS_FreeValue(ctx, headersJson);
+  JS_FreeValue(ctx, status);
+  JS_FreeValue(ctx, bodyV);
+  JS_FreeValue(ctx, headersV);
+  JS_FreeValue(ctx, bag);
+  return oss.str();
+}
+#else
+std::string http_dispatch_json(int, const char*, const char*, const char*, const char*) { return {}; }
+void release_retained_http_port(int) {}
+void release_retained_http_for_pid(Pid) {}
+void release_all_retained_http() {}
+#endif
+
 namespace {
 
 void write_out(Process& proc, std::string_view s) {
@@ -77,12 +260,6 @@ int cmd_pwd(Kernel&, Process& proc) {
 }
 
 #if defined(BN_HAS_QUICKJS)
-
-struct NodeCtx {
-  Kernel* kernel{};
-  Process* proc{};
-  JSContext* ctx{};
-};
 
 static NodeCtx* get_opaque(JSContext* ctx) {
   return static_cast<NodeCtx*>(JS_GetContextOpaque(ctx));
@@ -231,14 +408,24 @@ static JSValue js_bn_register_http(JSContext* ctx, JSValueConst, int argc, JSVal
   int32_t port = 0;
   JS_ToInt32(ctx, &port, argv[0]);
   nc->proc->keep_alive = true;
+  // notify_server_ready alone; host listens via __bn_on_server_ready from Kernel::notify
+  // Avoid also calling __bn_on_http_listen to prevent duplicate server-ready on the host.
   nc->kernel->notify_server_ready(nc->proc->pid, port);
-#ifdef __EMSCRIPTEN__
-  EM_ASM({
-    if (typeof globalThis.__bn_on_http_listen === 'function') {
-      globalThis.__bn_on_http_listen($0);
+  {
+    auto& m = http_retain();
+    auto existing = m.find(port);
+    if (existing != m.end()) {
+      // Drop previous registration for this port (may free shared runtime if last).
+      free_retained_slot(port);
     }
-  }, port);
-#endif
+    RetainedHttp slot{};
+    slot.pid = nc->proc->pid;
+    slot.ctx = ctx;
+    if (argc >= 2 && JS_IsFunction(ctx, argv[1])) {
+      slot.handler = JS_DupValue(ctx, argv[1]);
+    }
+    m[port] = slot;
+  }
   return JS_UNDEFINED;
 }
 
@@ -938,8 +1125,8 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   }
   JS_FreeValue(ctx, boot);
 
-  std::string script = proc.argv[0];
-  // Also put remaining argv onto process via eval
+  std::string script = proc.argv.empty() ? "" : proc.argv[0];
+  // Inject argv + env, then run main
   {
     std::ostringstream oss;
     oss << "process.argv = ['node'";
@@ -952,6 +1139,22 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
       oss << '"';
     }
     oss << "];\n";
+    oss << "process.env = Object.assign({}, process.env || {}";
+    for (const auto& kv : proc.env) {
+      oss << ", {";
+      oss << '"';
+      for (char c : kv.first) {
+        if (c == '\\' || c == '"') oss << '\\';
+        oss << c;
+      }
+      oss << "\":\"";
+      for (char c : kv.second) {
+        if (c == '\\' || c == '"') oss << '\\';
+        oss << c;
+      }
+      oss << "\"}";
+    }
+    oss << ");\n";
     oss << "__bn_runMain(";
     oss << '"';
     for (char c : script) {
@@ -978,11 +1181,16 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
     JS_FreeValue(ctx, result);
     JS_FreeValue(ctx, global);
     if (proc.keep_alive) {
-      // Leave runtime alive for future HTTP dispatch (host may kill later).
-      // Context retention for full request proxy lands with bn_http_dispatch.
-      // For now mark keep-alive and tear down JS — host JS runtime covers preview.
-      JS_FreeContext(ctx);
-      JS_FreeRuntime(rt);
+      // Retain QuickJS runtime so bn_http_dispatch can invoke listen handlers.
+      auto* heap_nc = new NodeCtx{&kernel, &proc, ctx};
+      JS_SetContextOpaque(ctx, heap_nc);
+      for (auto& kv : http_retain()) {
+        if (kv.second.pid == proc.pid) {
+          kv.second.rt = rt;
+          kv.second.ctx = ctx;
+          kv.second.nc = heap_nc;
+        }
+      }
       return -1;
     }
     JS_FreeContext(ctx);

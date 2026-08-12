@@ -35,6 +35,8 @@ export interface KernelModule {
   writeStdin(k: KernelHandle, pid: number, data: string): number;
   /** Optional: JS fallback exposes this for HttpBridge wiring. */
   setHttpRegistrar?: (fn: HttpRegistrar | null) => void;
+  /** Optional: host FS mutation bus (JS kernel). */
+  setFsChangeListener?: (fn: ((ev: { type: string; path: string }) => void) | null) => void;
   /** Optional: WASM keep-alive HTTP dispatch (JSON result string). */
   httpDispatch?: (
     k: KernelHandle,
@@ -64,10 +66,11 @@ type EmscriptenModule = {
   _bn_vfs_write_text: (k: number, path: number, text: number) => number;
   _bn_vfs_write_bytes: (k: number, path: number, data: number, len: number) => number;
   _bn_vfs_read_text: (k: number, path: number) => number;
+  _bn_vfs_read_bytes?: (k: number, path: number, outLen: number) => number;
   _bn_vfs_unlink: (k: number, path: number) => number;
   _bn_vfs_readdir_json: (k: number, path: number) => number;
   _bn_vfs_exists: (k: number, path: number) => number;
-  _bn_spawn: (k: number, cmd: number, argvJson: number, cwd: number) => number;
+  _bn_spawn: (k: number, cmd: number, argvJson: number, cwd: number, envJson: number) => number;
   _bn_wait: (k: number, pid: number) => number;
   _bn_kill: (k: number, pid: number) => number;
   _bn_read_stdout: (k: number, pid: number, buf: number, len: number) => number;
@@ -82,6 +85,8 @@ type EmscriptenModule = {
     body: number,
   ) => number;
   _bn_free: (p: number) => void;
+  getValue?: (ptr: number, type: string) => number;
+  setValue?: (ptr: number, value: number, type: string) => void;
 };
 
 declare global {
@@ -157,6 +162,25 @@ function wrap(mod: EmscriptenModule): KernelModule {
         mod._free(p);
       }
     },
+    readBytes: mod._bn_vfs_read_bytes
+      ? (k, path) => {
+          const p = allocStr(path);
+          const lenPtr = mod._malloc(4);
+          try {
+            const ptr = mod._bn_vfs_read_bytes!(k, p, lenPtr);
+            if (!ptr) return null;
+            const len =
+              mod.getValue?.(lenPtr, 'i32') ??
+              new DataView(mod.HEAPU8.buffer).getUint32(lenPtr, true);
+            const out = mod.HEAPU8.slice(ptr, ptr + len);
+            mod._bn_free(ptr);
+            return out;
+          } finally {
+            mod._free(p);
+            mod._free(lenPtr);
+          }
+        }
+      : undefined,
     unlink: (k, path) => {
       const p = allocStr(path);
       try {
@@ -200,16 +224,18 @@ function wrap(mod: EmscriptenModule): KernelModule {
         mod._free(p2);
       }
     },
-    spawn: (k, cmd, argv, cwd, _env) => {
+    spawn: (k, cmd, argv, cwd, env) => {
       const c = allocStr(cmd);
       const a = allocStr(JSON.stringify(argv));
       const d = allocStr(cwd);
+      const e = allocStr(JSON.stringify(env ?? {}));
       try {
-        return mod._bn_spawn(k, c, a, d);
+        return mod._bn_spawn(k, c, a, d, e);
       } finally {
         mod._free(c);
         mod._free(a);
         mod._free(d);
+        mod._free(e);
       }
     },
     wait: (k, pid) => mod._bn_wait(k, pid),
