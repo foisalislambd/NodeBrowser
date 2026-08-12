@@ -497,13 +497,18 @@ export class NodeBrowser {
     return this.spawn(binName, args, { cwd });
   }
 
-  /** In-tab Vite subset: esbuild-wasm + kernel VFS (Phases 27–29). */
+  /** In-tab Vite subset: esbuild-wasm + kernel VFS. `spawn('vite')` tries installed CLI first. */
   viteBuild(cwd: string, opts?: { outDir?: string }) {
     return viteBuild(this, cwd, opts);
   }
 
   viteDev(cwd: string, opts?: { port?: number }) {
     return viteDev(this, cwd, opts);
+  }
+
+  /** Run installed `typescript/lib/tsc.js` in QuickJS (`npm install typescript` into the VFS). */
+  tsc(cwd: string, args: string[] = []) {
+    return this.spawn('tsc', args, { cwd });
   }
 
   /** In-tab Next App Router subset (Phase 30). */

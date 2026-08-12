@@ -339,6 +339,50 @@ int main() {
     CHECK(bc.has_value() && *bc == 1);
   }
 
+#if defined(BN_HAS_QUICKJS)
+  {
+    k.vfs().mkdir("/home/cli/node_modules/typescript/lib", true);
+    k.vfs().mkdir("/home/cli/node_modules/.bin", true);
+    k.vfs().write_text(
+        "/home/cli/node_modules/typescript/lib/tsc.js",
+        "var fs=require('fs');var path=require('path');\n"
+        "var outDir='.'; var files=[];\n"
+        "for(var i=2;i<process.argv.length;i++){\n"
+        "  if(process.argv[i]==='--outDir'){ outDir=process.argv[++i]; continue; }\n"
+        "  if(process.argv[i].charAt(0)==='-') continue;\n"
+        "  files.push(process.argv[i]);\n"
+        "}\n"
+        "files.forEach(function(f){\n"
+        "  var src=fs.readFileSync(path.resolve(f),'utf8');\n"
+        "  var js=String(src).replace(/:\\s*[A-Za-z][A-Za-z0-9_<>,\\s|]*/g,'');\n"
+        "  try{fs.mkdirSync(outDir,{recursive:true});}catch(e){}\n"
+        "  var dest=path.join(outDir, path.basename(f).replace(/\\.tsx?$/,'.js'));\n"
+        "  fs.writeFileSync(dest, js);\n"
+        "  console.log('tsc-ok '+dest);\n"
+        "});\n");
+    k.vfs().write_text("/home/cli/node_modules/.bin/tsc",
+                       "#!/usr/bin/env node\nrequire('../typescript/lib/tsc.js');\n");
+    k.vfs().write_text("/home/cli/hi.ts", "const x: number = 1;\n");
+    auto pid = k.spawn("tsc", {"hi.ts", "--outDir", "/home/cli/tsout"}, {}, "/home/cli");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("tsc-ok") != std::string::npos);
+    auto js = k.vfs().read_text("/home/cli/tsout/hi.js");
+    CHECK(js.has_value());
+  }
+  {
+    k.vfs().mkdir("/home/vcli/node_modules/vite/bin", true);
+    k.vfs().write_text("/home/vcli/node_modules/vite/bin/vite.js",
+                       "console.log('vite-cli=' + process.argv.slice(2).join(','));\n");
+    auto pid = k.spawn("vite", {"build"}, {}, "/home/vcli");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("vite-cli=build") != std::string::npos);
+  }
+#endif
+
   if (fails) {
     std::cerr << fails << " failure(s)\n";
     return 1;

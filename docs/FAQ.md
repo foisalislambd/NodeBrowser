@@ -10,7 +10,7 @@ Into the in-memory **VFS** (e.g. `/home/project/node_modules`), not your host di
 
 ## Can it run full Next.js / Vite today?
 
-**In-tab subset:** `vite` / `next` kernel commands bundle with **esbuild-wasm** and shims (React/Next App Router client pages). That is not the upstream Vite 8 / `next start` CLIs.
+**In-tab subset:** `vite` / `next` kernel commands bundle with **esbuild-wasm** when the installed CLI graph does not fit QuickJS (native `esbuild`). `spawn('tsc')` runs installed `typescript/lib/tsc.js` in QuickJS. `spawn('vite')` tries `node_modules/vite/bin/vite.js` first, then the host subset. That is not bit-identical to Vite 8 / `next start`.
 
 Host templates still exist (`npm run dev:vite` / `dev:next`) for comparison.
 

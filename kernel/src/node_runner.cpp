@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1335,9 +1336,19 @@ var process = {
   argv: ['node'],
   env: {},
   exitCode: 0,
+  platform: 'linux',
+  arch: 'x64',
+  pid: 1,
+  ppid: 0,
+  execPath: '/usr/bin/node',
+  execArgv: [],
+  version: 'v20.11.0',
+  versions: { node: '20.11.0' },
+  browser: false,
+  title: 'node',
   exit: function(code) { process.exitCode = code|0; throw {__bn_exit: code|0}; },
-  stdout: { write: function(s) { __bn.print(String(s)); } },
-  stderr: { write: function(s) { __bn.eprint(String(s)); } },
+  stdout: { write: function(s) { __bn.print(String(s)); }, isTTY: false },
+  stderr: { write: function(s) { __bn.eprint(String(s)); }, isTTY: false },
   stdin: {
     isTTY: false,
     readable: true,
@@ -2040,7 +2051,7 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
     write_err(proc, "node: failed to create JS runtime\n");
     return 1;
   }
-  JS_SetMemoryLimit(rt, 128 * 1024 * 1024);
+  JS_SetMemoryLimit(rt, 256 * 1024 * 1024);
   JSContext* ctx = JS_NewContext(rt);
   if (!ctx) {
     JS_FreeRuntime(rt);
@@ -2317,39 +2328,6 @@ int cmd_npx(Kernel&, Process& proc) {
 #endif
 }
 
-int cmd_vite_or_next(Kernel&, Process& proc) {
-  std::string tool = proc.cmd;
-  std::string mode = "dev";
-  for (const auto& a : proc.argv) {
-    if (a == "build") mode = "build";
-    else if (a == "preview" || a == "start") mode = "preview";
-    else if (a == "dev") mode = "dev";
-  }
-#ifdef __EMSCRIPTEN__
-  EM_ASM(
-      {
-        var tool = UTF8ToString($0);
-        var cwd = UTF8ToString($1);
-        var mode = UTF8ToString($2);
-        if (typeof globalThis.__bn_on_tool === 'function') {
-          globalThis.__bn_on_tool(tool, cwd, mode);
-        }
-      },
-      tool.c_str(), proc.cwd.c_str(), mode.c_str());
-  write_out(proc, tool + " " + mode + " (host esbuild-wasm)\n");
-  if (mode == "dev" || mode == "preview") {
-    proc.keep_alive = true;
-    return -1;
-  }
-  // build: host runs async; stay alive until the tab's bundler finishes (kill to stop)
-  proc.keep_alive = true;
-  return -1;
-#else
-  write_out(proc, tool + ": in-tab " + mode + " uses host esbuild-wasm (browser/WASM)\n");
-  return 0;
-#endif
-}
-
 int cmd_node(Kernel& kernel, Process& proc) {
 #if defined(BN_HAS_QUICKJS)
   return run_node_quickjs(kernel, proc);
@@ -2366,6 +2344,86 @@ int cmd_node(Kernel& kernel, Process& proc) {
     }
   }
   return 1;
+#endif
+}
+
+static std::optional<std::string> find_js_cli(Kernel& k, const std::string& cwd,
+                                             const std::vector<std::string>& rels) {
+  for (const auto& rel : rels) {
+    auto p = join_path(cwd, rel);
+    auto st = k.vfs().stat(p, true);
+    if (st && st->kind == NodeKind::File) return p;
+  }
+  return std::nullopt;
+}
+
+int cmd_tsc(Kernel& k, Process& proc) {
+  auto cli = find_js_cli(k, proc.cwd,
+                         {"node_modules/typescript/lib/tsc.js", "node_modules/typescript/bin/tsc",
+                          "node_modules/.bin/tsc"});
+  if (!cli) {
+    write_err(proc, "tsc: typescript not installed in VFS (npm install typescript)\n");
+    return 1;
+  }
+  std::vector<std::string> argv;
+  argv.push_back(*cli);
+  argv.insert(argv.end(), proc.argv.begin(), proc.argv.end());
+  proc.cmd = "node";
+  proc.argv = std::move(argv);
+  write_out(proc, "tsc: QuickJS CLI " + *cli + "\n");
+  return cmd_node(k, proc);
+}
+
+int cmd_vite_or_next(Kernel& k, Process& proc) {
+  std::string tool = proc.cmd;
+  std::vector<std::string> orig = proc.argv;
+  std::string mode = "dev";
+  for (const auto& a : orig) {
+    if (a == "build")
+      mode = "build";
+    else if (a == "preview" || a == "start")
+      mode = "preview";
+    else if (a == "dev")
+      mode = "dev";
+  }
+  std::vector<std::string> rels;
+  if (tool == "vite") {
+    rels = {"node_modules/vite/bin/vite.js", "node_modules/vite/bin/vite.mjs", "node_modules/.bin/vite"};
+  } else {
+    rels = {"node_modules/next/dist/bin/next", "node_modules/.bin/next"};
+  }
+  auto cli = find_js_cli(k, proc.cwd, rels);
+  if (cli) {
+    write_out(proc, tool + ": running installed CLI in QuickJS (" + *cli + ")\n");
+    std::vector<std::string> argv;
+    argv.push_back(*cli);
+    argv.insert(argv.end(), orig.begin(), orig.end());
+    proc.cmd = "node";
+    proc.argv = std::move(argv);
+    int code = cmd_node(k, proc);
+    if (code == 0 || code == -1) return code;
+    write_err(proc, tool + ": CLI exited " + std::to_string(code) +
+                        " (graph did not fit QuickJS) — host esbuild-wasm subset\n");
+    proc.cmd = tool;
+    proc.argv = orig;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM(
+      {
+        var tool = UTF8ToString($0);
+        var cwd = UTF8ToString($1);
+        var mode = UTF8ToString($2);
+        if (typeof globalThis.__bn_on_tool === 'function') {
+          globalThis.__bn_on_tool(tool, cwd, mode);
+        }
+      },
+      tool.c_str(), proc.cwd.c_str(), mode.c_str());
+  write_out(proc, tool + " " + mode + " (host esbuild-wasm subset)\n");
+  proc.keep_alive = true;
+  return -1;
+#else
+  write_out(proc, tool + ": in-tab " + mode + " uses host esbuild-wasm (browser/WASM)\n");
+  return 0;
 #endif
 }
 
@@ -2394,6 +2452,7 @@ void register_core_commands(Kernel& kernel) {
   kernel.register_command("[", cmd_test);
   kernel.register_command("vite", cmd_vite_or_next);
   kernel.register_command("next", cmd_vite_or_next);
+  kernel.register_command("tsc", cmd_tsc);
   kernel.register_command("npm", cmd_npm);
   kernel.register_command("npx", cmd_npx);
 }

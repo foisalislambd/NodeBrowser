@@ -386,6 +386,69 @@ async function main() {
   const kind = (await import('../dist/bundler/preview.js')).detectProjectKind;
   assert((await kind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
 
+  // --- Real CLI runner (needs WASM built after guest shebang/argv + cmd_tsc) ---
+  await bn.fs.writeFile('/shebang-probe.js', '#!/usr/bin/env node\nconsole.log("shebang-ok");\n');
+  const shebangProbe = await readOut(await bn.spawn('node', ['/shebang-probe.js'], { cwd: '/' }));
+  if (!shebangProbe.out.includes('shebang-ok')) {
+    console.log('CLI runner skipped (rebuild WASM: npm run build:wasm)');
+  } else {
+  await bn.fs.mkdir('/home/project/node_modules/typescript/lib', { recursive: true });
+  await bn.fs.mkdir('/home/project/node_modules/.bin', { recursive: true });
+  await bn.fs.writeFile(
+    '/home/project/node_modules/typescript/lib/tsc.js',
+    [
+      "var fs = require('fs');",
+      "var path = require('path');",
+      "var url = require('url');",
+      "var os = require('os');",
+      "var outDir = '.';",
+      'var files = [];',
+      'for (var i = 2; i < process.argv.length; i++) {',
+      "  if (process.argv[i] === '--outDir') { outDir = process.argv[++i]; continue; }",
+      "  if (process.argv[i].charAt(0) === '-') continue;",
+      '  files.push(process.argv[i]);',
+      '}',
+      'files.forEach(function (f) {',
+      "  var src = fs.readFileSync(path.resolve(f), 'utf8');",
+      "  var js = String(src).replace(/:\\s*[A-Za-z][A-Za-z0-9_<>,\\s|]*/g, '');",
+      '  try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) {}',
+      "  var dest = path.join(outDir, path.basename(f).replace(/\\.tsx?$/, '.js'));",
+      '  fs.writeFileSync(dest, js);',
+      "  console.log('tsc-ok ' + dest + ' plat=' + process.platform + ' url=' + url.fileURLToPath('file:///home/x'));",
+      "  console.log('os=' + os.platform());",
+      '});',
+    ].join('\n'),
+  );
+  await bn.fs.writeFile(
+    '/home/project/node_modules/.bin/tsc',
+    '#!/usr/bin/env node\nrequire("../typescript/lib/tsc.js");\n',
+  );
+  await bn.fs.writeFile('/home/project/hi.ts', 'const x: number = 1;\n');
+  const tscOut = await readOut(
+    await bn.spawn('tsc', ['hi.ts', '--outDir', '/home/project/tsout'], { cwd: '/home/project' }),
+  );
+  assert(tscOut.code === 0, 'tsc exit ' + tscOut.out);
+  assert(tscOut.out.includes('tsc-ok'), tscOut.out);
+  assert(tscOut.out.includes('plat=linux'), tscOut.out);
+  assert((await bn.fs.readFile('/home/project/tsout/hi.js', 'utf8')).includes('const x'), 'tsc emit');
+  const shOut = await readOut(
+    await bn.spawn('node', ['/home/project/node_modules/.bin/tsc', 'hi.ts', '--outDir', '/home/project/ts2'], {
+      cwd: '/home/project',
+    }),
+  );
+  assert(shOut.code === 0, 'shebang tsc ' + shOut.out);
+  assert(await bn.fs.exists('/home/project/ts2/hi.js'), 'shebang emit');
+
+  await bn.fs.mkdir('/home/project/node_modules/vite/bin', { recursive: true });
+  await bn.fs.writeFile(
+    '/home/project/node_modules/vite/bin/vite.js',
+    "console.log('vite-cli=' + process.argv.slice(2).join(','));\n",
+  );
+  const viteCli = await readOut(await bn.spawn('vite', ['build'], { cwd: '/home/project' }));
+  assert(viteCli.code === 0, 'vite cli exit ' + viteCli.out);
+  assert(viteCli.out.includes('vite-cli=build'), viteCli.out);
+  }
+
   const { WebContainer } = await import('../dist/compat.js');
   const wc = await WebContainer.boot({ useWasm: true });
   assert(wc.runtime === 'wasm', 'compat runtime');

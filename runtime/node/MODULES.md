@@ -19,9 +19,9 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `net` | ok (subset) | Server/Socket on virtual ports via HttpBridge |
 | `child_process` | ok (subset) | spawn/execFile; `parent_pid`; `kill` = kill tree; max 32 procs |
 | `module` / `require` | ok | CJS + **createRequire** + `exports` field + ESM rewrite |
-| `url` | stub | |
+| `url` | ok (subset) | parse + `fileURLToPath` / `pathToFileURL` |
 | `util` | ok (subset) | promisify/callbackify/format/inherits |
-| `os` | stub | |
+| `os` | ok (subset) | platform linux, tmpdir, cpus, homedir |
 | `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(**sha1/sha256/sha384/sha512**) |
 | `zlib` | ok (subset) | gzip/gunzip/deflate/inflate sync (+ streams) |
 | `string_decoder` | ok (subset) | |
@@ -43,6 +43,8 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 ## Vite checklist
 
 - [x] `esbuild-wasm` transform path (`NodeBrowser.bundle` / `viteDev`)
+- [x] Installed `tsc` CLI in QuickJS (`spawn('tsc')` / `bn.tsc`)
+- [x] Installed `vite` CLI tried in QuickJS; native esbuild → host subset
 - [x] `fs.promises` + Buffer
 - [x] `http` upgrade stub; in-tab HMR = reload poll (`__hmr_gen`)
 - [x] `crypto.randomFillSync`

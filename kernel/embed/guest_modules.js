@@ -1270,9 +1270,23 @@ function loadCore(name) {
         var i = String(p).lastIndexOf('.');
         return i < 0 ? '' : p.slice(i);
       },
-      sep: '/'
+      sep: '/',
+      delimiter: ':',
+      isAbsolute: function(p) { return String(p).charAt(0) === '/'; },
+      normalize: function(p) { return join('/', String(p)); },
+      relative: function(from, to) {
+        var f = pathApi.resolve(from).split('/').filter(Boolean);
+        var t = pathApi.resolve(to).split('/').filter(Boolean);
+        var i = 0;
+        while (i < f.length && i < t.length && f[i] === t[i]) i++;
+        var ups = [];
+        for (var j = i; j < f.length; j++) ups.push('..');
+        var rel = ups.concat(t.slice(i)).join('/');
+        return rel || '.';
+      }
     };
     pathApi.posix = pathApi;
+    pathApi.win32 = pathApi;
     return pathApi;
   }
   if (name === 'events') {
@@ -1351,6 +1365,26 @@ function loadCore(name) {
     };
   }
   if (name === 'url') {
+    function fileURLToPath(u) {
+      var s = typeof u === 'string' ? u : (u && u.href ? u.href : String(u));
+      if (s.slice(0, 7) === 'file://') {
+        s = s.slice(7);
+        if (s.slice(0, 2) === '//') {
+          var slash = s.indexOf('/', 2);
+          s = slash >= 0 ? s.slice(slash) : '/';
+        }
+        if (s.charAt(0) !== '/') s = '/' + s;
+        try { s = decodeURIComponent(s); } catch (e) {}
+      }
+      return s;
+    }
+    function pathToFileURL(p) {
+      var path = String(p);
+      if (path.charAt(0) !== '/') path = '/' + path;
+      var href = 'file://' + path.split('/').map(function(seg) { return encodeURIComponent(seg); }).join('/');
+      href = href.replace('file://', 'file:///');
+      return { href: href, pathname: path, protocol: 'file:', toString: function() { return href; } };
+    }
     return {
       parse: function(u) {
         try {
@@ -1360,7 +1394,11 @@ function loadCore(name) {
           return { href: u, pathname: '/' };
         }
       },
-      URL: typeof URL !== 'undefined' ? URL : undefined
+      URL: typeof URL !== 'undefined' ? URL : undefined,
+      URLSearchParams: typeof URLSearchParams !== 'undefined' ? URLSearchParams : undefined,
+      fileURLToPath: fileURLToPath,
+      pathToFileURL: pathToFileURL,
+      format: function(o) { return (o && o.href) || String(o); }
     };
   }
   if (name === 'util') return __bn_load_util();
@@ -1656,10 +1694,23 @@ function loadCore(name) {
   }
   if (name === 'os') {
     return {
-      platform: function() { return 'browsernode'; },
+      platform: function() { return 'linux'; },
+      type: function() { return 'Linux'; },
+      release: function() { return '0.0.0'; },
       homedir: function() { return '/home'; },
+      tmpdir: function() { return '/tmp'; },
+      hostname: function() { return 'browsernode'; },
       EOL: '\n',
-      arch: function() { return 'wasm32'; }
+      arch: function() { return 'x64'; },
+      endianness: function() { return 'LE'; },
+      cpus: function() { return [{ model: 'wasm', speed: 0, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } }]; },
+      totalmem: function() { return 256 * 1024 * 1024; },
+      freemem: function() { return 128 * 1024 * 1024; },
+      loadavg: function() { return [0, 0, 0]; },
+      uptime: function() { return 1; },
+      networkInterfaces: function() { return {}; },
+      userInfo: function() { return { username: 'user', homedir: '/home', uid: 1000, gid: 1000, shell: '/bin/sh' }; },
+      constants: { signals: {}, errno: {} }
     };
   }
   if (name === 'assert') {
@@ -1927,6 +1978,12 @@ function createRequire(fromFile) {
     }
     var resolved = resolveFrom(fromDir, String(request));
     if (resolved.indexOf('node:') === 0) return loadCore(resolved.slice(5));
+    if (/\.node$/i.test(resolved) || reqs === 'fsevents') {
+      throw new Error('BN_GRAPH: native addon not available in QuickJS: ' + reqs);
+    }
+    if (reqs === 'esbuild' || /\/node_modules\/esbuild(\/|$)/.test(resolved)) {
+      throw new Error('BN_GRAPH: native esbuild is not available in QuickJS');
+    }
     if (moduleCache[resolved]) return moduleCache[resolved].exports;
     var mod = makeModule(resolved);
     moduleCache[resolved] = mod;
@@ -1937,6 +1994,7 @@ function createRequire(fromFile) {
       mod.loaded = true;
       return mod.exports;
     }
+    code = __bn_strip_shebang(code);
     if (isEsmFile(resolved)) code = __bn_rewrite_esm(code, resolved);
     var wrapped = '(function(exports, require, module, __filename, __dirname, console, process, globalThis){\n'
       + 'var Buffer=globalThis.Buffer;\n' + code + '\n'
@@ -1948,6 +2006,15 @@ function createRequire(fromFile) {
   };
 }
 
+function __bn_strip_shebang(code) {
+  var s = String(code);
+  if (s.charAt(0) === '#' && s.charAt(1) === '!') {
+    var nl = s.indexOf('\n');
+    return nl >= 0 ? s.slice(nl + 1) : '';
+  }
+  return s;
+}
+
 function __bn_dynamic_import(spec) {
   return Promise.resolve().then(function() {
     return createRequire(process.cwd() + '/.')(String(spec));
@@ -1955,13 +2022,16 @@ function __bn_dynamic_import(spec) {
 }
 
 function __bn_runMain(filename) {
-  process.argv = ['node', filename];
+  if (!process.argv || process.argv.length < 2) {
+    process.argv = ['node', filename];
+  }
   try {
     var path = filename.charAt(0) === '/' ? filename : join(process.cwd(), filename);
     var resolved = resolveFile(path);
     if (!resolved) throw new Error('Cannot find ' + filename);
     var code = __bn.readFile(resolved);
     if (code === null) throw new Error('Cannot find ' + filename);
+    code = __bn_strip_shebang(code);
     var mod = makeModule(resolved);
     moduleCache[resolved] = mod;
     if (isEsmFile(resolved)) code = __bn_rewrite_esm(code, resolved);

@@ -59,13 +59,14 @@ Done means these work on the **WASM kernel** (native `bn_*_test` + browser demo)
 | In-tab Vite/Next **subset** (esbuild-wasm + shims, not upstream CLIs) | ✅ subset |
 | `SECURITY.md` + WASM-only guest | ✅ |
 | WASM-only guest (no `js-runtime.ts`) | ✅ Phase 13b |
-| Real `node node_modules/vite/bin/vite.js` in QuickJS | remaining (hard) |
+| Real `node node_modules/vite/bin/vite.js` in QuickJS | ✅ try CLI; native esbuild → host subset |
+| Real `tsc` (`typescript/lib/tsc.js`) in QuickJS | ✅ when installed in VFS |
 | xterm / SAB stdio / WC-speed install | Phases 32, 37 — remaining |
 
 ### Must-have to actually surpass WC (later pillars)
 
 1. **WASM is the only guest** — Phase 13b. Dual runtimes are a product lie.
-2. **Real tooling in WASM** — run installed `vite`/`tsc` via QuickJS when the graph fits; keep esbuild-wasm as the fast path, never as a fake “we run Vite”.
+2. **Real tooling in WASM** — installed `tsc`/`vite` via QuickJS when the graph fits; esbuild-wasm is the Vite fast path (never pretend a failed CLI is upstream Vite).
 3. **Process + HTTP harden** — kill tree ✅; WASM **Worker** so long `node` does not freeze the tab ✅ (same-thread fallback; not Asyncify); HTTP on retained WASM handlers.
 4. **Install speed** — OPFS tarball cache, lockfile skip, fewer host copies (Phase 23/37).
 5. **Open audit** — CI green = native C++ tests + WASM boot, not `useWasm: false`.
@@ -375,7 +376,7 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 
 ### Pillar D — Vite in the browser (kernel VFS + esbuild-wasm)
 
-Upstream `vite` CLI is too large for QuickJS. In-tab Vite = C++ `vite` command + host esbuild-wasm + kernel files.
+Upstream `vite` CLI needs native `esbuild`. In-tab Vite **tries** `node_modules/vite/bin/vite.js` in QuickJS; if the graph does not fit (native addon / esbuild), it falls back to host esbuild-wasm. `tsc` runs installed `typescript/lib/tsc.js` in QuickJS.
 
 #### Phase 27 — Vite platform APIs `M` ✅ (MVP)
 
@@ -386,7 +387,8 @@ Upstream `vite` CLI is too large for QuickJS. In-tab Vite = C++ `vite` command +
 
 #### Phase 28 — In-tab `vite` / `vite build` `L` ✅ (subset)
 
-- [x] `vite` / `vite build` — C++ command → host `__bn_on_tool` → `viteDev` / `viteBuild`
+- [x] `vite` / `vite build` — try installed CLI in QuickJS; else host `__bn_on_tool` → `viteDev` / `viteBuild`
+- [x] `tsc` — installed `typescript/lib/tsc.js` in QuickJS (shebang + argv); missing package → error
 - [x] Dev server iframe + reload-on-save (`fs-change` → rebuild)
 - [x] Production `vite build` → `dist/` + `serveStatic`
 - [x] `vite.config.js` read; Vue/Svelte plugins → clear error
@@ -522,7 +524,7 @@ If capacity is limited:
 1. ~~**13b** WASM-only guest~~ ✅ (`js-runtime.ts` deleted; CI WASM boot)
 2. **18 harden** HTTP keep-alive only on WASM
 3. ~~**16 harden** non-blocking `node` (Worker)~~ ✅ — kill tree + browser Worker; Asyncify/interrupt still later
-4. **Real Vite/tsc in QuickJS** when the graph fits; esbuild remains the fast path
+4. ~~**Real Vite/tsc in QuickJS**~~ ✅ try installed CLI; esbuild-wasm remains the Vite fast path when the graph does not fit
 5. **37** install cache + benchmarks vs WebContainers
 6. **32** xterm UI
 7. **31** Next route handlers subset

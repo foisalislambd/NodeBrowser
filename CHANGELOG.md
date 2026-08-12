@@ -12,6 +12,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 
 - Browser: C++/WASM kernel on a **Worker** (`bn.worker`) so long `node` does not freeze the tab; Node/tests stay same-thread
 - **Phase 13b:** deleted `js-runtime.ts`; `boot()` is WASM-only; PR CI builds C++ → WASM (Emscripten) then runs conformance
+- Installed **tsc** / **vite** CLIs run in QuickJS when the module graph fits; Vite still uses host esbuild-wasm as the fast path
 - Automated release on `main`: npm Trusted Publisher (OIDC), GitHub Packages, GitHub Release
 - Version scheme `1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`
 - GitHub Pages demo deploy (self-contained `demo/dist`, base path `/NodeBrowser/`)

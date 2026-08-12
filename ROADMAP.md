@@ -20,12 +20,12 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 - `WebContainer` name shim; ZIP → preview
 - Host API over C ABI
 - WASM-only `boot()` (no TypeScript guest Node); PR CI builds kernel with Emscripten
+- Installed `tsc` / `vite` CLIs in QuickJS (vite falls back to esbuild-wasm when native esbuild is required)
 
 ## Must add (still C++/WASM)
 
-1. Real installed `vite`/`tsc` in QuickJS when the graph fits  
-2. Optional `@xterm/xterm`; SAB stdio  
-3. External bake-off vs WebContainers  
+1. Optional `@xterm/xterm`; SAB stdio  
+2. External bake-off vs WebContainers  
 
 ## Non-goals
 
