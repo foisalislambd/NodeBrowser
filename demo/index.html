@@ -4,27 +4,85 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>NodeBrowser</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23007acc' width='16' height='16' rx='2'/%3E%3Cpath fill='%23fff' d='M4 3h3l5 5-5 5H4l5-5z'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
   </head>
   <body>
-    <div class="workbench" id="workbench" data-pane="editor">
-      <!-- Title bar -->
+    <div class="workbench" id="workbench" data-pane="editor" data-sidebar="explorer">
       <header class="titlebar" role="banner">
         <div class="titlebar-left">
-          <span class="app-icon" aria-hidden="true"></span>
+          <span class="app-icon" title="NodeBrowser" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="16" height="16"><rect fill="#007acc" width="16" height="16" rx="2"/><path fill="#fff" d="M4 3h3l5 5-5 5H4l5-5z"/></svg>
+          </span>
           <nav class="menubar" aria-label="Menu">
-            <span class="menu-item">File</span>
-            <span class="menu-item">Edit</span>
-            <span class="menu-item">View</span>
-            <span class="menu-item">Run</span>
-            <span class="menu-item">Terminal</span>
+            <div class="menu-wrap">
+              <button type="button" class="menu-item" data-menu="file">File</button>
+              <div class="menu-dropdown" id="menu-file" hidden>
+                <button type="button" class="menu-cmd" data-cmd="newfile">New File<span>Ctrl+N</span></button>
+                <button type="button" class="menu-cmd" data-cmd="newdir">New Folder</button>
+                <button type="button" class="menu-cmd" data-cmd="save">Save<span>Ctrl+S</span></button>
+                <div class="menu-sep"></div>
+                <button type="button" class="menu-cmd" data-cmd="zip">Upload ZIP…</button>
+                <button type="button" class="menu-cmd" data-cmd="export">Export Snapshot</button>
+                <button type="button" class="menu-cmd danger" data-cmd="clear">Clear Workspace</button>
+              </div>
+            </div>
+            <div class="menu-wrap">
+              <button type="button" class="menu-item" data-menu="edit">Edit</button>
+              <div class="menu-dropdown" id="menu-edit" hidden>
+                <button type="button" class="menu-cmd" data-cmd="palette">Command Palette…<span>Ctrl+K</span></button>
+              </div>
+            </div>
+            <div class="menu-wrap">
+              <button type="button" class="menu-item" data-menu="view">View</button>
+              <div class="menu-dropdown" id="menu-view" hidden>
+                <button type="button" class="menu-cmd" data-cmd="view-explorer">Explorer<span>Ctrl+Shift+E</span></button>
+                <button type="button" class="menu-cmd" data-cmd="view-search">Search<span>Ctrl+Shift+F</span></button>
+                <button type="button" class="menu-cmd" data-cmd="view-run">Run and Debug<span>Ctrl+Shift+D</span></button>
+                <button type="button" class="menu-cmd" data-cmd="toggle-preview">Toggle Simple Browser</button>
+                <button type="button" class="menu-cmd" data-cmd="toggle-sidebar">Toggle Primary Side Bar</button>
+                <button type="button" class="menu-cmd" data-cmd="toggle-panel">Toggle Panel<span>Ctrl+J</span></button>
+              </div>
+            </div>
+            <div class="menu-wrap">
+              <button type="button" class="menu-item" data-menu="run">Run</button>
+              <div class="menu-dropdown" id="menu-run" hidden>
+                <button type="button" class="menu-cmd" data-cmd="run">Run File<span>F5</span></button>
+                <button type="button" class="menu-cmd" data-cmd="install">Install Package…</button>
+                <button type="button" class="menu-cmd" data-cmd="http">HTTP Demo</button>
+                <button type="button" class="menu-cmd" data-cmd="bundle">Bundle (esbuild)</button>
+                <button type="button" class="menu-cmd" data-cmd="preview-project">Preview Project</button>
+              </div>
+            </div>
+            <div class="menu-wrap">
+              <button type="button" class="menu-item" data-menu="terminal">Terminal</button>
+              <div class="menu-dropdown" id="menu-terminal" hidden>
+                <button type="button" class="menu-cmd" data-cmd="focus-term">Focus Terminal<span>Ctrl+`</span></button>
+                <button type="button" class="menu-cmd" data-cmd="clear-term">Clear Terminal</button>
+                <button type="button" class="menu-cmd" data-cmd="term-2">Terminal 2</button>
+              </div>
+            </div>
+            <div class="menu-wrap">
+              <button type="button" class="menu-item" data-menu="help">Help</button>
+              <div class="menu-dropdown" id="menu-help" hidden>
+                <button type="button" class="menu-cmd" data-cmd="palette">Show All Commands</button>
+              </div>
+            </div>
           </nav>
         </div>
         <div class="titlebar-center">
-          <span class="window-title">NodeBrowser — /home/project</span>
+          <button type="button" class="command-center" id="btn-command-center" title="Command Palette (Ctrl+K)">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M15.7 13.3l-3.81-3.83A5.93 5.93 0 0 0 13 6c0-3.31-2.69-6-6-6S1 2.69 1 6s2.69 6 6 6c1.3 0 2.48-.41 3.47-1.11l3.83 3.81c.10.0.2.3.7.3.26 0 .52-.09.7-.3a.996.996 0 0 0 0-1.41v.01zM7 10.7c-2.59 0-4.7-2.11-4.7-4.7 0-2.59 2.11-4.7 4.7-4.7 2.59 0 4.7 2.11 4.7 4.7 0 2.59-2.11 4.7-4.7 4.7z"/></svg>
+            <span class="window-title">NodeBrowser — /home/project</span>
+          </button>
         </div>
         <div class="titlebar-right">
+          <span class="layout-toggles" aria-hidden="true">
+            <button type="button" class="icon-btn" id="btn-layout-sidebar" title="Toggle Primary Side Bar">▯</button>
+            <button type="button" class="icon-btn" id="btn-layout-panel" title="Toggle Panel">▭</button>
+            <button type="button" class="icon-btn" id="btn-layout-preview" title="Toggle Simple Browser">▮</button>
+          </span>
           <span class="window-controls" aria-hidden="true">
             <span class="wc"></span><span class="wc"></span><span class="wc"></span>
           </span>
@@ -32,127 +90,167 @@
       </header>
 
       <div class="workbench-body">
-        <!-- Activity bar (VS Code left strip) -->
         <aside class="activitybar" aria-label="Activity Bar">
-          <button type="button" class="activity-btn active" data-view="explorer" title="Explorer" aria-label="Explorer">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-              <path d="M17.5 0h-9L7 1.5V6H2.5L1 7.5v15.07L2.5 24h6.07L10 22.5V18h4.7l1.3-1.43V9.5L17.5 8H22V1.5L17.5 0zM9 20.5l-.5.5H3l-.5-.5V8l.5-.5H7v5.5L8.5 14H9v6.5zm8-7l-.5.5H10V7.5L10.5 7H16v6.5zM21 7h-3.5V2H21v5z"/>
-            </svg>
+          <button type="button" class="activity-btn active" data-view="explorer" title="Explorer (Ctrl+Shift+E)" aria-label="Explorer">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M17.5 0h-9L7 1.5V6H2.5L1 7.5v15.07L2.5 24h6.07L10 22.5V18h4.7l1.3-1.43V9.5L17.5 8H22V1.5L17.5 0zM9 20.5l-.5.5H3l-.5-.5V8l.5-.5H7v5.5L8.5 14H9v6.5zm8-7l-.5.5H10V7.5L10.5 7H16v6.5zM21 7h-3.5V2H21v5z"/></svg>
           </button>
-          <button type="button" class="activity-btn" data-view="search" title="Search" aria-label="Search" id="activity-search">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-              <path d="M15.25 0a8.25 8.25 0 0 0-6.18 13.72L1 22.79l1.12 1.12 8.07-9.09A8.25 8.25 0 1 0 15.25.01zm0 15a6.75 6.75 0 1 1 0-13.5 6.75 6.75 0 0 1 0 13.5z"/>
-            </svg>
+          <button type="button" class="activity-btn" data-view="search" id="activity-search" title="Search (Ctrl+Shift+F)" aria-label="Search">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M15.25 0a8.25 8.25 0 0 0-6.18 13.72L1 22.79l1.12 1.12 8.07-9.09A8.25 8.25 0 1 0 15.25.01zm0 15a6.75 6.75 0 1 1 0-13.5 6.75 6.75 0 0 1 0 13.5z"/></svg>
           </button>
-          <button type="button" class="activity-btn" data-view="run" title="Run" aria-label="Run and Debug" id="activity-run">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-              <path d="M5.5 3.5v17l14-8.5z"/>
-            </svg>
+          <button type="button" class="activity-btn" data-view="run" id="activity-run" title="Run and Debug (Ctrl+Shift+D)" aria-label="Run and Debug">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M5.5 3.5v17l14-8.5z"/></svg>
+          </button>
+          <button type="button" class="activity-btn" data-view="extensions" id="activity-extensions" title="Templates" aria-label="Templates">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm13 0h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z"/></svg>
           </button>
           <div class="activity-spacer"></div>
-          <button type="button" class="activity-btn active" data-view="preview" title="Simple Browser" aria-label="Toggle Preview" id="activity-preview">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-              <path d="M3 3h18v18H3V3zm1.5 1.5v3h15v-3h-15zm15 4.5h-15V19.5h15V9z"/>
-            </svg>
+          <button type="button" class="activity-btn active" data-view="preview" id="activity-preview" title="Simple Browser" aria-label="Toggle Preview">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M3 3h18v18H3V3zm1.5 1.5v3h15v-3h-15zm15 4.5h-15V19.5h15V9z"/></svg>
+          </button>
+          <button type="button" class="activity-btn" data-view="settings" id="activity-settings" title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.49.49 0 0 0 13.9 2h-3.8a.49.49 0 0 0-.48.41l-.36 2.54c-.59.22-1.14.54-1.63.94l-2.39-.96a.49.49 0 0 0-.59.22L2.73 8.47a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.85 14.1a.49.49 0 0 0-.12.61l1.92 3.32c.10.0.1.4.59.22l2.39-.96c.5.4 1.04.72 1.63.94l.36 2.54c.10.0.2.3.48.42h3.8c.24 0 .44-.17.48-.41l.36-2.54c.59-.22 1.14-.54 1.63-.94l2.39.96c.22.09.49 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
           </button>
         </aside>
 
-        <!-- Side bar: Explorer -->
-        <aside class="sidebar" id="sidebar" data-panel="files">
-          <div class="sidebar-title">
-            <span>EXPLORER</span>
-            <div class="sidebar-actions">
-              <button type="button" id="btn-fs-newfile" class="icon-btn" title="New File">+</button>
-              <button type="button" id="btn-fs-newdir" class="icon-btn" title="New Folder">⌂</button>
-              <button type="button" id="btn-fs-refresh" class="icon-btn" title="Refresh">↻</button>
-              <button type="button" id="btn-fs-delete" class="icon-btn danger" title="Delete">×</button>
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-view" id="view-explorer">
+            <div class="sidebar-title">
+              <span>EXPLORER</span>
+              <div class="sidebar-actions">
+                <button type="button" id="btn-fs-newfile" class="icon-btn" title="New File">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M4 1.5L9 1.5 13 5.5 13 13.5 4 13.5zM9 2v4h4"/><path d="M8 8v5M5.5 10.5h5"/></svg>
+                </button>
+                <button type="button" id="btn-fs-newdir" class="icon-btn" title="New Folder">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M1.5 3h5l1 1.5H14.5v8.5H1.5z"/><path d="M8 7v5M5.5 9.5h5" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+                </button>
+                <button type="button" id="btn-fs-refresh" class="icon-btn" title="Refresh Explorer">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5V1l3 2.5L8 6V4.5A3.5 3.5 0 1 0 11.5 8h2z"/></svg>
+                </button>
+                <button type="button" id="btn-fs-delete" class="icon-btn danger" title="Delete">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M6 3h4l.5 1H14v1H2V4h3.5zm1 3h1v6H7zm3 0h1v6h-1zM4 5h8l-.7 8.2A1 1 0 0 1 10.3 14H5.7a1 1 0 0 1-1-.8L4 5z"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="sidebar-section-head">
+              <span class="twistie">▾</span>
+              <span class="section-label">NODEBROWSER</span>
+              <div class="section-actions">
+                <button type="button" id="btn-fs-import" class="icon-btn" title="Upload ZIP / tar.gz">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 2v8M5 5l3-3 3 3"/><path d="M3 12h10v2H3z"/></svg>
+                </button>
+                <button type="button" id="btn-fs-export" class="icon-btn" title="Export snapshot">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 10V2M5 7l3 3 3-3"/><path d="M3 12h10v2H3z"/></svg>
+                </button>
+                <button type="button" id="btn-fs-clear" class="icon-btn danger" title="Clear workspace">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
+            <div class="cwd-bar">
+              <span class="cwd-label">OPEN EDITORS</span>
+              <code id="cwd-path">/home/project</code>
             </div>
           </div>
-          <div class="sidebar-section-head">
-            <span class="twistie">▾</span>
-            <span class="section-label">NODEBROWSER</span>
-            <div class="section-actions">
-              <button type="button" id="btn-fs-import" class="icon-btn" title="Upload ZIP / tar.gz">↑</button>
-              <button type="button" id="btn-fs-export" class="icon-btn" title="Export snapshot">↓</button>
-              <button type="button" id="btn-fs-clear" class="icon-btn danger" title="Clear workspace">✕</button>
+
+          <div class="sidebar-view" id="view-search" hidden>
+            <div class="sidebar-title"><span>SEARCH</span></div>
+            <div class="search-panel">
+              <input id="fs-search" type="search" placeholder="Search filenames" spellcheck="false" />
+              <div id="search-results" class="file-tree"></div>
             </div>
           </div>
-          <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
-          <div id="search-panel" class="search-panel" hidden>
-            <input id="fs-search" type="search" placeholder="Search filenames…" spellcheck="false" />
-            <div id="search-results" class="file-tree"></div>
+
+          <div class="sidebar-view" id="view-run" hidden>
+            <div class="sidebar-title"><span>RUN AND DEBUG</span></div>
+            <div class="run-panel">
+              <p class="run-hint">Run the open file in the WASM kernel.</p>
+              <button type="button" class="btn primary block" id="btn-run" data-cmd="run">▶ Run File</button>
+              <button type="button" class="btn block" id="btn-install" data-cmd="install">Install Package…</button>
+              <button type="button" class="btn block" id="btn-http" data-cmd="http">HTTP Demo :3000</button>
+              <button type="button" class="btn block" id="btn-bundle" data-cmd="bundle">Bundle (esbuild-wasm)</button>
+              <button type="button" class="btn block" id="btn-zip-run" data-cmd="preview-project">Preview Project</button>
+            </div>
           </div>
-          <div class="cwd-bar">
-            <span class="cwd-label">cwd</span>
-            <code id="cwd-path">/home/project</code>
+
+          <div class="sidebar-view" id="view-extensions" hidden>
+            <div class="sidebar-title"><span>TEMPLATES</span></div>
+            <div class="run-panel">
+              <p class="run-hint">Mount create-vite / Next / Express into the VFS.</p>
+              <button type="button" class="btn block" id="btn-vite-load">Load Vite</button>
+              <button type="button" class="btn primary block" id="btn-vite-preview">Vite Preview</button>
+              <button type="button" class="btn block" id="btn-next-load">Load Next</button>
+              <button type="button" class="btn primary block" id="btn-next-preview">Next Preview</button>
+              <button type="button" class="btn block" id="btn-express-load">Load Express</button>
+              <button type="button" class="btn block" id="btn-zip-upload">Upload ZIP…</button>
+            </div>
+          </div>
+
+          <div class="sidebar-view" id="view-settings" hidden>
+            <div class="sidebar-title"><span>SETTINGS</span></div>
+            <div class="run-panel settings-panel">
+              <div class="kv"><span>Runtime</span><code id="set-runtime">—</code></div>
+              <div class="kv"><span>Worker</span><code id="set-worker">—</code></div>
+              <div class="kv"><span>SAB stdio</span><code id="set-sab">—</code></div>
+              <div class="kv"><span>Persist</span><code id="set-persist">OPFS /home</code></div>
+              <p class="run-hint">Guest is C++/WASM + QuickJS. Host TS only loads the kernel.</p>
+            </div>
           </div>
         </aside>
 
         <div class="sash vertical" id="sash-sidebar" role="separator" aria-orientation="vertical" title="Resize"></div>
 
-        <!-- Editor + terminal column -->
         <div class="editor-column" id="editor-column">
           <section class="editor-group" data-panel="editor">
             <div class="tabs">
               <div class="tab active" id="editor-tab">
-                <span class="tab-icon">JS</span>
+                <span class="tab-icon js" id="tab-icon">JS</span>
                 <span class="tab-label" id="editor-path" title="/home/project/index.js">index.js</span>
                 <span class="tab-dirty" id="tab-dirty" hidden>●</span>
               </div>
               <div class="tabs-actions">
-                <button type="button" id="btn-save" class="btn">Save</button>
-                <button type="button" id="btn-run" class="btn primary">Run</button>
-                <button type="button" id="btn-install" class="btn">Install</button>
-                <button type="button" id="btn-http" class="btn">HTTP</button>
-                <button type="button" id="btn-bundle" class="btn">Bundle</button>
+                <button type="button" id="btn-save" class="icon-btn" title="Save (Ctrl+S)">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M2 2h9l3 3v9H2zm2 0v4h6V2zm0 6v6h8V8z"/></svg>
+                </button>
+                <button type="button" id="btn-palette" class="icon-btn" title="Command Palette (Ctrl+K)">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M2 3h12v1.5H2zm0 4h12v1.5H2zm0 4h8v1.5H2z"/></svg>
+                </button>
               </div>
             </div>
             <div class="breadcrumb" id="breadcrumb">
               <span>home</span><span class="sep">›</span><span>project</span><span class="sep">›</span><span class="current">index.js</span>
             </div>
-            <div class="toolbar-templates" aria-label="Templates">
-              <span class="tmpl-label">Templates</span>
-              <button type="button" id="btn-vite-load" class="btn ghost">Load Vite</button>
-              <button type="button" id="btn-vite-preview" class="btn ghost">Vite preview</button>
-              <button type="button" id="btn-next-load" class="btn ghost">Load Next</button>
-              <button type="button" id="btn-next-preview" class="btn ghost">Next preview</button>
-              <button type="button" id="btn-express-load" class="btn ghost">Express</button>
-              <button type="button" id="btn-palette" class="btn ghost" title="Ctrl+K">Palette</button>
-              <button type="button" id="btn-zip-upload" class="btn ghost">Upload ZIP</button>
-              <button type="button" id="btn-zip-run" class="btn ghost">Run project</button>
-              <input type="file" id="zip-file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" hidden />
+            <div class="monaco">
+              <pre id="gutter" class="gutter" aria-hidden="true">1</pre>
+              <textarea id="editor" spellcheck="false" aria-label="Source editor" wrap="off"></textarea>
             </div>
-            <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
           </section>
 
           <div class="sash horizontal" id="sash-panel" role="separator" aria-orientation="horizontal" title="Resize panel"></div>
 
-          <section class="panel" data-panel="term">
+          <section class="panel" id="bottom-panel" data-panel="term">
             <div class="panel-tabs">
               <button type="button" class="panel-tab active" id="tab-term-1" data-term="1">TERMINAL</button>
               <button type="button" class="panel-tab" id="tab-term-2" data-term="2">TERMINAL 2</button>
               <button type="button" class="panel-tab" id="tab-output">OUTPUT</button>
               <span class="panel-spacer"></span>
+              <button type="button" class="icon-btn" id="btn-term-clear" title="Clear Terminal">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M3 3h10v2H3zm0 4h10v6H3z"/></svg>
+              </button>
               <span class="live-dot" aria-hidden="true"></span>
             </div>
             <div class="term-wrap" id="term-wrap-1">
               <div id="term" class="term xterm-host" aria-live="polite"></div>
               <label class="term-input-row">
-                <span class="prompt">$</span>
-                <input
-                  type="text"
-                  id="term-input"
-                  spellcheck="false"
-                  autocomplete="off"
-                  placeholder="sh -c …  (Enter to run)"
-                />
+                <span class="prompt">❯</span>
+                <input type="text" id="term-input" spellcheck="false" autocomplete="off" placeholder="Run a shell command (sh -c)…" />
               </label>
             </div>
             <div class="term-wrap" id="term-wrap-2" hidden>
               <div id="term-2" class="term xterm-host" aria-live="polite"></div>
               <label class="term-input-row">
-                <span class="prompt">$</span>
-                <input type="text" id="term-input-2" spellcheck="false" autocomplete="off" placeholder="sh -c …" />
+                <span class="prompt">❯</span>
+                <input type="text" id="term-input-2" spellcheck="false" autocomplete="off" placeholder="Run a shell command…" />
               </label>
             </div>
             <pre id="net-log" class="term" hidden></pre>
@@ -161,54 +259,59 @@
 
         <div class="sash vertical" id="sash-preview" role="separator" aria-orientation="vertical" title="Resize preview"></div>
 
-        <!-- Simple Browser (right) — VS Code style -->
         <aside class="simple-browser" id="preview-pane" data-panel="preview">
           <div class="sb-titlebar">
-            <span class="sb-title">Simple Browser</span>
-            <button type="button" class="icon-btn" id="btn-preview-close" title="Close Preview">✕</button>
+            <span class="sb-title">SIMPLE BROWSER</span>
+            <button type="button" class="icon-btn" id="btn-preview-close" title="Close Preview">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M4 4l8 8M12 4L4 12" stroke="currentColor" stroke-width="1.4"/></svg>
+            </button>
           </div>
           <div class="sb-chrome">
-            <button type="button" class="icon-btn" id="btn-preview-back" title="Back" disabled>←</button>
-            <button type="button" class="icon-btn" id="btn-preview-forward" title="Forward" disabled>→</button>
-            <button type="button" class="icon-btn" id="btn-preview-reload" title="Reload">↻</button>
+            <button type="button" class="icon-btn" id="btn-preview-back" title="Back" disabled>
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>
+            </button>
+            <button type="button" class="icon-btn" id="btn-preview-forward" title="Forward" disabled>
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>
+            </button>
+            <button type="button" class="icon-btn" id="btn-preview-reload" title="Reload">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5V1l3 2.5L8 6V4.5A3.5 3.5 0 1 0 11.5 8h2z"/></svg>
+            </button>
             <div class="sb-urlbox">
-              <input
-                type="text"
-                id="preview-url-input"
-                class="sb-url"
-                placeholder="Run HTTP / Vite preview to open…"
-                spellcheck="false"
-                autocomplete="off"
-              />
-              <span id="preview-url" class="status url-chip visually-hidden"></span>
+              <input type="text" id="preview-url-input" class="sb-url" placeholder="http://localhost:3000" spellcheck="false" autocomplete="off" />
+              <span id="preview-url" class="visually-hidden"></span>
             </div>
-            <button type="button" class="icon-btn" id="btn-preview-open" title="Open in new tab">↗</button>
+            <button type="button" class="icon-btn" id="btn-preview-open" title="Open in new tab">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M6 3h7v7M13 3L7 9M3 5v8h8" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
+            </button>
           </div>
           <div class="sb-viewport">
             <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
             <div class="sb-empty" id="preview-empty">
               <div class="sb-empty-icon" aria-hidden="true"></div>
               <p>Simple Browser</p>
-      <span>Drop a .zip here or use Upload ZIP<br />(Vite / Next / static HTML preview)</span>
+              <span>Run HTTP demo, Vite preview, or drop a .zip to open a local preview.</span>
             </div>
           </div>
         </aside>
       </div>
 
-      <!-- Status bar -->
       <footer class="statusbar" role="contentinfo">
         <div class="status-left">
+          <span class="status-item remote" title="WASM kernel">⬡</span>
           <span class="status-item accent" id="status">booting…</span>
           <span class="status-item" id="status-cwd">/home/project</span>
           <span class="status-item" id="status-ports">ports —</span>
         </div>
         <div class="status-right">
+          <span class="status-item" id="status-cursor">Ln 1, Col 1</span>
+          <span class="status-item">Spaces: 2</span>
           <span class="status-item">UTF-8</span>
-          <span class="status-item">JavaScript</span>
-          <span class="status-item">Ln 1, Col 1</span>
+          <span class="status-item" id="status-lang">JavaScript</span>
         </div>
       </footer>
     </div>
+
+    <input type="file" id="zip-file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" hidden />
 
     <nav class="mobile-nav" aria-label="Panels">
       <button type="button" class="mobile-nav-btn" data-pane="files">Explorer</button>
@@ -218,7 +321,10 @@
     </nav>
 
     <dialog id="palette" class="palette">
-      <input id="palette-input" placeholder="Run command…" />
+      <div class="palette-head">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M15.7 13.3l-3.81-3.83A5.93 5.93 0 0 0 13 6c0-3.31-2.69-6-6-6S1 2.69 1 6s2.69 6 6 6c1.3 0 2.48-.41 3.47-1.11l3.83 3.81c.10.0.2.3.7.3.26 0 .52-.09.7-.3a.996.996 0 0 0 0-1.41zM7 10.7c-2.59 0-4.7-2.11-4.7-4.7 0-2.59 2.11-4.7 4.7-4.7 2.59 0 4.7 2.11 4.7 4.7 0 2.59-2.11 4.7-4.7 4.7z"/></svg>
+        <input id="palette-input" placeholder="Type a command to run…" />
+      </div>
       <div id="palette-list"></div>
     </dialog>
 

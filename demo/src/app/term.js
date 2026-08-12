@@ -98,6 +98,10 @@ export async function mountXterm(el) {
     };
     terms.set(el.id, api);
     window.addEventListener('resize', () => api.fit());
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(() => api.fit()).observe(el);
+    }
+    requestAnimationFrame(() => api.fit());
     return api;
   } catch {
     const api = preFallback(el);
@@ -108,4 +112,8 @@ export async function mountXterm(el) {
 
 export function getTerm(id) {
   return terms.get(id) || null;
+}
+
+export function fitAllTerms() {
+  for (const api of terms.values()) api.fit?.();
 }

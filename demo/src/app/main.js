@@ -1,4 +1,5 @@
-import { mountXterm, getTerm } from './term.js';
+import { mountXterm, getTerm, fitAllTerms } from './term.js';
+import { fileIconEl, langFromPath, tabBadge } from './icons.js';
 
 const DEFAULT = `const fs = require('fs');
 const crypto = require('crypto');
@@ -57,6 +58,17 @@ function appendTerm(text, which) {
   term.scrollTop = term.scrollHeight;
 }
 
+function clearTerm(which) {
+  const id = which || window.__bn_active_term || 'term';
+  const api = getTerm(id);
+  if (api) {
+    api.clear();
+    return;
+  }
+  const term = $(id) || $('term');
+  if (term) term.textContent = '';
+}
+
 function dirname(p) {
   const i = p.lastIndexOf('/');
   if (i <= 0) return '/';
@@ -99,8 +111,42 @@ function setDirty(v) {
   if (mark) mark.hidden = !dirty;
 }
 
+function updateGutter() {
+  const gutter = $('gutter');
+  if (!gutter || !editor) return;
+  const n = Math.max(1, editor.value.split('\n').length);
+  let s = '';
+  for (let i = 1; i <= n; i++) s += i + '\n';
+  gutter.textContent = s;
+}
+
+function updateCursorStatus() {
+  const el = $('status-cursor');
+  if (!el || !editor) return;
+  const pos = editor.selectionStart || 0;
+  const upto = editor.value.slice(0, pos);
+  const lines = upto.split('\n');
+  el.textContent = `Ln ${lines.length}, Col ${lines[lines.length - 1].length + 1}`;
+}
+
 editor.addEventListener('input', () => {
   setDirty(true);
+  updateGutter();
+  updateCursorStatus();
+});
+editor.addEventListener('click', updateCursorStatus);
+editor.addEventListener('keyup', updateCursorStatus);
+editor.addEventListener('scroll', () => {
+  const gutter = $('gutter');
+  if (gutter) gutter.scrollTop = editor.scrollTop;
+});
+editor.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  const start = editor.selectionStart;
+  editor.setRangeText('  ', start, editor.selectionEnd, 'end');
+  setDirty(true);
+  updateGutter();
 });
 
 function basename(path) {
@@ -135,17 +181,19 @@ function setEditorPath(path) {
     label.title = path;
   }
   setBreadcrumb(path);
-  const title = document.querySelector('.window-title');
-  if (title) title.textContent = `NodeBrowser — ${path}`;
-  const tabIcon = document.querySelector('.tab-icon');
+  document.querySelectorAll('.window-title').forEach((title) => {
+    title.textContent = `NodeBrowser — ${path}`;
+  });
+  const tabIcon = $('tab-icon') || document.querySelector('.tab-icon');
   if (tabIcon) {
-    if (/\.jsx?$/i.test(path)) tabIcon.textContent = 'JS';
-    else if (/\.tsx?$/i.test(path)) tabIcon.textContent = 'TS';
-    else if (/\.css$/i.test(path)) tabIcon.textContent = 'CSS';
-    else if (/\.json$/i.test(path)) tabIcon.textContent = '{}';
-    else if (/\.html?$/i.test(path)) tabIcon.textContent = '<>';
-    else tabIcon.textContent = '·';
+    const b = tabBadge(path);
+    tabIcon.textContent = b.text;
+    tabIcon.className = 'tab-icon ' + b.cls;
   }
+  const lang = $('status-lang');
+  if (lang) lang.textContent = langFromPath(path);
+  updateGutter();
+  updateCursorStatus();
 }
 
 function setCwd(path) {
@@ -246,9 +294,7 @@ async function renderDir(dirPath, container, depth) {
     row.style.paddingLeft = `${0.4 + depth * 0.75}rem`;
     row.dataset.path = full;
     row.setAttribute('role', 'treeitem');
-    const icon = document.createElement('span');
-    icon.className = 'icon';
-    icon.textContent = isDirectory ? (expanded.has(full) ? '▾' : '▸') : '·';
+    const icon = fileIconEl(name, isDirectory, expanded.has(full));
     const label = document.createElement('span');
     label.textContent = name;
     row.appendChild(icon);
@@ -414,6 +460,14 @@ async function boot() {
           : 'ready · wasm · worker'
         : 'ready · wasm'
       : 'ready · js';
+  const sr = $('set-runtime');
+  if (sr) sr.textContent = bn.runtime;
+  const sw = $('set-worker');
+  if (sw) sw.textContent = bn.worker ? 'on' : 'off';
+  const ss = $('set-sab');
+  if (ss) ss.textContent = bn.sabStdio ? 'on' : 'off';
+  const sp = $('set-persist');
+  if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
   appendTerm('Upload ZIP / drop a .zip to unpack and preview (Vite, Next, or static HTML).\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
@@ -513,7 +567,7 @@ async function httpDemo() {
   await bn.fs.writeFile(path, HTTP_DEMO);
   setEditorPath(path);
   selectedPath = path;
-  $('term').textContent = '';
+  clearTerm('term');
   httpProc = await bn.spawn('node', [path], { cwd: dirname(path) });
   const reader = httpProc.output.getReader();
   (async () => {
@@ -530,7 +584,7 @@ async function httpDemo() {
 
 async function bundleDemo() {
   if (!bn) return;
-  $('term').textContent = '';
+  clearTerm('term');
   appendTerm('esbuild-wasm bundle …\n');
   try {
     await bn.fs.mkdir('/src', { recursive: true });
@@ -559,7 +613,7 @@ async function loadApps() {
 async function viteLoad() {
   if (!bn) return;
   const { loadVite } = await loadApps();
-  $('term').textContent = '';
+  clearTerm('term');
   const { files } = await loadVite(bn, appendTerm);
   try {
     editor.value = await bn.fs.readFile('/apps/vite/src/App.jsx', 'utf8');
@@ -579,7 +633,7 @@ async function viteLoad() {
 async function vitePreview() {
   if (!bn) return;
   const { viteStaticPreview } = await loadApps();
-  $('term').textContent = '';
+  clearTerm('term');
   const { url, port } = await viteStaticPreview(bn, appendTerm);
   await showPreview(port, url, { preferUrl: true });
   await refreshTree();
@@ -588,7 +642,7 @@ async function vitePreview() {
 async function nextLoad() {
   if (!bn) return;
   const { loadNext } = await loadApps();
-  $('term').textContent = '';
+  clearTerm('term');
   const { files } = await loadNext(bn, appendTerm);
   try {
     editor.value = await bn.fs.readFile('/apps/next/app/page.js', 'utf8');
@@ -608,7 +662,7 @@ async function nextLoad() {
 async function nextPreview() {
   if (!bn) return;
   const { nextStaticPreview } = await loadApps();
-  $('term').textContent = '';
+  clearTerm('term');
   const { url, port } = await nextStaticPreview(bn, appendTerm);
   await showPreview(port, url, { preferUrl: true });
   await refreshTree();
@@ -723,14 +777,7 @@ $('btn-express-load')?.addEventListener('click', () => {
   })().catch((e) => appendTerm(String(e) + '\n'));
 });
 
-$('activity-search')?.addEventListener('click', () => {
-  const sp = $('search-panel');
-  const tree = $('file-tree');
-  if (!sp) return;
-  const show = sp.hidden;
-  sp.hidden = !show;
-  if (tree) tree.hidden = show;
-});
+$('activity-search')?.addEventListener('click', () => setSidebarView('search'));
 
 $('fs-search')?.addEventListener('input', () => {
   searchFiles($('fs-search').value).catch((e) => appendTerm(String(e) + '\n'));
@@ -810,13 +857,18 @@ $('term-input-2')?.addEventListener('keydown', (e) => {
 });
 
 const PALETTE = [
-  ['Run file', () => runNode()],
-  ['Save', () => saveFile()],
-  ['Install lodash', () => installPkg()],
-  ['HTTP demo', () => httpDemo()],
-  ['Vite preview', () => vitePreview()],
-  ['Next preview', () => nextPreview()],
-  ['Export snapshot', () => $('btn-fs-export')?.click()],
+  ['Run File', 'F5', () => runNode()],
+  ['Save', 'Ctrl+S', () => saveFile()],
+  ['Install Package…', '', () => installPkg()],
+  ['HTTP Demo', '', () => httpDemo()],
+  ['Vite Preview', '', () => vitePreview()],
+  ['Next Preview', '', () => nextPreview()],
+  ['Preview Project', '', () => runCurrentProject()],
+  ['Upload ZIP…', '', () => openZipPicker()],
+  ['Export Snapshot', '', () => $('btn-fs-export')?.click()],
+  ['New File', 'Ctrl+N', () => newFile()],
+  ['Toggle Terminal', 'Ctrl+J', () => togglePanel()],
+  ['Command Palette', 'Ctrl+K', () => openPalette()],
 ];
 
 function openPalette() {
@@ -825,11 +877,16 @@ function openPalette() {
   const input = $('palette-input');
   if (!d || !list) return;
   list.textContent = '';
-  for (const [label, fn] of PALETTE) {
+  for (const [label, keys, fn] of PALETTE) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'palette-item';
-    b.textContent = label;
+    b.appendChild(document.createTextNode(label));
+    if (keys) {
+      const kbd = document.createElement('kbd');
+      kbd.textContent = keys;
+      b.appendChild(kbd);
+    }
     b.addEventListener('click', () => {
       d.close();
       Promise.resolve(fn()).catch((e) => appendTerm(String(e) + '\n'));
@@ -839,13 +896,169 @@ function openPalette() {
   d.showModal();
   input.value = '';
   input.focus();
+  input.oninput = () => {
+    const q = input.value.toLowerCase();
+    list.querySelectorAll('.palette-item').forEach((item) => {
+      item.hidden = q.length > 0 && !item.textContent.toLowerCase().includes(q);
+    });
+  };
+}
+
+function closeMenus() {
+  document.querySelectorAll('.menu-dropdown').forEach((el) => {
+    el.hidden = true;
+  });
+  document.querySelectorAll('.menu-item.open').forEach((el) => el.classList.remove('open'));
+}
+
+function setSidebarView(name) {
+  const wb = $('workbench');
+  if (!wb) return;
+  wb.classList.remove('sidebar-hidden');
+  wb.dataset.sidebar = name;
+  ['explorer', 'search', 'run', 'extensions', 'settings'].forEach((v) => {
+    const panel = $('view-' + v);
+    if (panel) panel.hidden = v !== name;
+  });
+  document.querySelectorAll('.activity-btn[data-view]').forEach((btn) => {
+    if (btn.dataset.view === 'preview') return;
+    btn.classList.toggle('active', btn.dataset.view === name);
+  });
+  if (name === 'search') $('fs-search')?.focus();
+  if (name === 'files' || name === 'explorer') setMobilePane('files');
+}
+
+function togglePanel() {
+  const wb = $('workbench');
+  if (!wb) return;
+  wb.classList.toggle('panel-hidden');
+  requestAnimationFrame(() => fitAllTerms());
+}
+
+function toggleSidebar() {
+  const wb = $('workbench');
+  if (!wb) return;
+  wb.classList.toggle('sidebar-hidden');
+  document.querySelectorAll('.activity-btn[data-view="explorer"]').forEach((btn) => {
+    btn.classList.toggle('active', !wb.classList.contains('sidebar-hidden') && wb.dataset.sidebar === 'explorer');
+  });
+}
+
+function runCmd(cmd) {
+  const map = {
+    newfile: () => newFile(),
+    newdir: () => newDir(),
+    save: () => saveFile(),
+    zip: () => openZipPicker(),
+    export: () => $('btn-fs-export')?.click(),
+    clear: () => $('btn-fs-clear')?.click(),
+    palette: () => openPalette(),
+    'view-explorer': () => setSidebarView('explorer'),
+    'view-search': () => setSidebarView('search'),
+    'view-run': () => setSidebarView('run'),
+    'toggle-preview': () => {
+      const wb = $('workbench');
+      setPreviewVisible(wb.classList.contains('preview-hidden'));
+    },
+    'toggle-sidebar': () => toggleSidebar(),
+    'toggle-panel': () => togglePanel(),
+    run: () => runNode(),
+    install: () => installPkg(),
+    http: () => httpDemo(),
+    bundle: () => bundleDemo(),
+    'preview-project': () => runCurrentProject(),
+    'focus-term': () => {
+      $('workbench')?.classList.remove('panel-hidden');
+      setTermTab(1);
+      $('term-input')?.focus();
+    },
+    'clear-term': () => clearTerm(),
+    'term-2': () => {
+      $('workbench')?.classList.remove('panel-hidden');
+      setTermTab(2);
+      $('term-input-2')?.focus();
+    },
+  };
+  const fn = map[cmd];
+  if (fn) Promise.resolve(fn()).catch((e) => appendTerm(String(e) + '\n'));
 }
 
 $('btn-palette')?.addEventListener('click', () => openPalette());
+$('btn-command-center')?.addEventListener('click', () => openPalette());
+$('btn-term-clear')?.addEventListener('click', () => clearTerm());
+$('btn-layout-sidebar')?.addEventListener('click', () => toggleSidebar());
+$('btn-layout-panel')?.addEventListener('click', () => togglePanel());
+$('btn-layout-preview')?.addEventListener('click', () => {
+  const wb = $('workbench');
+  setPreviewVisible(wb.classList.contains('preview-hidden'));
+});
+
+document.querySelectorAll('.menu-item[data-menu]').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = 'menu-' + btn.dataset.menu;
+    const dd = $(id);
+    const open = dd && !dd.hidden;
+    closeMenus();
+    if (dd && !open) {
+      dd.hidden = false;
+      btn.classList.add('open');
+    }
+  });
+});
+document.querySelectorAll('.menu-cmd[data-cmd]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    closeMenus();
+    runCmd(btn.dataset.cmd);
+  });
+});
+document.addEventListener('click', () => closeMenus());
+
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     openPalette();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    saveFile().catch((err) => appendTerm(String(err) + '\n'));
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    newFile().catch((err) => appendTerm(String(err) + '\n'));
+    return;
+  }
+  if (mod && e.key === '`') {
+    e.preventDefault();
+    runCmd('focus-term');
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 'j') {
+    e.preventDefault();
+    togglePanel();
+    return;
+  }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'e') {
+    e.preventDefault();
+    setSidebarView('explorer');
+    return;
+  }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault();
+    setSidebarView('search');
+    return;
+  }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'd') {
+    e.preventDefault();
+    setSidebarView('run');
+    return;
+  }
+  if (e.key === 'F5') {
+    e.preventDefault();
+    runNode().catch((err) => appendTerm(String(err) + '\n'));
   }
 });
 $('btn-zip-upload')?.addEventListener('click', () => openZipPicker());
@@ -897,9 +1110,11 @@ document.querySelectorAll('.activity-btn[data-view="explorer"]').forEach((btn) =
   btn.addEventListener('click', () => {
     const wb = $('workbench');
     if (!wb) return;
-    const hide = !wb.classList.contains('sidebar-hidden');
-    wb.classList.toggle('sidebar-hidden', hide);
-    btn.classList.toggle('active', !hide);
+    if (!wb.classList.contains('sidebar-hidden') && wb.dataset.sidebar === 'explorer') {
+      toggleSidebar();
+      return;
+    }
+    setSidebarView('explorer');
   });
 });
 
@@ -909,9 +1124,9 @@ $('activity-preview')?.addEventListener('click', () => {
   setPreviewVisible(wb.classList.contains('preview-hidden'));
 });
 
-$('activity-run')?.addEventListener('click', () => {
-  runNode().catch((e) => appendTerm(String(e) + '\n'));
-});
+$('activity-run')?.addEventListener('click', () => setSidebarView('run'));
+$('activity-extensions')?.addEventListener('click', () => setSidebarView('extensions'));
+$('activity-settings')?.addEventListener('click', () => setSidebarView('settings'));
 
 $('btn-preview-close')?.addEventListener('click', () => setPreviewVisible(false));
 
@@ -959,6 +1174,7 @@ function bindSash(sashId, { axis, onDelta }) {
     const delta = pos - last;
     last = pos;
     onDelta(delta);
+    fitAllTerms();
     e.preventDefault();
   };
   const onUp = () => {

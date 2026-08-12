@@ -107,6 +107,7 @@ async function main() {
   writeFileSync(join(out, 'main.js'), readFileSync(join(demoRoot, 'src/app/main.js'), 'utf8'));
   writeFileSync(join(out, 'apps.js'), readFileSync(join(demoRoot, 'src/app/apps.js'), 'utf8'));
   writeFileSync(join(out, 'term.js'), readFileSync(join(demoRoot, 'src/app/term.js'), 'utf8'));
+  writeFileSync(join(out, 'icons.js'), readFileSync(join(demoRoot, 'src/app/icons.js'), 'utf8'));
   writeFileSync(join(out, 'sw.js'), readFileSync(join(demoRoot, 'sw.js'), 'utf8'));
   cpSync(join(demoRoot, 'styles.css'), join(out, 'styles.css'));
   writeFileSync(join(out, '.nojekyll'), '');
