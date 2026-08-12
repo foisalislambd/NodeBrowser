@@ -146,6 +146,16 @@ char* bn_vfs_readlink(BNKernel* k, const char* path) {
   return dup_cstr(*t);
 }
 
+int bn_vfs_chmod(BNKernel* k, const char* path, unsigned mode) {
+  if (!k || !path) return 0;
+  return k->kernel.vfs().chmod(path, mode) ? 1 : 0;
+}
+
+int bn_vfs_utimes(BNKernel* k, const char* path, double atime_ms, double mtime_ms) {
+  if (!k || !path) return 0;
+  return k->kernel.vfs().utimes(path, static_cast<int64_t>(atime_ms), static_cast<int64_t>(mtime_ms)) ? 1 : 0;
+}
+
 // Minimal JSON string array parser: ["a","b"]
 static std::vector<std::string> parse_json_string_array(const char* json) {
   std::vector<std::string> out;

@@ -77,7 +77,7 @@ VfsSymlink::VfsSymlink(std::string target)
     : target_(std::move(target)), mtime_ms_(now_ms()) {}
 
 Stat VfsSymlink::stat() const {
-  return Stat{NodeKind::Symlink, target_.size(), mtime_ms_, 0777};
+  return Stat{NodeKind::Symlink, target_.size(), mtime_ms_, mode_};
 }
 
 // --- Vfs ---
@@ -359,6 +359,58 @@ std::optional<std::string> Vfs::readlink(std::string_view path) const {
   auto r = resolve(path, false);
   if (!r.node || r.node->kind() != NodeKind::Symlink) return std::nullopt;
   return static_cast<VfsSymlink*>(r.node.get())->target();
+}
+
+bool Vfs::chmod(std::string_view path, uint32_t mode) {
+  std::lock_guard lock(mu_);
+  // Node fs.chmod follows the final symlink (lchmod would not).
+  auto r = resolve(path, true);
+  if (!r.node) {
+    if (normalize(path) == "/") {
+      root_->set_mode(mode);
+      return true;
+    }
+    return false;
+  }
+  if (r.node->kind() == NodeKind::File) {
+    static_cast<VfsFile*>(r.node.get())->set_mode(mode);
+    return true;
+  }
+  if (r.node->kind() == NodeKind::Directory) {
+    static_cast<VfsDir*>(r.node.get())->set_mode(mode);
+    return true;
+  }
+  // Dangling or unfollowed symlink left as symlink node
+  if (r.node->kind() == NodeKind::Symlink) {
+    static_cast<VfsSymlink*>(r.node.get())->set_mode(mode);
+    return true;
+  }
+  return false;
+}
+
+bool Vfs::utimes(std::string_view path, int64_t /*atime_ms*/, int64_t mtime_ms) {
+  std::lock_guard lock(mu_);
+  auto r = resolve(path, true);
+  if (!r.node) {
+    if (normalize(path) == "/") {
+      root_->set_mtime(mtime_ms);
+      return true;
+    }
+    return false;
+  }
+  if (r.node->kind() == NodeKind::File) {
+    static_cast<VfsFile*>(r.node.get())->set_mtime(mtime_ms);
+    return true;
+  }
+  if (r.node->kind() == NodeKind::Directory) {
+    static_cast<VfsDir*>(r.node.get())->set_mtime(mtime_ms);
+    return true;
+  }
+  if (r.node->kind() == NodeKind::Symlink) {
+    static_cast<VfsSymlink*>(r.node.get())->set_mtime(mtime_ms);
+    return true;
+  }
+  return false;
 }
 
 void Vfs::mount_tree(const std::unordered_map<std::string, std::string>& files) {

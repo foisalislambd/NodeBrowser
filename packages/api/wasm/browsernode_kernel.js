@@ -1888,8 +1888,8 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('wasmBinary');
 }
 var ASM_CONSTS = {
-  4387800: ($0) => { if (typeof globalThis.__bn_on_server_ready === 'function') { globalThis.__bn_on_server_ready($0); } },  
- 4387904: ($0, $1, $2, $3, $4) => { try { if (typeof globalThis.__bn_wasm_http_dispatch !== 'function') return 0; var method = UTF8ToString($0); var path = UTF8ToString($1); var headers = UTF8ToString($2); var body = UTF8ToString($3); var port = $4; var out = globalThis.__bn_wasm_http_dispatch(port, method, path, headers, body); if (out == null) return 0; var s = String(out); var len = lengthBytesUTF8(s) + 1; var ptr = _malloc(len); stringToUTF8(s, ptr, len); return ptr; } catch (e) { return 0; } }
+  4400808: ($0) => { if (typeof globalThis.__bn_on_server_ready === 'function') { globalThis.__bn_on_server_ready($0); } },  
+ 4400912: ($0, $1, $2, $3, $4) => { try { if (typeof globalThis.__bn_wasm_http_dispatch !== 'function') return 0; var method = UTF8ToString($0); var path = UTF8ToString($1); var headers = UTF8ToString($2); var body = UTF8ToString($3); var port = $4; var out = globalThis.__bn_wasm_http_dispatch(port, method, path, headers, body); if (out == null) return 0; var s = String(out); var len = lengthBytesUTF8(s) + 1; var ptr = _malloc(len); stringToUTF8(s, ptr, len); return ptr; } catch (e) { return 0; } }
 };
 
 // Imports from the Wasm binary.

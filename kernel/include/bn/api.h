@@ -28,6 +28,8 @@ int bn_vfs_stat_json(BNKernel* k, const char* path, char** out_json);
 int bn_vfs_lstat_json(BNKernel* k, const char* path, char** out_json);
 int bn_vfs_symlink(BNKernel* k, const char* target, const char* linkpath);
 char* bn_vfs_readlink(BNKernel* k, const char* path);  // malloc'd; free with bn_free
+int bn_vfs_chmod(BNKernel* k, const char* path, unsigned mode);
+int bn_vfs_utimes(BNKernel* k, const char* path, double atime_ms, double mtime_ms);
 
 // Process — env_json is optional JSON object {"KEY":"VAL"} (may be null or "{}")
 int bn_spawn(BNKernel* k, const char* cmd, const char* argv_json, const char* cwd, const char* env_json);

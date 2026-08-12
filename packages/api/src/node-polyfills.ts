@@ -147,7 +147,7 @@ process.nextTick = function(fn) {
 
 /**
  * crypto subset: randomFillSync / randomBytes via WebCrypto getRandomValues.
- * createHash: sync pure-JS for sha1 + sha256; sha384/sha512 throw (use WebCrypto async outside createHash).
+ * createHash: sync pure-JS for sha1/sha256/sha384/sha512.
  * Ciphers (createCipheriv etc.) are intentionally stubbed — document as unsupported.
  */
 export const CRYPTO_POLYFILL = `
@@ -274,6 +274,103 @@ function __bn_sha256(bytes) {
   }
   return out;
 }
+/** Compact SHA-512 (and SHA-384 via different IVs). */
+function __bn_sha512(msg, bits) {
+  bits = bits || 512;
+  function u64(h, l) { return { h: h >>> 0, l: l >>> 0 }; }
+  function add(a, b) {
+    var l = (a.l + b.l) >>> 0;
+    var c = l < a.l ? 1 : 0;
+    return u64((a.h + b.h + c) >>> 0, l);
+  }
+  function rotr(x, n) {
+    if (n < 32) return u64((x.h >>> n) | (x.l << (32 - n)), (x.l >>> n) | (x.h << (32 - n)));
+    n -= 32;
+    return u64((x.l >>> n) | (x.h << (32 - n)), (x.h >>> n) | (x.l << (32 - n)));
+  }
+  function shr(x, n) {
+    if (n < 32) return u64(x.h >>> n, (x.l >>> n) | (x.h << (32 - n)));
+    return u64(0, x.h >>> (n - 32));
+  }
+  function xor(a, b) { return u64(a.h ^ b.h, a.l ^ b.l); }
+  function and(a, b) { return u64(a.h & b.h, a.l & b.l); }
+  function not(a) { return u64(~a.h, ~a.l); }
+  var K = [
+    u64(0x428a2f98,0xd728ae22),u64(0x71374491,0x23ef65cd),u64(0xb5c0fbcf,0xec4d3b2f),u64(0xe9b5dba5,0x8189dbbc),
+    u64(0x3956c25b,0xf348b538),u64(0x59f111f1,0xb605d019),u64(0x923f82a4,0xaf194f9b),u64(0xab1c5ed5,0xda6d8118),
+    u64(0xd807aa98,0xa3030242),u64(0x12835b01,0x45706fbe),u64(0x243185be,0x4ee4b28c),u64(0x550c7dc3,0xd5ffb4e2),
+    u64(0x72be5d74,0xf27b896f),u64(0x80deb1fe,0x3b1696b1),u64(0x9bdc06a7,0x25c71235),u64(0xc19bf174,0xcf692694),
+    u64(0xe49b69c1,0x9ef14ad2),u64(0xefbe4786,0x384f25e3),u64(0x0fc19dc6,0x8b8cd5b5),u64(0x240ca1cc,0x77ac9c65),
+    u64(0x2de92c6f,0x592b0275),u64(0x4a7484aa,0x6ea6e483),u64(0x5cb0a9dc,0xbd41fbd4),u64(0x76f988da,0x831153b5),
+    u64(0x983e5152,0xee66dfab),u64(0xa831c66d,0x2db43210),u64(0xb00327c8,0x98fb213f),u64(0xbf597fc7,0xbeef0ee4),
+    u64(0xc6e00bf3,0x3da88fc2),u64(0xd5a79147,0x930aa725),u64(0x06ca6351,0xe003826f),u64(0x14292967,0x0a0e6e70),
+    u64(0x27b70a85,0x46d22ffc),u64(0x2e1b2138,0x5c26c926),u64(0x4d2c6dfc,0x5ac42aed),u64(0x53380d13,0x9d95b3df),
+    u64(0x650a7354,0x8baf63de),u64(0x766a0abb,0x3c77b2a8),u64(0x81c2c92e,0x47edaee6),u64(0x92722c85,0x1482353b),
+    u64(0xa2bfe8a1,0x4cf10364),u64(0xa81a664b,0xbc423001),u64(0xc24b8b70,0xd0f89791),u64(0xc76c51a3,0x0654be30),
+    u64(0xd192e819,0xd6ef5218),u64(0xd6990624,0x5565a910),u64(0xf40e3585,0x5771202a),u64(0x106aa070,0x32bbd1b8),
+    u64(0x19a4c116,0xb8d2d0c8),u64(0x1e376c08,0x5141ab53),u64(0x2748774c,0xdf8eeb99),u64(0x34b0bcb5,0xe19b48a8),
+    u64(0x391c0cb3,0xc5c95a63),u64(0x4ed8aa4a,0xe3418acb),u64(0x5b9cca4f,0x7763e373),u64(0x682e6ff3,0xd6b2b8a3),
+    u64(0x748f82ee,0x5defb2fc),u64(0x78a5636f,0x43172f60),u64(0x84c87814,0xa1f0ab72),u64(0x8cc70208,0x1a6439ec),
+    u64(0x90befffa,0x23631e28),u64(0xa4506ceb,0xde82bde9),u64(0xbef9a3f7,0xb2c67915),u64(0xc67178f2,0xe372532b),
+    u64(0xca273ece,0xea26619c),u64(0xd186b8c7,0x21c0c207),u64(0xeada7dd6,0xcde0eb1e),u64(0xf57d4f7f,0xee6ed178),
+    u64(0x06f067aa,0x72176fba),u64(0x0a637dc5,0xa2c898a6),u64(0x113f9804,0xbef90dae),u64(0x1b710b35,0x131c471b),
+    u64(0x28db77f5,0x23047d84),u64(0x32caab7b,0x40c72493),u64(0x3c9ebe0a,0x15c9bebc),u64(0x431d67c4,0x9c100d4c),
+    u64(0x4cc5d4be,0xcb3e42b6),u64(0x597f299c,0xfc657e2a),u64(0x5fcb6fab,0x3ad6faec),u64(0x6c44198c,0x4a475817)
+  ];
+  var H = bits === 384 ? [
+    u64(0xcbbb9d5d,0xc1059ed8),u64(0x629a292a,0x367cd507),u64(0x9159015a,0x3070dd17),u64(0x152fecd8,0xf70e5939),
+    u64(0x67332667,0xffc00b31),u64(0x8eb44a87,0x68581511),u64(0xdb0c2e0d,0x64f98fa7),u64(0x47b5481d,0xbefa4fa4)
+  ] : [
+    u64(0x6a09e667,0xf3bcc908),u64(0xbb67ae85,0x84caa73b),u64(0x3c6ef372,0xfe94f82b),u64(0xa54ff53a,0x5f1d36f1),
+    u64(0x510e527f,0xade682d1),u64(0x9b05688c,0x2b3e6c1f),u64(0x1f83d9ab,0xfb41bd6b),u64(0x5be0cd19,0x137e2179)
+  ];
+  var bytes = [];
+  for (var i = 0; i < msg.length; i++) bytes.push(msg[i] & 255);
+  var bitLen = msg.length * 8;
+  bytes.push(0x80);
+  while ((bytes.length % 128) !== 112) bytes.push(0);
+  // 128-bit big-endian bit length
+  for (i = 0; i < 8; i++) bytes.push(0);
+  var loHi = Math.floor(bitLen / 0x100000000) >>> 0;
+  var loLo = bitLen >>> 0;
+  bytes.push((loHi >>> 24) & 255, (loHi >>> 16) & 255, (loHi >>> 8) & 255, loHi & 255);
+  bytes.push((loLo >>> 24) & 255, (loLo >>> 16) & 255, (loLo >>> 8) & 255, loLo & 255);
+  for (var off = 0; off < bytes.length; off += 128) {
+    var w = [];
+    for (var t = 0; t < 16; t++) {
+      var o = off + t * 8;
+      w[t] = u64((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3],
+                 (bytes[o + 4] << 24) | (bytes[o + 5] << 16) | (bytes[o + 6] << 8) | bytes[o + 7]);
+    }
+    for (t = 16; t < 80; t++) {
+      var s0 = xor(xor(rotr(w[t - 15], 1), rotr(w[t - 15], 8)), shr(w[t - 15], 7));
+      var s1 = xor(xor(rotr(w[t - 2], 19), rotr(w[t - 2], 61)), shr(w[t - 2], 6));
+      w[t] = add(add(add(w[t - 16], s0), w[t - 7]), s1);
+    }
+    var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (t = 0; t < 80; t++) {
+      var S1 = xor(xor(rotr(e, 14), rotr(e, 18)), rotr(e, 41));
+      var ch = xor(and(e, f), and(not(e), g));
+      var t1 = add(add(add(add(h, S1), ch), K[t]), w[t]);
+      var S0 = xor(xor(rotr(a, 28), rotr(a, 34)), rotr(a, 39));
+      var maj = xor(xor(and(a, b), and(a, c)), and(b, c));
+      var t2 = add(S0, maj);
+      h = g; g = f; f = e; e = add(d, t1); d = c; c = b; b = a; a = add(t1, t2);
+    }
+    H[0] = add(H[0], a); H[1] = add(H[1], b); H[2] = add(H[2], c); H[3] = add(H[3], d);
+    H[4] = add(H[4], e); H[5] = add(H[5], f); H[6] = add(H[6], g); H[7] = add(H[7], h);
+  }
+  var outLen = bits === 384 ? 48 : 64;
+  var out = new Uint8Array(outLen);
+  for (i = 0; i < outLen / 8; i++) {
+    out[i * 8] = (H[i].h >>> 24) & 255; out[i * 8 + 1] = (H[i].h >>> 16) & 255;
+    out[i * 8 + 2] = (H[i].h >>> 8) & 255; out[i * 8 + 3] = H[i].h & 255;
+    out[i * 8 + 4] = (H[i].l >>> 24) & 255; out[i * 8 + 5] = (H[i].l >>> 16) & 255;
+    out[i * 8 + 6] = (H[i].l >>> 8) & 255; out[i * 8 + 7] = H[i].l & 255;
+  }
+  return out;
+}
+
 function __bn_load_crypto() {
   return {
     randomFillSync: function(buf, offset, size) {
@@ -310,12 +407,9 @@ function __bn_load_crypto() {
     },
     createHash: function(alg) {
       alg = String(alg || '').toLowerCase().replace(/^sha-/, 'sha');
-      var supported = { sha1:1, sha256:1 };
+      var supported = { sha1:1, sha256:1, sha384:1, sha512:1 };
       if (!supported[alg]) {
-        if (alg === 'sha384' || alg === 'sha512') {
-          throw new Error('createHash: ' + alg + ' not available sync (supported: sha1, sha256)');
-        }
-        throw new Error('createHash: unsupported algorithm ' + alg + ' (supported: sha1, sha256)');
+        throw new Error('createHash: unsupported algorithm ' + alg + ' (supported: sha1, sha256, sha384, sha512)');
       }
       var chunks = [];
       return {
@@ -331,7 +425,11 @@ function __bn_load_crypto() {
           for (var i = 0; i < chunks.length; i++) len += chunks[i].length;
           var all = new Uint8Array(len), o = 0;
           for (var j = 0; j < chunks.length; j++) { all.set(chunks[j], o); o += chunks[j].length; }
-          var dig = alg === 'sha1' ? __bn_sha1(all) : __bn_sha256(all);
+          var dig;
+          if (alg === 'sha1') dig = __bn_sha1(all);
+          else if (alg === 'sha256') dig = __bn_sha256(all);
+          else if (alg === 'sha384') dig = __bn_sha512(all, 384);
+          else dig = __bn_sha512(all, 512);
           if (enc === 'hex') {
             var h = '';
             for (var k = 0; k < dig.length; k++) h += (dig[k] + 256).toString(16).slice(1);

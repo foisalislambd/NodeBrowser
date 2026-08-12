@@ -8,11 +8,13 @@
 
 ## Architecture rule (non-negotiable going forward)
 
-| Layer | Language | Allowed to do | Must NOT become |
-|-------|----------|---------------|-----------------|
-| **Kernel / guest Node** | **C++ / C → WASM** (+ QuickJS embed) | VFS, processes, pipes, ports, `node` bootstrap, core modules (`fs`, `http`, `stream`, …), keep-alive HTTP | A second “full Node” written in browser JS |
-| **Host API** | **TypeScript / JS** (`@foisal/nodebrowser`) | `boot` / `mount` / `spawn`, event bus, HttpBridge ↔ SW, OPFS/IndexedDB, npm registry fetch, esbuild-wasm glue | Re-implementing the kernel or guest module surface |
-| **Demo / UI** | JS | Editor, terminal, preview chrome | Runtime semantics |
+
+| Layer                   | Language                                    | Allowed to do                                                                                                 | Must NOT become                                    |
+| ----------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **Kernel / guest Node** | **C++ / C → WASM** (+ QuickJS embed)        | VFS, processes, pipes, ports, `node` bootstrap, core modules (`fs`, `http`, `stream`, …), keep-alive HTTP     | A second “full Node” written in browser JS         |
+| **Host API**            | **TypeScript / JS** (`@foisal/nodebrowser`) | `boot` / `mount` / `spawn`, event bus, HttpBridge ↔ SW, OPFS/IndexedDB, npm registry fetch, esbuild-wasm glue | Re-implementing the kernel or guest module surface |
+| **Demo / UI**           | JS                                          | Editor, terminal, preview chrome                                                                              | Runtime semantics                                  |
+
 
 **Why this rule exists**
 
@@ -28,23 +30,27 @@
 
 ---
 
+
+
 ## Architecture (current)
 
 
-| Layer       | Technology                             | Role                                 |
-| ----------- | -------------------------------------- | ------------------------------------ |
-| Kernel      | C++ → WASM (Emscripten) — **primary**  | VFS, processes, pipes, virtual ports |
-| JS Engine   | QuickJS (in WASM) + thin JS fallback   | Execute JS/CJS like `node`           |
-| Node Compat | **C++/QuickJS bootstrap** (target)     | `fs`, `path`, `http`, `crypto`, …    |
-| Package Mgr | TS host + npm registry                 | install into VFS (+ deps + cache)    |
-| Networking  | Service Worker ↔ HttpBridge (+ WASM dispatch) | Preview `/__bn_preview/:port` |
-| Host API    | `@foisal/nodebrowser` (`packages/api`) | WebContainer-like DX **only**        |
-| Demo        | Vanilla UI                             | File manager, terminal, preview      |
+| Layer       | Technology                                    | Role                                 |
+| ----------- | --------------------------------------------- | ------------------------------------ |
+| Kernel      | C++ → WASM (Emscripten) — **primary**         | VFS, processes, pipes, virtual ports |
+| JS Engine   | QuickJS (in WASM) + thin JS fallback          | Execute JS/CJS like `node`           |
+| Node Compat | **C++/QuickJS bootstrap** (target)            | `fs`, `path`, `http`, `crypto`, …    |
+| Package Mgr | TS host + npm registry                        | install into VFS (+ deps + cache)    |
+| Networking  | Service Worker ↔ HttpBridge (+ WASM dispatch) | Preview `/__bn_preview/:port`        |
+| Host API    | `@foisal/nodebrowser` (`packages/api`)        | WebContainer-like DX **only**        |
+| Demo        | Vanilla UI                                    | File manager, terminal, preview      |
 
 
 Details: `[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)` · Module matrix: `[runtime/node/MODULES.md](./runtime/node/MODULES.md)`
 
 ---
+
+
 
 ## WebContainers parity — what they have vs what we must add
 
@@ -54,66 +60,88 @@ StackBlitz **WebContainers** = WASM micro-OS + Node-in-tab + VFS + virtual netwo
 ### Side-by-side
 
 
-| Capability | WebContainers (typical) | NodeBrowser now | Add via |
-| ---------- | ----------------------- | --------------- | ------- |
-| WASM runtime / kernel | Mature micro-OS | C++→WASM kernel ✅ (early) | Harden kernel (phases 13 remainder, 16–18) |
-| In-memory VFS | ✅ | ✅ | — |
-| Persist across refresh | Strong (browser storage) | ✅ OPFS `boot({ persist })` | — |
-| `boot` / `mount` / `spawn` API | ✅ public API | ✅ `@foisal/nodebrowser` | Phase **41** compat shim |
-| Full terminal (xterm) | ✅ | Basic demo term | **Phase 32** |
-| `npm install` (real trees) | Fast, production | Works, limited | **Phases 23–24** |
-| `npm run` / `npx` / `.bin` | ✅ | Partial / missing | **Phases 23–24** |
-| Shell (`sh`, pipes, redirects) | ✅ enough for tooling | Minimal | **Phase 25** |
-| Node ESM (`import`) | ✅ | ✅ rewrite-to-CJS MVP | Harden Phase 20 |
-| Watch / HMR FS events | ✅ | ✅ `fs.watch` + `fs-change` | — |
-| Vite **in-tab** (dev + HMR) | ✅ | Host templates only | **Phases 27–28** |
-| Next.js **in-tab** (subset) | ✅ (common apps) | Host templates only | **Phases 29–30** |
-| Keep-alive HTTP servers | ✅ | **C++/QuickJS retain MVP** + JS fallback | Harden Phase 18 |
-| Guest Node modules (stream/zlib/ESM/…) | ✅ | **Primary: C++ embed `guest_modules.js`** | Shrink JS fallback |
-| Multi-port preview UX | ✅ | Basic iframe | **Phase 34** |
-| COOP/COEP / SAB fast-path | Used where needed | Demo local only; Pages limited | **Phase 37** + Pages headers strategy |
-| Package install speed / cache | Highly optimized | Memory cache only | **Phases 23, 37** |
-| WebContainer API compat | Native | Different names | **Phase 41** `@foisal/nodebrowser-compat` |
-| Open source | API docs; runtime proprietary | ✅ MIT kernel+API | Keep honest docs |
+| Capability                             | WebContainers (typical)       | NodeBrowser now                           | Add via                                    |
+| -------------------------------------- | ----------------------------- | ----------------------------------------- | ------------------------------------------ |
+| WASM runtime / kernel                  | Mature micro-OS               | C++→WASM kernel ✅ (early)                 | Harden kernel (phases 13 remainder, 16–18) |
+| In-memory VFS                          | ✅                             | ✅                                         | —                                          |
+| Persist across refresh                 | Strong (browser storage)      | ✅ OPFS `boot({ persist })`                | —                                          |
+| `boot` / `mount` / `spawn` API         | ✅ public API                  | ✅ `@foisal/nodebrowser`                   | Phase **41** compat shim                   |
+| Full terminal (xterm)                  | ✅                             | Basic demo term                           | **Phase 32**                               |
+| `npm install` (real trees)             | Fast, production              | Works, limited                            | **Phases 23–24**                           |
+| `npm run` / `npx` / `.bin`             | ✅                             | Partial / missing                         | **Phases 23–24**                           |
+| Shell (`sh`, pipes, redirects)         | ✅ enough for tooling          | Minimal                                   | **Phase 25**                               |
+| Node ESM (`import`)                    | ✅                             | ✅ rewrite-to-CJS MVP                      | Harden Phase 20                            |
+| Watch / HMR FS events                  | ✅                             | ✅ `fs.watch` + `fs-change`                | —                                          |
+| Vite **in-tab** (dev + HMR)            | ✅                             | Host templates only                       | **Phases 27–28**                           |
+| Next.js **in-tab** (subset)            | ✅ (common apps)               | Host templates only                       | **Phases 29–30**                           |
+| Keep-alive HTTP servers                | ✅                             | **C++/QuickJS retain MVP** + JS fallback  | Harden Phase 18                            |
+| Guest Node modules (stream/zlib/ESM/…) | ✅                             | **Primary: C++ embed** `guest_modules.js` | Shrink JS fallback                         |
+| Multi-port preview UX                  | ✅                             | Basic iframe                              | **Phase 34**                               |
+| COOP/COEP / SAB fast-path              | Used where needed             | Demo local only; Pages limited            | **Phase 37** + Pages headers strategy      |
+| Package install speed / cache          | Highly optimized              | Memory cache only                         | **Phases 23, 37**                          |
+| WebContainer API compat                | Native                        | Different names                           | **Phase 41** `@foisal/nodebrowser-compat`  |
+| Open source                            | API docs; runtime proprietary | ✅ MIT kernel+API                          | Keep honest docs                           |
+
+
+
 
 ### Must-add backlog (WC-like product)
 
 Ordered for **maximum WC feel per week** — map to numbered phases already in this file:
 
 #### A. Feel like a real project disk
-- [ ] **OPFS persistence** (survive reload) → Phase **14**
-- [ ] Symlinks + binary polish + `fs.watch` → Phase **15**
-- [ ] Snapshot export/import (shareable project) → Phase **35**
+
+- [x] **OPFS persistence** (survive reload) → Phase **14**
+- [x] Symlinks + binary polish + `fs.watch` → Phase **15**
+- [ ] Snapshot export/import (shareable project) → Phase **35** *(API exists in 14; shareable links are 35)*
+
+
 
 #### B. Feel like real Node + npm
-- [ ] ESM / `import` / `node:` fully → Phase **20**
+
+- [x] ESM / `import` / `node:` fully → Phase **20**
 - [ ] `node_modules/.bin`, `npm run`, `npx` → Phases **23–24**
 - [ ] Shell subset for scripts → Phase **25**
-- [ ] Process groups / kill tree / better stdio → Phase **16**
+- [x] Process groups / kill tree / better stdio → Phase **16** *(stdin + tty/readline + `sh` bg/`wait` MVP)*
+
+
 
 #### C. Feel like WebContainers networking
+
 - [ ] WASM HTTP keep-alive parity with JS HttpBridge → Phase **18**
 - [ ] Multi-port preview + network log → Phase **34**
 - [ ] Offline-friendly SW routing (already partial) → harden in **18/34**
 
+
+
 #### D. Run the apps WC users expect in-tab
+
 - [ ] Vite React template **in-tab** + HMR → Phases **27–28**
 - [ ] Next default app **in-tab** (subset) → Phases **29–30**
 - [ ] Express / simple API server demos → after **18**
 
+
+
 #### E. Feel like StackBlitz DX
+
 - [ ] xterm.js terminal + tabs → Phase **32**
 - [ ] File search, drag-drop, templates gallery → Phase **33**
 - [ ] `WebContainer`-shaped API shim → Phase **41**
 - [ ] Docs site + migration table → Phase **40**
 
+
+
 #### F. Beat them where open-source can win
+
 - [ ] Public C++/WASM kernel anyone can audit → keep shipping from CI
 - [ ] Benchmark suite vs WC (boot, install, vite) → Phase **37**
 - [ ] Agent/headless API for AI tools → Phase **36**
 - [ ] Honest MODULES.md gaps forever → non-negotiable
 
+
+
 ### Explicit “not copying WC”
+
 Do **not** block on: proprietary WC internals, bit-identical Node, native `.node` addons, full Turbopack, multi-tenant hardened cloud sandbox (see Non-goals).
 
 ---
@@ -164,7 +192,7 @@ Make WASM and JS kernels share one host surface; prefer auto-detect with JS fall
 - [x] `bn.runtime` exposes `'js' | 'wasm'`
 - [x] Conformance suite: `packages/api/test/conformance.mjs` via `npm run test:api`
 - [x] `bn_vfs_read_bytes` ABI + TS `readBytes`
-- [ ] Full HTTP keep-alive feature-parity on WASM (see Phase 18)
+- [x] Full HTTP keep-alive feature-parity on WASM (see Phase 18) — `bn_http_dispatch` + retained QuickJS handlers
 
 **Exit (met for JS path):** conformance script green; same host FS/spawn-env APIs available; auto boot works.
 
@@ -175,7 +203,9 @@ Survive refresh like a real project disk.
 - [x] Mount root (or `/home`) backed by Origin Private File System (`boot({ persist: true })`)
 - [x] Snapshot / export / import project as gzipped tar (`exportSnapshot` / `importSnapshot`)
 - [x] “Clear workspace” + export in demo
-- [ ] Optional IndexedDB metadata index for fast `readdir` (skipped MVP)
+
+Optional IndexedDB metadata index for fast readdir (skipped MVP)
+
 - [x] Migration from pure RAM → OPFS without breaking mount API
 
 **Exit:** refresh tab → `/home/project` still there when `persist: true`.
@@ -187,7 +217,7 @@ Tooling needs real files, not only UTF-8 strings.
 - [x] First-class binary blobs in VFS (images, wasm, fonts) — mount/npm bytes end-to-end
 - [x] Symlink create/read/follow (**C++ VFS** `bn_vfs_symlink`/`readlink`/`lstat` + guest `fs.symlinkSync` / `readlinkSync` / `lstatSync`; JS fallback mirrors)
 - [x] `fs.watch` / `fs.watchFile` → host `fs-change` event bus
-- [ ] `utimes` / mode bits enough for npm package scripts expectations
+- [x] `utimes` / mode bits enough for npm package scripts expectations (`chmod` / `utimes` on C++ VFS + guest `fs`)
 
 **Exit:** editor save triggers `fs.watch` / host `fs-change`.
 
@@ -197,9 +227,9 @@ Closer to WebContainers process semantics.
 
 - [x] `child_process.spawn` / `execFile` → kernel spawn (node, sh stubs)
 - [x] Concurrent processes with isolated cwd/env; shared VFS
-- [ ] stdin write + TTY-ish raw mode stubs (`tty`, `readline`)
+- [x] stdin write + TTY-ish raw mode stubs (`tty`, `readline`)
 - [x] Exit / signal semantics (`SIGKILL` via `kill` → 137)
-- [ ] Background jobs + `wait` from shell
+- [x] Background jobs + `wait` from shell (`sh -c '… &'` / `wait`)
 - [x] Resource limits (max procs 32)
 
 **Exit:** parent `node` spawns child `node`; HTTP keep-alive still `-1` from `wait`.
@@ -234,7 +264,7 @@ Closer to WebContainers process semantics.
 
 #### Phase 19 — Crypto / zlib / compress `M` ✅
 
-- [x] `crypto`: sha1/sha256 (+ sha384/sha512 via host digestSync); cipher stubs clear errors
+- [x] `crypto`: sha1/sha256/sha384/sha512 (pure sync); cipher stubs clear errors
 - [x] `zlib` gzip/gunzip/deflate/inflate sync + stream wrappers
 - [x] Guest `zlib` round-trip
 

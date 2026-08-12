@@ -56,6 +56,7 @@ export function createJsFallbackKernel(opts?: {
   const dec = new TextDecoder();
   const watchers = new Map<string, Set<(eventType: string, filename: string) => void>>();
   const watchFileTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const fileMeta = new Map<string, { mode: number; mtimeMs: number }>();
 
   const emitFs = (type: string, path: string) => {
     fsChangeListener?.({ type, path });
@@ -266,6 +267,66 @@ export function createJsFallbackKernel(opts?: {
           if (!r.node) return null;
           return r.node.kind;
         },
+        chmod: (path: string, mode: number) => {
+          const n = norm(path);
+          if (n !== '/' && !resolve(n).node) return false;
+          // Follow symlink like Node fs.chmod — store mode on the target path when linked.
+          let key = n === '/' ? '/' : n;
+          const raw = resolveRaw(n);
+          if (raw.node && raw.node.kind === 'symlink') {
+            const t = raw.node.target;
+            key = t.startsWith('/') ? norm(t) : norm(dirnameOf(n) + '/' + t);
+          }
+          const prev = fileMeta.get(key) || { mode: 0o644, mtimeMs: Date.now() };
+          fileMeta.set(key, { ...prev, mode: mode >>> 0 });
+          emitFs('change', n);
+          return true;
+        },
+        utimes: (path: string, _atime: number, mtime: number) => {
+          const n = norm(path);
+          if (n !== '/' && !resolve(n).node) return false;
+          let key = n === '/' ? '/' : n;
+          const raw = resolveRaw(n);
+          if (raw.node && raw.node.kind === 'symlink') {
+            const t = raw.node.target;
+            key = t.startsWith('/') ? norm(t) : norm(dirnameOf(n) + '/' + t);
+          }
+          const prev = fileMeta.get(key) || { mode: 0o644, mtimeMs: Date.now() };
+          fileMeta.set(key, { ...prev, mtimeMs: mtime });
+          emitFs('change', n);
+          return true;
+        },
+        statJson: (path: string, follow?: boolean) => {
+          const n = norm(path);
+          const r = follow === false ? resolveRaw(n) : resolve(n);
+          if (!r.node && n !== '/') return null;
+          const node = n === '/' ? root : r.node;
+          if (!node) return null;
+          let metaKey = n === '/' ? '/' : n;
+          if (follow !== false) {
+            const raw = resolveRaw(n);
+            if (raw.node && raw.node.kind === 'symlink') {
+              const t = raw.node.target;
+              metaKey = t.startsWith('/') ? norm(t) : norm(dirnameOf(n) + '/' + t);
+            }
+          }
+          const meta = fileMeta.get(metaKey);
+          const kind = node.kind === 'dir' ? 'dir' : node.kind === 'symlink' ? 'symlink' : 'file';
+          const size = node.kind === 'file' ? node.bytes.byteLength : node.kind === 'symlink' ? node.target.length : 0;
+          return {
+            kind,
+            size,
+            mtimeMs: meta?.mtimeMs ?? Date.now(),
+            mode: meta?.mode ?? (kind === 'dir' ? 0o755 : 0o644),
+          };
+        },
+        waitPid: (pid: number) => {
+          const p = procs.get(pid);
+          if (!p) return 127;
+          if (p.running) return -1;
+          return p.code;
+        },
+        writeStdin: (_pid: number, _data: string | ArrayBuffer) => 0,
         watch: (path: string, cb: (eventType: string, filename: string) => void) => {
           const n = norm(path);
           if (!watchers.has(n)) watchers.set(n, new Set());
@@ -322,27 +383,58 @@ export function createJsFallbackKernel(opts?: {
             running: result.running,
           };
         },
-        spawnCmd: (cmd: string, argv: string[], childCwd: string) => {
+        spawnCmd: (cmd: string, argv: string[], childCwd: string): {
+          pid: number;
+          stdout: string;
+          stderr: string;
+          code: number;
+          running: boolean;
+        } => {
           if (countRunning() >= MAX_PROCS && cmd === 'node') {
             throw new Error('EMFILE: max concurrent processes (' + MAX_PROCS + ')');
           }
           const pid = nextPid++;
-          // reuse kernel spawn logic via local helpers
-          if (cmd === 'echo') {
-            const o = argv.join(' ') + '\n';
+          let effectiveCmd = cmd;
+          let effectiveArgv = argv;
+          if ((cmd === 'sh' || cmd === 'bash') && argv[0] === '-c') {
+            const script = String(argv[1] || '').trim();
+            if (script === 'wait' || /^wait(\s|$)/.test(script)) {
+              procs.set(pid, { out: '', err: '', code: 0, running: false });
+              return { pid, stdout: '', stderr: '', code: 0, running: false };
+            }
+            let body = script;
+            if (/&\s*$/.test(body)) body = body.replace(/&\s*$/, '').trim();
+            const parts = body.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+            const mapped = parts.map((p) => {
+              if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) return p.slice(1, -1);
+              return p;
+            });
+            effectiveCmd = mapped[0] || 'true';
+            effectiveArgv = mapped.slice(1);
+          }
+          if (effectiveCmd === 'true') {
+            procs.set(pid, { out: '', err: '', code: 0, running: false });
+            return { pid, stdout: '', stderr: '', code: 0, running: false };
+          }
+          if (effectiveCmd === 'false') {
+            procs.set(pid, { out: '', err: '', code: 1, running: false });
+            return { pid, stdout: '', stderr: '', code: 1, running: false };
+          }
+          if (effectiveCmd === 'echo') {
+            const o = effectiveArgv.join(' ') + '\n';
             procs.set(pid, { out: o, err: '', code: 0, running: false });
             return { pid, stdout: o, stderr: '', code: 0, running: false };
           }
-          if (cmd === 'cat') {
-            const t = readText(0, argv[0] ?? '');
+          if (effectiveCmd === 'cat') {
+            const t = readText(0, effectiveArgv[0] ?? '');
             const o = t ?? '';
             const e = t == null ? 'cat: missing\n' : '';
             const c = t == null ? 1 : 0;
             procs.set(pid, { out: o, err: e, code: c, running: false });
             return { pid, stdout: o, stderr: e, code: c, running: false };
           }
-          if (cmd === 'ls') {
-            const p = argv[0] ?? childCwd;
+          if (effectiveCmd === 'ls') {
+            const p = effectiveArgv[0] ?? childCwd;
             const r = resolve(p);
             const node = p === '/' ? root : r.node;
             if (!node || node.kind !== 'dir') {
@@ -353,8 +445,8 @@ export function createJsFallbackKernel(opts?: {
             procs.set(pid, { out: o, err: '', code: 0, running: false });
             return { pid, stdout: o, stderr: '', code: 0, running: false };
           }
-          if (cmd === 'node') {
-            const script = argv[0] ?? '';
+          if (effectiveCmd === 'node') {
+            const script = effectiveArgv[0] ?? '';
             const path = script.startsWith('/') ? script : norm(childCwd + '/' + script);
             const result = runNode(path, childCwd, pid, env);
             procs.set(pid, {
@@ -371,8 +463,19 @@ export function createJsFallbackKernel(opts?: {
               running: result.running,
             };
           }
-          procs.set(pid, { out: '', err: `command not found: ${cmd}\n`, code: 127, running: false });
-          return { pid, stdout: '', stderr: `command not found: ${cmd}\n`, code: 127, running: false };
+          procs.set(pid, {
+            out: '',
+            err: `command not found: ${effectiveCmd}\n`,
+            code: 127,
+            running: false,
+          });
+          return {
+            pid,
+            stdout: '',
+            stderr: `command not found: ${effectiveCmd}\n`,
+            code: 127,
+            running: false,
+          };
         },
         killPid: (pid: number) => {
           const p = procs.get(pid);
@@ -800,7 +903,7 @@ function resolveFrom(fromDir, request){
     if(dir==='/'||dir==='') break;
     var parent=dirname(dir); if(parent===dir) break; dir=parent;
   }
-  var cores=['fs','path','http','https','net','url','events','util','stream','os','module','buffer','assert','querystring','crypto','perf_hooks','async_hooks','diagnostics_channel','zlib','string_decoder','timers','timers/promises','child_process'];
+  var cores=['fs','path','http','https','net','url','events','util','stream','os','module','buffer','assert','querystring','crypto','perf_hooks','async_hooks','diagnostics_channel','zlib','string_decoder','timers','timers/promises','child_process','tty','readline'];
   if(cores.indexOf(request)>=0) return 'node:'+request;
   throw new Error("Cannot find module '"+request+"'");
 }
@@ -884,15 +987,43 @@ function loadCore(name){
       unlinkSync:function(p){ if(!__bn.unlink(String(p))) throw new Error('ENOENT'); },
       symlinkSync:function(target, path){ if(!__bn.symlink||!__bn.symlink(String(target), String(path))) throw new Error('EIO symlink'); },
       readlinkSync:function(path){ var t=__bn.readlink?__bn.readlink(String(path)):null; if(t==null) throw new Error('EINVAL: not a symlink'); return t; },
+      chmodSync:function(p, mode){
+        mode=typeof mode==='string'?parseInt(mode,8):(mode|0);
+        if(!__bn.chmod||!__bn.chmod(String(p), mode)) throw new Error('ENOENT chmod: '+p);
+      },
+      utimesSync:function(p, atime, mtime){
+        function toMs(t){ if(typeof t==='number') return t<1e12?t*1000:t; if(t&&t.getTime) return t.getTime(); return Date.now(); }
+        if(!__bn.utimes||!__bn.utimes(String(p), toMs(atime), toMs(mtime))) throw new Error('ENOENT utimes: '+p);
+      },
       lstatSync:function(p){
         var path=String(p);
         var kind=__bn.lstatKind?__bn.lstatKind(path):null;
         if(!kind && !__bn.exists(path)) throw new Error('ENOENT: '+path);
         if(!kind) kind=__bn.isDir(path)?'dir':(__bn.isFile(path)?'file':'file');
+        var meta=__bn.statJson?__bn.statJson(path,false):null;
         return {
           isFile:function(){return kind==='file';},
           isDirectory:function(){return kind==='dir';},
           isSymbolicLink:function(){return kind==='symlink';},
+          mode: meta&&meta.mode!=null?meta.mode:(kind==='dir'?0o755:0o644),
+          size: meta&&meta.size!=null?meta.size:0,
+          mtimeMs: meta&&meta.mtimeMs!=null?meta.mtimeMs:Date.now(),
+          mtime: new Date(meta&&meta.mtimeMs!=null?meta.mtimeMs:Date.now())
+        };
+      },
+      statSync:function(p){
+        var path=String(p);
+        if(!__bn.exists(path)) throw new Error('ENOENT: '+path);
+        var meta=__bn.statJson?__bn.statJson(path,true):null;
+        var file=__bn.isFile(path), dir=__bn.isDir(path);
+        return {
+          isFile:function(){return !!file;},
+          isDirectory:function(){return !!dir;},
+          isSymbolicLink:function(){return false;},
+          mode: meta&&meta.mode!=null?meta.mode:(dir?0o755:0o644),
+          size: meta&&meta.size!=null?meta.size:0,
+          mtimeMs: meta&&meta.mtimeMs!=null?meta.mtimeMs:Date.now(),
+          mtime: new Date(meta&&meta.mtimeMs!=null?meta.mtimeMs:Date.now())
         };
       },
       watch:function(path, opts, listener){
@@ -930,12 +1061,6 @@ function loadCore(name){
         var t=__bn.readFile(String(src));
         if(t===null) { var e=new Error('ENOENT: '+src); e.code='ENOENT'; throw e; }
         if(!__bn.writeFile(String(dest), t)) throw new Error('EIO');
-      },
-      statSync:function(p){
-        var path=String(p);
-        if(!__bn.exists(path)) throw new Error('ENOENT: '+path);
-        var file=isFile(path), dir=isDir(path);
-        return { isFile:function(){return file;}, isDirectory:function(){return dir;}, isSymbolicLink:function(){return false;} };
       }
     };
     fs.promises = __bn_fs_promises(fs);
@@ -1045,7 +1170,21 @@ function loadCore(name){
       child.on('close', function(code){ if(cb) cb(code?new Error('exit '+code):null, stdout, stderr); });
       return child;
     }
-    return { spawn:spawn, execFile:execFile, fork:function(modulePath, args, opts){ return spawn('node', [modulePath].concat(args||[]), opts); } };
+    return { spawn:spawn, execFile:execFile, exec:function(command, opts, cb){ if(typeof opts==='function'){ cb=opts; opts={}; } return execFile('sh', ['-c', String(command)], opts||{}, cb); }, fork:function(modulePath, args, opts){ return spawn('node', [modulePath].concat(args||[]), opts); } };
+  }
+  if(name==='tty'){
+    function ReadStream(){ this.isTTY=false; }
+    function WriteStream(){ this.isTTY=false; this.columns=80; this.rows=24; }
+    return { isatty:function(){return false;}, ReadStream:ReadStream, WriteStream:WriteStream };
+  }
+  if(name==='readline'){
+    return {
+      createInterface:function(opts){
+        var iface={ question:function(q,cb){ if(cb) setTimeout(function(){cb('');},0); }, close:function(){}, on:function(){return iface;}, once:function(){return iface;}, write:function(){}, pause:function(){return iface;}, resume:function(){return iface;} };
+        return iface;
+      },
+      cursorTo:function(){}, clearLine:function(){}, clearScreenDown:function(){}, emitKeypressEvents:function(){}
+    };
   }
   if(name==='os') return { platform:function(){return 'browsernode';}, homedir:function(){return '/home';}, EOL:'\\n', arch:function(){return 'wasm32';} };
   if(name==='assert'){ function assert(v,m){ if(!v) throw new Error(m||'assert'); } assert.strictEqual=function(a,b){ if(a!==b) throw new Error('neq'); }; return assert; }
@@ -1083,7 +1222,7 @@ function loadCore(name){
   }
   if(name==='module'){
     return {
-      builtinModules:['fs','path','http','https','net','buffer','crypto','perf_hooks','async_hooks','diagnostics_channel','module','stream','util','zlib','string_decoder','timers','child_process'],
+      builtinModules:['fs','path','http','https','net','buffer','crypto','perf_hooks','async_hooks','diagnostics_channel','module','stream','util','zlib','string_decoder','timers','child_process','tty','readline'],
       createRequire: function(filename){
         var file=String(filename||process.cwd()+'/.');
         if(file.indexOf('file:///')===0) file=file.slice(7);

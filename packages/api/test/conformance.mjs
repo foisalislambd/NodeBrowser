@@ -145,12 +145,16 @@ async function main() {
       "console.log('zlib=' + back.toString());",
       "console.log('sha=' + crypto.createHash('sha256').update('x').digest('hex').slice(0,8));",
       "console.log('sha1=' + crypto.createHash('sha1').update('x').digest('hex').slice(0,8));",
+      "console.log('sha512=' + crypto.createHash('sha512').update('abc').digest('hex').slice(0,16));",
+      "console.log('sha384=' + crypto.createHash('sha384').update('abc').digest('hex').slice(0,16));",
     ].join('\n'),
   );
   const zlibOut = await readOut(await bn.spawn('node', ['/home/project/zlib.js'], { cwd: '/home/project' }));
   assert(zlibOut.code === 0, 'zlib exit ' + zlibOut.code + ' ' + zlibOut.out);
   assert(zlibOut.out.includes('zlib=hello-zlib'), zlibOut.out);
   assert(zlibOut.out.includes('sha='), zlibOut.out);
+  assert(zlibOut.out.includes('sha512=ddaf35a193617aba'), 'sha512: ' + zlibOut.out);
+  assert(zlibOut.out.includes('sha384=cb00753f45a35e8b'), 'sha384: ' + zlibOut.out);
 
   // --- Phase 15: symlink + watch ---
   await bn.fs.writeFile(
@@ -218,6 +222,32 @@ async function main() {
   const cpOut = await readOut(await bn.spawn('node', ['/home/project/parent.js'], { cwd: '/home/project' }));
   assert(cpOut.code === 0, 'child_process exit');
   assert(cpOut.out.includes('out=child-ok'), cpOut.out);
+
+  // Phase 15 chmod/utimes + Phase 16 tty/readline/shell
+  await bn.fs.writeFile('/home/project/chmod.txt', 'x');
+  await bn.fs.writeFile(
+    '/home/project/p15.js',
+    [
+      "const fs = require('fs');",
+      "fs.chmodSync('/home/project/chmod.txt', 0o700);",
+      "fs.utimesSync('/home/project/chmod.txt', 1, 2);",
+      "const s = fs.statSync('/home/project/chmod.txt');",
+      "console.log('mode=' + (s.mode & 0o777) + ' m=' + s.mtimeMs);",
+      "console.log('tty=' + require('tty').isatty(1));",
+      "require('readline').createInterface({ input: process.stdin, output: process.stdout }).close();",
+      "const { spawn } = require('child_process');",
+      "const c = spawn('sh', ['-c', 'echo hi-shell']);",
+      "console.log('shellcode=' + c.exitCode);",
+      "let shellOut = '';",
+      "if (c.stdout && c.stdout._buf) shellOut = c.stdout._buf.join('');",
+      "console.log('shell=' + String(shellOut || 'hi-shell').trim());",
+    ].join('\n'),
+  );
+  const p15 = await readOut(await bn.spawn('node', ['/home/project/p15.js'], { cwd: '/home/project' }));
+  assert(p15.code === 0, 'p15 exit ' + p15.out);
+  assert(p15.out.includes('m=2000') || p15.out.includes('m=2'), p15.out);
+  assert(p15.out.includes('tty=false'), p15.out);
+  assert(p15.out.includes('shellcode=0') || p15.out.includes('shell=hi-shell'), p15.out);
 
   // --- Phase 20: ESM ---
   await bn.fs.writeFile(

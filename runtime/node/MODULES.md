@@ -6,7 +6,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch, binary buffer I/O, host `rename` |
+| `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch/**chmod/utimes**/mode+mtime, binary buffer I/O, host `rename` |
 | `path` | partial | posix only |
 | `process` | partial | cwd, argv, **env from spawn**, exit, nextTick |
 | `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex + index Proxy |
@@ -19,7 +19,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `url` | stub | |
 | `util` | ok (subset) | promisify/callbackify/format/inherits |
 | `os` | stub | |
-| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(**sha1/sha256** only) |
+| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(**sha1/sha256/sha384/sha512**) |
 | `zlib` | ok (subset) | gzip/gunzip/deflate/inflate sync (+ streams) |
 | `string_decoder` | ok (subset) | |
 | `timers` / `timers/promises` | ok (subset) | |
@@ -30,8 +30,8 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `vm` | todo | QuickJS realms |
 | `assert` | stub | |
 | `querystring` | stub | |
-| `tty` | todo | |
-| `readline` | todo | |
+| `tty` | ok (stub) | `isatty` → false; ReadStream/WriteStream |
+| `readline` | ok (stub) | createInterface MVP |
 
 ## Vite checklist
 

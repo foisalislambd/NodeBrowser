@@ -184,6 +184,35 @@ int main() {
     auto st = k.vfs().stat("/via/nested.txt", false);
     CHECK(st.has_value() && st->kind == NodeKind::File);
   }
+  // Phase 15: chmod / utimes
+  {
+    CHECK(k.vfs().write_text("/mode.txt", "m"));
+    CHECK(k.vfs().chmod("/mode.txt", 0755));
+    auto st = k.vfs().stat("/mode.txt");
+    CHECK(st.has_value() && (st->mode & 0777) == 0755);
+    CHECK(k.vfs().utimes("/mode.txt", 1000, 2000));
+    st = k.vfs().stat("/mode.txt");
+    CHECK(st.has_value() && st->mtime_ms == 2000);
+    k.vfs().write_text(
+        "/mode.js",
+        "const fs=require('fs');\n"
+        "fs.chmodSync('/mode.txt', 0o700);\n"
+        "fs.utimesSync('/mode.txt', 3, 4);\n"
+        "const s=fs.statSync('/mode.txt');\n"
+        "console.log('mode='+ (s.mode&0o777) +' mtime='+s.mtimeMs);\n"
+        "console.log('sha512='+require('crypto').createHash('sha512').update('abc').digest('hex').slice(0,16));\n"
+        "console.log('tty='+require('tty').isatty(1));\n"
+        "require('readline').createInterface({input:process.stdin,output:process.stdout}).close();\n"
+        "console.log('rlok');\n");
+    auto pid = k.spawn("node", {"/mode.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("mtime=4") != std::string::npos);
+    CHECK(out.find("sha512=") != std::string::npos);
+    CHECK(out.find("tty=false") != std::string::npos);
+    CHECK(out.find("rlok") != std::string::npos);
+  }
 #endif
 
   if (fails) {
