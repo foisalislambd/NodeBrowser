@@ -68,6 +68,7 @@ Prefer short, imperative subjects:
 | API + WASM boot | `npm run test:api` (needs `packages/api/wasm/`) |
 | Demo build | `npm run build:demo` |
 | Native kernel | `npm run build:native` / `npm test` |
+| Playwright bake-off | `npm run build:demo && npm run test:e2e` |
 | Manual | `npm run dev` — Run / Install / HTTP / Files pane |
 
 ## Documentation

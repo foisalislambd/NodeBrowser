@@ -7,6 +7,8 @@
     "build": "node ./build.mjs"
   },
   "dependencies": {
-    "@foisal/nodebrowser": "*"
+    "@foisal/nodebrowser": "*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
   }
 }

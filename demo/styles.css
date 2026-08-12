@@ -661,6 +661,18 @@ body {
   min-height: 0;
 }
 
+.xterm-host {
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.25rem 0.4rem;
+  background: var(--bg);
+}
+.xterm-host .xterm {
+  height: 100%;
+}
+
 .term {
   margin: 0;
   flex: 1;

@@ -89,6 +89,14 @@ function buildIndexHtml() {
     /"esbuild-wasm":\s*"[^"]+"/,
     '"esbuild-wasm": "./node_modules/esbuild-wasm/esm/browser.js"',
   );
+  html = html.replace(
+    /"@xterm\/xterm":\s*"[^"]+"/,
+    '"@xterm/xterm": "./node_modules/@xterm/xterm/lib/xterm.js"',
+  );
+  html = html.replace(
+    /"@xterm\/addon-fit":\s*"[^"]+"/,
+    '"@xterm/addon-fit": "./node_modules/@xterm/addon-fit/lib/addon-fit.js"',
+  );
   writeFileSync(join(out, 'index.html'), html);
 }
 
@@ -98,6 +106,7 @@ async function main() {
 
   writeFileSync(join(out, 'main.js'), readFileSync(join(demoRoot, 'src/app/main.js'), 'utf8'));
   writeFileSync(join(out, 'apps.js'), readFileSync(join(demoRoot, 'src/app/apps.js'), 'utf8'));
+  writeFileSync(join(out, 'term.js'), readFileSync(join(demoRoot, 'src/app/term.js'), 'utf8'));
   writeFileSync(join(out, 'sw.js'), readFileSync(join(demoRoot, 'sw.js'), 'utf8'));
   cpSync(join(demoRoot, 'styles.css'), join(out, 'styles.css'));
   writeFileSync(join(out, '.nojekyll'), '');
@@ -120,6 +129,17 @@ async function main() {
   ].find((p) => existsSync(p));
   if (!esbuildSrc) throw new Error('esbuild-wasm not found — run npm install at repo root');
   copyDir(esbuildSrc, join(out, 'node_modules/esbuild-wasm'));
+
+  const xtermSrc = [
+    join(repoRoot, 'node_modules/@xterm/xterm'),
+    join(demoRoot, 'node_modules/@xterm/xterm'),
+  ].find((p) => existsSync(p));
+  if (xtermSrc) copyDir(xtermSrc, join(out, 'node_modules/@xterm/xterm'));
+  const fitSrc = [
+    join(repoRoot, 'node_modules/@xterm/addon-fit'),
+    join(demoRoot, 'node_modules/@xterm/addon-fit'),
+  ].find((p) => existsSync(p));
+  if (fitSrc) copyDir(fitSrc, join(out, 'node_modules/@xterm/addon-fit'));
 
   console.log(`demo → ${out} (BASE_PATH=${BASE_PATH})`);
 }

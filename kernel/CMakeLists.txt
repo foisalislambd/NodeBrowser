@@ -22,9 +22,13 @@ if(BN_BUILD_NATIVE_TESTS)
   add_executable(bn_node_test tests/node_test.cpp)
   target_link_libraries(bn_node_test PRIVATE bn_kernel)
 
+  add_executable(bn_stdio_test tests/stdio_ring_test.cpp)
+  target_link_libraries(bn_stdio_test PRIVATE bn_kernel)
+
   enable_testing()
   add_test(NAME vfs_test COMMAND bn_vfs_test)
   add_test(NAME node_test COMMAND bn_node_test)
+  add_test(NAME stdio_ring_test COMMAND bn_stdio_test)
 endif()
 
 if(BN_BUILD_WASM)

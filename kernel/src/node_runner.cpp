@@ -2404,6 +2404,7 @@ int cmd_vite_or_next(Kernel& k, Process& proc) {
     if (code == 0 || code == -1) return code;
     write_err(proc, tool + ": CLI exited " + std::to_string(code) +
                         " (graph did not fit QuickJS) — host esbuild-wasm subset\n");
+    proc.keep_alive = false;
     proc.cmd = tool;
     proc.argv = orig;
   }

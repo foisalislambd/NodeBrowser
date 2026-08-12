@@ -1,3 +1,5 @@
+import { mountXterm, getTerm } from './term.js';
+
 const DEFAULT = `const fs = require('fs');
 const crypto = require('crypto');
 const { performance } = require('perf_hooks');
@@ -44,10 +46,16 @@ function $(id) {
 
 function appendTerm(text, which) {
   const id = which || window.__bn_active_term || 'term';
+  const api = getTerm(id);
+  if (api) {
+    api.write(text);
+    return;
+  }
   const term = $(id) || $('term');
   if (!term) return;
   term.textContent += text;
   term.scrollTop = term.scrollHeight;
+}
 }
 
 function dirname(p) {
@@ -358,9 +366,12 @@ async function boot() {
     $('status').textContent = 'wasm missing';
     throw e;
   }
+  await mountXterm($('term'));
+  await mountXterm($('term-2'));
   appendTerm(
     `runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}` +
-      `${bn.worker ? ' worker=true (WASM off UI thread)' : bn.runtime === 'wasm' ? ' worker=false (same-thread WASM)' : ''}\n`,
+      `${bn.worker ? ' worker=true (WASM off UI thread)' : bn.runtime === 'wasm' ? ' worker=false (same-thread WASM)' : ''}` +
+      `${bn.sabStdio ? ' sab-stdio=true' : ''}\n`,
   );
   bn.attachServiceWorkerBridge(previewPath);
   await bn.mount({
@@ -397,7 +408,13 @@ async function boot() {
   setCwd(projectCwd);
   await refreshTree();
   $('status').textContent =
-    bn.runtime === 'wasm' ? (bn.worker ? 'ready · wasm · worker' : 'ready · wasm') : 'ready · js';
+    bn.runtime === 'wasm'
+      ? bn.worker
+        ? bn.sabStdio
+          ? 'ready · wasm · worker · sab'
+          : 'ready · wasm · worker'
+        : 'ready · wasm'
+      : 'ready · js';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
   appendTerm('Upload ZIP / drop a .zip to unpack and preview (Vite, Next, or static HTML).\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
@@ -441,7 +458,7 @@ async function runNode() {
     await bn.fs.writeFile(script, editor.value);
   }
   const cwd = projectCwd || dirname(script);
-  $('term').textContent = '';
+  getTerm('term')?.clear();
   appendTerm(`$ node ${script}\n`);
   const proc = await bn.spawn('node', [script], { cwd });
   const reader = proc.output.getReader();

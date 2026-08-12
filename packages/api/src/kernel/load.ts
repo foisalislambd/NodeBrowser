@@ -72,6 +72,14 @@ export interface KernelModule {
   runtime?: 'js' | 'wasm';
   /** True when C++/WASM runs off the UI thread. */
   worker?: boolean;
+  /** Attach SharedArrayBuffer stdio rings (Worker + COOP/COEP). */
+  attachStdio?: (
+    k: KernelHandle,
+    pid: number,
+    stdout: SharedArrayBuffer,
+    stderr: SharedArrayBuffer,
+    stdin: SharedArrayBuffer,
+  ) => Awaitable<boolean>;
 }
 
 type EmscriptenModule = {
@@ -365,13 +373,20 @@ function wrap(mod: EmscriptenModule): KernelModule {
     readStderr: (k, pid) => readPipe(mod._bn_read_stderr, k, pid),
     writeStdin: (k, pid, data) => {
       const bytes = new TextEncoder().encode(data);
-      const buf = mod._malloc(bytes.byteLength);
-      try {
-        mod.HEAPU8.set(bytes, buf);
-        return mod._bn_write_stdin(k, pid, buf, bytes.byteLength);
-      } finally {
-        mod._free(buf);
+      let off = 0;
+      while (off < bytes.byteLength) {
+        const slice = bytes.subarray(off);
+        const buf = mod._malloc(slice.byteLength);
+        try {
+          mod.HEAPU8.set(slice, buf);
+          const n = mod._bn_write_stdin(k, pid, buf, slice.byteLength);
+          if (n <= 0) break;
+          off += n;
+        } finally {
+          mod._free(buf);
+        }
       }
+      return off;
     },
     httpDispatch: mod._bn_http_dispatch
       ? (k, port, method, path, headersJson, body) => {

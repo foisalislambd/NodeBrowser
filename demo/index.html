@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>NodeBrowser</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
   </head>
   <body>
     <div class="workbench" id="workbench" data-pane="editor">
@@ -135,7 +136,7 @@
               <span class="live-dot" aria-hidden="true"></span>
             </div>
             <div class="term-wrap" id="term-wrap-1">
-              <pre id="term" class="term" aria-live="polite"></pre>
+              <div id="term" class="term xterm-host" aria-live="polite"></div>
               <label class="term-input-row">
                 <span class="prompt">$</span>
                 <input
@@ -148,7 +149,7 @@
               </label>
             </div>
             <div class="term-wrap" id="term-wrap-2" hidden>
-              <pre id="term-2" class="term" aria-live="polite"></pre>
+              <div id="term-2" class="term xterm-host" aria-live="polite"></div>
               <label class="term-input-row">
                 <span class="prompt">$</span>
                 <input type="text" id="term-input-2" spellcheck="false" autocomplete="off" placeholder="sh -c …" />
@@ -224,7 +225,9 @@
     <script type="importmap">
       {
         "imports": {
-          "esbuild-wasm": "./node_modules/esbuild-wasm/esm/browser.js"
+          "esbuild-wasm": "./node_modules/esbuild-wasm/esm/browser.js",
+          "@xterm/xterm": "./node_modules/@xterm/xterm/lib/xterm.js",
+          "@xterm/addon-fit": "./node_modules/@xterm/addon-fit/lib/addon-fit.js"
         }
       }
     </script>

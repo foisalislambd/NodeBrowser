@@ -22,4 +22,7 @@ demo/templates/**/out/
 coverage/
 *.tsbuildinfo
 .turbo/
-.cache/
+test-results/
+playwright-report/
+e2e/last-run.json
+blob-report/

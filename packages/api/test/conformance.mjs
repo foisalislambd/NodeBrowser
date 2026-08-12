@@ -1,7 +1,7 @@
 /**
  * Conformance against the C++/WASM kernel (Phase 13b). Exit 0 on success.
  */
-import { NodeBrowser } from '../dist/index.js';
+import { NodeBrowser, SabStdioRing } from '../dist/index.js';
 import { resetKernelCache } from '../dist/kernel/load.js';
 
 function assert(cond, msg) {
@@ -24,6 +24,20 @@ async function main() {
   resetKernelCache();
   const bn = await NodeBrowser.boot({ useWasm: true });
   assert(bn.runtime === 'wasm', 'boot must use WASM kernel, got ' + bn.runtime);
+
+  {
+    const ring = SabStdioRing.create(64);
+    assert(ring.writeString('hello-sab') === 9, 'sab write');
+    assert(ring.readString() === 'hello-sab', 'sab read');
+    ring.close(0);
+    assert(ring.closed && ring.exitCode === 0, 'sab close');
+    const small = SabStdioRing.create(8);
+    assert(small.writeString('0123456789') === 8, 'sab partial write');
+    assert(small.readString() === '01234567', 'sab partial read');
+    assert(small.writeString('89') === 2, 'sab write after drain');
+    assert(small.readString() === '89', 'sab remainder');
+    SabStdioRing.wrap(small.buffer);
+  }
 
   // --- exists / mkdir / write / read utf8 ---
   await bn.fs.mkdir('/home/project', { recursive: true });

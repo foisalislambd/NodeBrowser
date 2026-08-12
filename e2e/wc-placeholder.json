@@ -1,0 +1,11 @@
+{
+  "note": "StackBlitz WebContainers is not executed in this CI (proprietary npm + token). Fill webcontainers locally if you run a WC bake-off.",
+  "webcontainers": {
+    "bootMs": null,
+    "echoMs": null
+  },
+  "schema": {
+    "bootMs": "time to usable VFS / ready status",
+    "echoMs": "spawn echo (or equivalent) until output visible"
+  }
+}

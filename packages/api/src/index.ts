@@ -8,6 +8,8 @@ export {
   WebContainer,
   HttpBridge,
   resetKernelCache,
+  sabStdioAvailable,
+  SabStdioRing,
   assertAllowedFetchUrl,
   detectProjectKind,
   extractArchive,

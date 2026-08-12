@@ -19,6 +19,7 @@ import { zlibPureSync } from '../compress/zlib.js';
 import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
 import { previewProject, type PreviewResult } from '../bundler/preview.js';
 import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './json-rpc.js';
+import { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -43,6 +44,8 @@ export class NodeBrowser {
   readonly runtime: 'js' | 'wasm';
   /** True when C++/WASM runs on a Worker (browser); UI thread stays responsive. */
   readonly worker: boolean;
+  /** True when stdout/stdin use SharedArrayBuffer rings (Worker + COOP/COEP). */
+  readonly sabStdio: boolean;
 
   private constructor(
     mod: KernelModule,
@@ -56,6 +59,7 @@ export class NodeBrowser {
     this.#persist = persist;
     this.runtime = mod.runtime === 'wasm' ? 'wasm' : 'js';
     this.worker = !!mod.worker;
+    this.sabStdio = !!mod.worker && sabStdioAvailable() && typeof mod.attachStdio === 'function';
     this.#wireHttp();
     this.#wireFsChange();
     if (persist) {
@@ -400,16 +404,26 @@ export class NodeBrowser {
       exitResolve = r;
     });
 
+    let outRing: SabStdioRing | null = null;
+    let errRing: SabStdioRing | null = null;
+    let inRing: SabStdioRing | null = null;
+    if (this.sabStdio && this.#mod.attachStdio) {
+      outRing = SabStdioRing.create();
+      errRing = SabStdioRing.create();
+      inRing = SabStdioRing.create();
+      await asy(this.#mod.attachStdio(this.#k, pid, outRing.buffer, errRing.buffer, inRing.buffer));
+    }
+
     const output = new ReadableStream<string>({
       start: (controller) => {
-        const poll = async () => {
+        const pollRpc = async () => {
           const out = await asy(this.#mod.readStdout(this.#k, pid));
           const err = await asy(this.#mod.readStderr(this.#k, pid));
           if (out) controller.enqueue(out);
           if (err) controller.enqueue(err);
           const code = await asy(this.#mod.wait(this.#k, pid));
           if (code === -1) {
-            setTimeout(() => void poll(), 16);
+            setTimeout(() => void pollRpc(), 16);
             return;
           }
           const out2 = await asy(this.#mod.readStdout(this.#k, pid));
@@ -419,7 +433,23 @@ export class NodeBrowser {
           controller.close();
           exitResolve(code);
         };
-        queueMicrotask(() => void poll());
+        const pollSab = () => {
+          const out = outRing!.readString();
+          const err = errRing!.readString();
+          if (out) controller.enqueue(out);
+          if (err) controller.enqueue(err);
+          if (!outRing!.closed) {
+            setTimeout(pollSab, 8);
+            return;
+          }
+          const out2 = outRing!.readString();
+          const err2 = errRing!.readString();
+          if (out2) controller.enqueue(out2);
+          if (err2) controller.enqueue(err2);
+          controller.close();
+          exitResolve(outRing!.exitCode);
+        };
+        queueMicrotask(() => (outRing ? pollSab() : void pollRpc()));
       },
     });
 
@@ -431,7 +461,15 @@ export class NodeBrowser {
         void this.#killWithChildren(pid);
       },
       write: (data: string) => {
-        void asy(this.#mod.writeStdin(this.#k, pid, data));
+        if (inRing) {
+          const bytes = new TextEncoder().encode(data);
+          let off = 0;
+          while (off < bytes.byteLength) {
+            const n = inRing.writeBytes(bytes.subarray(off));
+            if (n <= 0) break;
+            off += n;
+          }
+        } else void asy(this.#mod.writeStdin(this.#k, pid, data));
       },
     };
   }
@@ -799,6 +837,7 @@ export { detectProjectKind } from '../bundler/preview.js';
 export { extractArchive, isZip, isGzip } from '../fs/zip.js';
 export { HttpBridge } from '../net/http-bridge.js';
 export { resetKernelCache, type UseWasmOption } from '../kernel/load.js';
+export { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
 export { assertAllowedFetchUrl } from '../net/egress.js';
 /** @deprecated Use `NodeBrowser` — kept for older snippets */
 export const BrowserNode = NodeBrowser;
@@ -831,6 +870,10 @@ export class WebContainer {
 
   get worker() {
     return this.#bn.worker;
+  }
+
+  get sabStdio() {
+    return this.#bn.sabStdio;
   }
 
   mount(tree: FileSystemTree, mountPoint?: string) {

@@ -61,7 +61,7 @@ Done means these work on the **WASM kernel** (native `bn_*_test` + browser demo)
 | WASM-only guest (no `js-runtime.ts`) | ✅ Phase 13b |
 | Real `node node_modules/vite/bin/vite.js` in QuickJS | ✅ try CLI; native esbuild → host subset |
 | Real `tsc` (`typescript/lib/tsc.js`) in QuickJS | ✅ when installed in VFS |
-| xterm / SAB stdio / WC-speed install | Phases 32, 37 — remaining |
+| xterm / SAB stdio / Playwright bake-off | ✅ Phase 32/37/38 |
 
 ### Must-have to actually surpass WC (later pillars)
 
@@ -130,7 +130,7 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 | In-memory VFS | ✅ | ✅ C++ VFS | — |
 | Persist | Strong | ✅ OPFS via **host** flush of kernel VFS | Incremental C++-driven flush |
 | `boot` / `mount` / `spawn` | ✅ | ✅ host API over C ABI | Phase 41 shim ✅ |
-| Terminal | xterm | Demo input → kernel `sh -c` | Phase 32 UI only |
+| Terminal | xterm | Demo `@xterm/xterm` + kernel `sh -c` | SAB stdio ✅ |
 | `npm install` | Fast | Host fetch (allowlisted) → kernel VFS; C++ `npm` command | Cache/speed Phase 37 |
 | `npm run` / `npx` / `.bin` | ✅ | ✅ kernel PATH + C++ `npm`/`npx` + host fetch | Harden lifecycle |
 | Shell | ✅ | ✅ C++ `cmd_sh` subset | More POSIX in C++ |
@@ -180,7 +180,7 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 
 #### E. DX (Host UI only)
 
-- [x] Terminal chrome: tabs + command palette + fit CSS (Phase 32 MVP; not the xterm.js npm package)
+- [x] Terminal chrome: tabs + command palette + `@xterm/xterm` (Phase 32)
 - [x] File search / templates gallery (Phase 33 MVP)
 - [x] `WebContainer` API shim (Phase 41) — names only, same WASM kernel
 - [x] Docs honesty: PLAN / FAQ / SECURITY (Phase 40 MVP)
@@ -191,10 +191,10 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 - [x] JSON-RPC wrapper (Phase 36) — `bn.rpc` / `handleAgentRpc`
 - [x] Native `bn_*_test` on every PR (Phase 38)
 - [x] VFS path fuzz in `bn_vfs_test` (Phase 38 MVP)
-- [x] Benchmarks script `scripts/bench.mjs` (Phase 37 MVP — local timings, not WC bake-off)
+- [x] Benchmarks script `scripts/bench.mjs` + `scripts/bakeoff.mjs` (Phase 37)
 - [x] npm cache hit/miss metrics on install-progress (Phase 37)
-- [ ] Auditable WASM boot in GitHub Actions (needs Emscripten on CI)
-- [ ] SAB + Atomics stdio / Asyncify (Phase 16/37 remainder)
+- [x] Auditable WASM boot in GitHub Actions (Emscripten + Playwright Chromium)
+- [x] SAB + Atomics stdio rings (Worker ↔ UI; not Asyncify)
 
 ### Explicit “not copying WC”
 
@@ -437,7 +437,7 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 - [x] Multi-tab terminal (two kernel `sh -c` sessions)
 - [x] Command palette (Ctrl+K) → same ABI
 - [x] CSS fit / xterm-class chrome
-- [ ] Optional: `@xterm/xterm` npm addon
+- [x] Optional: `@xterm/xterm` npm addon (demo; FitAddon)
 
 #### Phase 33 — Project UX `M` ✅ (MVP)
 
@@ -469,8 +469,8 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 - [x] npm cache hit/miss metrics (host)
 - [x] Lazy-load WASM factory (`import()`)
 - [x] Incremental OPFS dirty flush
-- [ ] SAB + Atomics stdio in **C++**
-- [ ] Benchmarks vs WebContainers (external bake-off)
+- [x] SAB + Atomics stdio rings (C++ layout + Worker → UI; COOP/COEP)
+- [x] Benchmarks vs WebContainers schema (Playwright NodeBrowser; WC placeholder — proprietary)
 - [x] `node_modules` / VFS memory cap (`Vfs::set_max_bytes`, default 512 MiB)
 
 #### Phase 38 — Reliability `M` ✅ (MVP)
@@ -478,7 +478,7 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 - [x] Crash recovery: `persist: true` hydrates last OPFS snapshot
 - [x] Fuzz C++ VFS paths (`bn_vfs_test`)
 - [x] Native `bn_*_test` on every PR
-- [ ] CI: Chromium/Firefox/WebKit **with WASM** (Playwright)
+- [x] CI: Chromium **with WASM** (Playwright bake-off); Firefox/WebKit via `--project`
 
 ---
 
@@ -526,7 +526,7 @@ If capacity is limited:
 3. ~~**16 harden** non-blocking `node` (Worker)~~ ✅ — kill tree + browser Worker; Asyncify/interrupt still later
 4. ~~**Real Vite/tsc in QuickJS**~~ ✅ try installed CLI; esbuild-wasm remains the Vite fast path when the graph does not fit
 5. **37** install cache + benchmarks vs WebContainers
-6. **32** xterm UI
+6. ~~**32** xterm UI~~ ✅
 7. **31** Next route handlers subset
 
 Do **not** reintroduce a TypeScript guest Node.

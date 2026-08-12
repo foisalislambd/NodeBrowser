@@ -110,6 +110,8 @@ export async function createWorkerKernel(wasmUrl: string): Promise<KernelModule>
     writeStdin: (k, pid, data) => call<number>('writeStdin', [k, pid, data]),
     httpDispatch: (k, port, method, path, headersJson, body) =>
       call<string | null>('httpDispatch', [k, port, method, path, headersJson, body]),
+    attachStdio: (k, pid, stdout, stderr, stdin) =>
+      call<boolean>('attachStdio', [k, pid, stdout, stderr, stdin]),
     runtime: 'wasm',
     worker: true,
   };
