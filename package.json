@@ -1,7 +1,7 @@
 {
   "name": "nodebrowser-monorepo",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "WebContainers alternative — Node.js in the browser via C++/WASM",
   "license": "MIT",
   "type": "module",
