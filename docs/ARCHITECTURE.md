@@ -33,15 +33,17 @@
 
 - `NodeBrowser.boot` / `mount` / `spawn` / events
 - Browser bridges: Service Worker HttpBridge, OPFS, fetch to npm registry
-- Load WASM + call C ABI — **no parallel guest Node implementation as the product path**
+- Load WASM + call C ABI
 
-See **Architecture rule** in `[PLAN.md](../PLAN.md)`.
+**There is no product guest Node in TypeScript.** `js-runtime.ts` is a frozen legacy fallback to delete (PLAN Phase 13b).
+
+See **Language law** in `[PLAN.md](../PLAN.md)`.
 
 ## Why QuickJS (not full Node C++ port)
 
 Compiling upstream Node + libuv + V8 to WASM is a multi-year port. QuickJS is small, embeddable, and enough to run a large subset of JS tooling when paired with Node API polyfills **inside the WASM image**. We can later swap the engine (or add a second) without changing the host API.
 
-Guest core modules live in `kernel/embed/guest_modules.js`, compiled into the kernel as `generated_guest_modules.hpp`, and evaluated after the QuickJS bootstrap. That is the product Node surface — not `packages/api/src/js-runtime.ts` (emergency fallback only).
+Guest core modules live in `kernel/embed/guest_modules.js`, compiled into the kernel as `generated_guest_modules.hpp`, and evaluated after the QuickJS bootstrap. That is the **only** Node surface. New modules go there + C++ `__bn` bindings, never in the host package.
 
 ## Process model
 

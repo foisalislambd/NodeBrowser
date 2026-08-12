@@ -2,7 +2,7 @@
 
 Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
-**Canonical guest implementation:** C++/QuickJS (`kernel/embed/guest_modules.js` → WASM). JS fallback mirrors for no-WASM boots only.
+**Canonical guest implementation:** C++/QuickJS only (`kernel/embed/guest_modules.js` → WASM). Host TypeScript is not a Node runtime. The old `js-runtime.ts` fallback is frozen and scheduled for deletion (PLAN Phase 13b). Status below is **embed/WASM**, not JS.
 
 | Module | Status | Notes |
 |--------|--------|-------|

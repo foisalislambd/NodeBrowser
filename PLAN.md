@@ -2,602 +2,520 @@
 
 **North star:** Become the most capable open-source **WebContainers-class** runtime — run real Node tooling (`npm`, Vite, Next subset, tests, monorepos) **entirely in the browser tab**, with no remote compute VM.
 
-**Strategy:** **C++/C → WASM is the product.** The TypeScript/`packages/api` layer is only the **host API** (boot, mount, spawn, events, browser bridges). Guest Node behavior must live in the **C++ kernel + QuickJS bootstrap**, not in a parallel JS runtime. Prefer *working vertical slices* in WASM over fake “100% Node” claims.
+**The product is C and C++ compiled to WASM.** Guest Node, VFS, processes, shell, HTTP keep-alive, and core modules live in the **C++ kernel + embedded QuickJS**. TypeScript/JS is **not** a second runtime. It is only the **host API and UI**.
 
 ---
 
-## Architecture rule (non-negotiable going forward)
+## Language law (non-negotiable)
 
+This is the whole system. Do not grow a parallel Node in browser JS.
 
-| Layer                   | Language                                    | Allowed to do                                                                                                 | Must NOT become                                    |
-| ----------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| **Kernel / guest Node** | **C++ / C → WASM** (+ QuickJS embed)        | VFS, processes, pipes, ports, `node` bootstrap, core modules (`fs`, `http`, `stream`, …), keep-alive HTTP     | A second “full Node” written in browser JS         |
-| **Host API**            | **TypeScript / JS** (`@foisal/nodebrowser`) | `boot` / `mount` / `spawn`, event bus, HttpBridge ↔ SW, OPFS/IndexedDB, npm registry fetch, esbuild-wasm glue | Re-implementing the kernel or guest module surface |
-| **Demo / UI**           | JS                                          | Editor, terminal, preview chrome                                                                              | Runtime semantics                                  |
+| Layer | Language | Owns | Forbidden |
+| ----- | -------- | ---- | --------- |
+| **Kernel** | **C / C++ → WASM** (Emscripten) | VFS, processes, pipes, ports, spawn, shell builtins, C ABI (`bn_*`) | Reimplementing this in TS |
+| **Guest Node** | **C++ + QuickJS** (`kernel/embed/guest_modules.js` baked into `generated_guest_modules.hpp`) | `require`, ESM rewrite, `fs`/`http`/`stream`/`crypto`/… as Node sees them | New guest features in `packages/api/src/js-runtime.ts` |
+| **Host API** | TypeScript (`@foisal/nodebrowser`) | `boot` / `mount` / `spawn` / events; load WASM; call C ABI | Guest semantics, shell, Node modules |
+| **Browser bridges** | TypeScript | Service Worker HttpBridge, OPFS persist, `fetch` to npm registry, esbuild-wasm glue | Treating fetch/OPFS as “the Node runtime” |
+| **Demo / docs UI** | JS/HTML/CSS | Editor, terminal chrome, preview iframe | Runtime behavior |
 
+**Why C/C++ only for the guest**
 
-**Why this rule exists**
+- One authoritative runtime. Dual JS+C++ Node doubles cost and diverges forever.
+- WebContainers-class depth (binary VFS, process trees, keep-alive HTTP, real `npm` scripts) needs a kernel, not a second interpreter in the page.
+- QuickJS is **inside WASM**, not a host-JS Node. Guest JS source in `guest_modules.js` is **embed data for the C++ kernel**, not the product API.
 
-- WebContainers-class depth (real `npm`, Vite HMR, process trees, binary VFS) needs **one** authoritative runtime. Dual JS+C++ feature work doubles cost and stalls advances.
-- Browser JS fallback (`js-runtime.ts`) was an MVP accelerator for demos/CI without WASM. It is **not** the long-term product path.
-- Going forward: **new Node/compat work lands in C++/QuickJS first**; host TS only wires ABI + browser APIs. JS fallback may lag or stay intentionally thinner until removed/shrunk.
+**What JS is allowed to do**
 
-**Policy for existing JS fallback**
+- Load `browsernode_kernel.wasm` and call exported `bn_*`.
+- Map browser APIs the kernel cannot own: `fetch` (npm tarballs), OPFS, Service Worker, DOM.
+- Demo chrome and the public `NodeBrowser` class.
 
-- Keep it only as **emergency / no-WASM fallback** (Pages without COOP/COEP, Node CI without wasm loader).
-- Do **not** add new guest features only in `js-runtime.ts` unless the same slice is scheduled for C++ in the same milestone.
-- Prefer deleting or freezing JS-only guest modules once WASM parity exists.
+**What JS must never do again**
 
----
+- Implement guest `fs` / `http` / `child_process` / `require` as the product path.
+- Add features only to `js-runtime.ts`.
+- Treat “conformance on `useWasm: false`” as the definition of done. **Done = C++/WASM.**
 
+**JS fallback (`js-runtime.ts`) — freeze then delete**
 
-
-## Architecture (current)
-
-
-| Layer       | Technology                                    | Role                                 |
-| ----------- | --------------------------------------------- | ------------------------------------ |
-| Kernel      | C++ → WASM (Emscripten) — **primary**         | VFS, processes, pipes, virtual ports |
-| JS Engine   | QuickJS (in WASM) + thin JS fallback          | Execute JS/CJS like `node`           |
-| Node Compat | **C++/QuickJS bootstrap** (target)            | `fs`, `path`, `http`, `crypto`, …    |
-| Package Mgr | TS host + npm registry                        | install into VFS (+ deps + cache)    |
-| Networking  | Service Worker ↔ HttpBridge (+ WASM dispatch) | Preview `/__bn_preview/:port`        |
-| Host API    | `@foisal/nodebrowser` (`packages/api`)        | WebContainer-like DX **only**        |
-| Demo        | Vanilla UI                                    | File manager, terminal, preview      |
-
-
-Details: `[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)` · Module matrix: `[runtime/node/MODULES.md](./runtime/node/MODULES.md)`
+- Historical MVP for Pages without WASM / Node CI without a wasm loader.
+- **Frozen:** no new guest modules, no new shell, no new fs APIs.
+- **Target:** remove as default; CI loads WASM (or skips). Keep a stub that errors clearly: “WASM kernel required”.
+- Until deleted, it may lag. Never block C++ work on JS parity.
 
 ---
 
+## Architecture (target = current direction)
 
+```
+Browser tab
+  Demo UI  ──►  @foisal/nodebrowser (TS host)
+                    │  bn_* C ABI
+                    ▼
+              browsernode.wasm
+                VFS │ Process table │ Shell builtins
+                QuickJS + guest_modules (Node subset)
+                    │  server-ready / http dispatch
+                    ▼
+              Service Worker preview  /  OPFS (host flush)
+```
 
-## WebContainers parity — what they have vs what we must add
+| Piece | Tech | Role |
+| ----- | ---- | ---- |
+| Kernel | C++ → WASM | Source of truth |
+| JS engine | QuickJS **in WASM** | Run user/tooling JS like `node` |
+| Node compat | `kernel/embed/guest_modules.js` + C++ ABI | Core modules |
+| Shell | C++ `cmd_sh` + builtins | `sh -c`, pipes, redirects, `.bin` PATH |
+| npm fetch | Host TS `fetch` + extract into **kernel VFS** | Registry is a browser API; install result is C++ VFS |
+| Network | Kernel ports + host SW | Preview `/__bn_preview/:port` |
+| Host API | `@foisal/nodebrowser` | WebContainer-like DX only |
+| Demo | Vanilla UI | Not the runtime |
 
-StackBlitz **WebContainers** = WASM micro-OS + Node-in-tab + VFS + virtual network (Service Worker) + polished DX.  
-**NodeBrowser** already shares the same *shape* (C++→WASM kernel, VFS, spawn, SW preview, npm-into-VFS). Below is the honest gap list — **add these to become WC-class**.
+Details: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · Module matrix: [`runtime/node/MODULES.md`](./runtime/node/MODULES.md)
+
+**npm note:** downloading tarballs uses host `fetch` because the browser owns the network. Unpacking, `node_modules`, `.bin` resolution, and `npm run` / lifecycle **execution** are kernel (`spawn` / `sh` / `node`). Do not move package *execution* into TS.
+
+---
+
+## WebContainers parity — C++ kernel vs their WASM OS
+
+StackBlitz WebContainers = WASM micro-OS + Node-in-tab + VFS + virtual network + DX.  
+NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page Node is not a WC alternative.
 
 ### Side-by-side
 
+| Capability | WebContainers | NodeBrowser (C++/WASM) | Next work |
+| ---------- | ------------- | ---------------------- | --------- |
+| WASM kernel | Mature micro-OS | C++→WASM kernel ✅ (early) | Harden 16–18, delete JS guest |
+| In-memory VFS | ✅ | ✅ C++ VFS | — |
+| Persist | Strong | ✅ OPFS via **host** flush of kernel VFS | Incremental C++-driven flush |
+| `boot` / `mount` / `spawn` | ✅ | ✅ host API over C ABI | Phase 41 shim |
+| Terminal | xterm | Demo input → kernel `sh -c` | Phase 32 UI only |
+| `npm install` | Fast | Host fetch → kernel VFS | C++ untar/lock later if needed |
+| `npm run` / `npx` / `.bin` | ✅ | ✅ kernel PATH + host `runScript`/`npx` wrappers | Harden lifecycle in kernel |
+| Shell | ✅ | ✅ C++ `cmd_sh` subset | More POSIX in C++ |
+| ESM | ✅ | ✅ QuickJS guest rewrite | Harden in embed, not TS |
+| `fs.watch` | ✅ | ✅ C++ + host events | — |
+| Vite in-tab | ✅ | Templates only | Phases 27–28 **on WASM** |
+| Next in-tab | subset | Templates only | Phases 29–30 **on WASM** |
+| Keep-alive HTTP | ✅ | ✅ retained QuickJS in WASM | Drop JS HttpBridge-as-server |
+| Guest modules | ✅ | **Only** C++ embed | Shrink/delete `js-runtime.ts` |
+| Multi-port UX | ✅ | Basic iframe | Phase 34 UI |
+| COOP/COEP / SAB | Used | Demo local | Phase 37 kernel stdio |
+| Install cache | Optimized | Host memory/Cache API | Kernel-visible cache index |
+| API compat | Native | Different names | Phase 41 host-only shim |
+| Open source | Partial | ✅ MIT kernel+API | Keep honest docs |
 
-| Capability                             | WebContainers (typical)       | NodeBrowser now                           | Add via                                    |
-| -------------------------------------- | ----------------------------- | ----------------------------------------- | ------------------------------------------ |
-| WASM runtime / kernel                  | Mature micro-OS               | C++→WASM kernel ✅ (early)                 | Harden kernel (phases 13 remainder, 16–18) |
-| In-memory VFS                          | ✅                             | ✅                                         | —                                          |
-| Persist across refresh                 | Strong (browser storage)      | ✅ OPFS `boot({ persist })`                | —                                          |
-| `boot` / `mount` / `spawn` API         | ✅ public API                  | ✅ `@foisal/nodebrowser`                   | Phase **41** compat shim                   |
-| Full terminal (xterm)                  | ✅                             | Basic demo term                           | **Phase 32**                               |
-| `npm install` (real trees)             | Fast, production              | Works, limited                            | Harden Phases 23–24                        |
-| `npm run` / `npx` / `.bin`             | ✅                             | ✅ MVP (`runScript` / `npx` + kernel PATH) | Harden lock/lifecycle                      |
-| Shell (`sh`, pipes, redirects)         | ✅ enough for tooling          | ✅ C++ `sh -c` subset                      | xterm UI Phase 32                          |
-| Node ESM (`import`)                    | ✅                             | ✅ rewrite-to-CJS MVP                      | Harden Phase 20                            |
-| Watch / HMR FS events                  | ✅                             | ✅ `fs.watch` + `fs-change`                | —                                          |
-| Vite **in-tab** (dev + HMR)            | ✅                             | Host templates only                       | **Phases 27–28**                           |
-| Next.js **in-tab** (subset)            | ✅ (common apps)               | Host templates only                       | **Phases 29–30**                           |
-| Keep-alive HTTP servers                | ✅                             | **C++/QuickJS retain MVP** + JS fallback  | Harden Phase 18                            |
-| Guest Node modules (stream/zlib/ESM/…) | ✅                             | **Primary: C++ embed** `guest_modules.js` | Shrink JS fallback                         |
-| Multi-port preview UX                  | ✅                             | Basic iframe                              | **Phase 34**                               |
-| COOP/COEP / SAB fast-path              | Used where needed             | Demo local only; Pages limited            | **Phase 37** + Pages headers strategy      |
-| Package install speed / cache          | Highly optimized              | Memory cache only                         | **Phases 23, 37**                          |
-| WebContainer API compat                | Native                        | Different names                           | **Phase 41** `@foisal/nodebrowser-compat`  |
-| Open source                            | API docs; runtime proprietary | ✅ MIT kernel+API                          | Keep honest docs                           |
+### Must-add backlog (always implement in C++/QuickJS unless marked Host)
 
+#### A. Disk
 
+- [x] OPFS persist — **Host** flush of C++ VFS (Phase 14)
+- [x] Symlinks + binary + `fs.watch` — **C++ VFS** (Phase 15)
+- [ ] Shareable snapshot links — Host UI on kernel tar (Phase 35)
 
+#### B. Node + npm (kernel)
 
-### Must-add backlog (WC-like product)
+- [x] ESM / `import` / `node:` — **QuickJS embed** (Phase 20)
+- [x] `.bin` PATH, `npm run`, `npx` — kernel spawn + thin host wrappers (Phases 23–24)
+- [x] Shell subset — **C++ `cmd_sh`** (Phase 25)
+- [x] stdin / tty stubs / `wait` — kernel (Phase 16)
+- [ ] Delete JS guest path; WASM is the only `node` (Phase 13 remainder)
 
-Ordered for **maximum WC feel per week** — map to numbered phases already in this file:
+#### C. Network (kernel)
 
-#### A. Feel like a real project disk
+- [x] WASM HTTP keep-alive MVP — retained QuickJS (Phase 18)
+- [ ] Parity: no JS-only server path (Phase 18 harden)
+- [ ] Multi-port preview UI — **Host** (Phase 34)
 
-- [x] **OPFS persistence** (survive reload) → Phase **14**
-- [x] Symlinks + binary polish + `fs.watch` → Phase **15**
-- [ ] Snapshot export/import (shareable project) → Phase **35** *(API exists in 14; shareable links are 35)*
+#### D. Apps in-tab (must boot on WASM)
 
+- [ ] Vite + HMR in-tab (Phases 27–28)
+- [ ] Next subset in-tab (Phases 29–30)
+- [ ] Express demo after HTTP harden
 
+#### E. DX (Host UI only)
 
-#### B. Feel like real Node + npm
+- [ ] xterm.js (Phase 32) — still talks to kernel `spawn`
+- [ ] File search / templates gallery (Phase 33)
+- [ ] `WebContainer` API shim (Phase 41) — names only, same WASM kernel
+- [ ] Docs (Phase 40)
 
-- [x] ESM / `import` / `node:` fully → Phase **20**
-- [ ] `node_modules/.bin`, `npm run`, `npx` → Phases **23–24**
-- [ ] Shell subset for scripts → Phase **25**
-- [x] Process groups / kill tree / better stdio → Phase **16** *(stdin + tty/readline + `sh` bg/`wait` MVP)*
+#### F. Open-source win
 
-
-
-#### C. Feel like WebContainers networking
-
-- [ ] WASM HTTP keep-alive parity with JS HttpBridge → Phase **18**
-- [ ] Multi-port preview + network log → Phase **34**
-- [ ] Offline-friendly SW routing (already partial) → harden in **18/34**
-
-
-
-#### D. Run the apps WC users expect in-tab
-
-- [ ] Vite React template **in-tab** + HMR → Phases **27–28**
-- [ ] Next default app **in-tab** (subset) → Phases **29–30**
-- [ ] Express / simple API server demos → after **18**
-
-
-
-#### E. Feel like StackBlitz DX
-
-- [ ] xterm.js terminal + tabs → Phase **32**
-- [ ] File search, drag-drop, templates gallery → Phase **33**
-- [ ] `WebContainer`-shaped API shim → Phase **41**
-- [ ] Docs site + migration table → Phase **40**
-
-
-
-#### F. Beat them where open-source can win
-
-- [ ] Public C++/WASM kernel anyone can audit → keep shipping from CI
-- [ ] Benchmark suite vs WC (boot, install, vite) → Phase **37**
-- [ ] Agent/headless API for AI tools → Phase **36**
-- [ ] Honest MODULES.md gaps forever → non-negotiable
-
-
+- [ ] Auditable C++/WASM in CI (no JS-kernel green as “ship”)
+- [ ] Benchmarks vs WC (Phase 37)
+- [ ] Headless host API for agents (Phase 36)
+- [ ] Honest `MODULES.md` (guest = embed, not TS)
 
 ### Explicit “not copying WC”
 
-Do **not** block on: proprietary WC internals, bit-identical Node, native `.node` addons, full Turbopack, multi-tenant hardened cloud sandbox (see Non-goals).
+Do **not** block on: proprietary WC internals, bit-identical Node, native `.node` addons, full Turbopack, multi-tenant cloud sandbox.
+
+Do **not** “catch up” by writing more Node in `js-runtime.ts`.
 
 ---
 
+## Completed phases (0–13) — kernel first
 
+| Phase | Status | Deliverable (C/C++ unless noted) |
+| ----- | ------ | -------------------------------- |
+| 0 Toolchain | ✅ | Emscripten, CMake, demo COOP/COEP |
+| 1 WASM kernel | ✅ | C++ VFS + process + C ABI |
+| 2 QuickJS | ✅ | C++ `node` runner + CJS require |
+| 3 Node subset | ✅ | Guest modules in WASM embed |
+| 4 Host API | ✅ | TS `boot/mount/spawn` **over ABI** |
+| 5 Virtual net | ✅ | SW → kernel/handler |
+| 6 npm install | ✅ | Host fetch; files in kernel VFS |
+| 7 Async process | ✅ | Keep-alive in kernel |
+| 8 Vite path | ✅ | Host esbuild-wasm glue (bundler is WASM) |
+| 9 Vite Node APIs | ✅ | crypto / nextTick / perf in **guest embed** |
+| 10 Next.js APIs | ✅ | createRequire / stubs in **guest embed** |
+| 11 Vite/Next demos | ✅ | Templates (UI); run target = WASM `node` |
+| 12 File manager DX | ✅ | Host UI |
+| 13 WASM default | ✅ | `useWasm: true` default; conformance still has JS leftover — **remove** |
 
-## Completed phases (0–13)
-
-
-| Phase              | Status | Deliverable                                                                |
-| ------------------ | ------ | -------------------------------------------------------------------------- |
-| 0 Toolchain        | ✅      | Emscripten, CMake, demo COOP/COEP                                          |
-| 1 WASM kernel      | ✅      | VFS + process + C ABI                                                      |
-| 2 QuickJS          | ✅      | `node` runner + CJS require                                                |
-| 3 Node subset      | ✅      | fs/path/http/events + fs.promises / Buffer                                 |
-| 4 Host API         | ✅      | `NodeBrowser.boot/mount/spawn`                                             |
-| 5 Virtual net      | ✅      | SW → handler → Response                                                    |
-| 6 npm install      | ✅      | deps tree, scoped pkgs, memory cache                                       |
-| 7 Async process    | ✅      | keep-alive servers + non-blocking spawn                                    |
-| 8 Vite path        | ✅      | esbuild-wasm transform demo                                                |
-| 9 Vite Node APIs   | ✅      | crypto / nextTick / perf_hooks                                             |
-| 10 Next.js APIs    | ✅      | createRequire / async_hooks stubs / broader fs                             |
-| 11 Vite/Next demos | ✅      | Real templates under `demo/templates/`                                     |
-| 12 File manager DX | ✅      | VFS explorer + install/run/save in-tab                                     |
-| 13 WASM/JS parity  | ✅      | rename, binary buffer I/O, spawn env, `useWasm: 'auto'`, conformance tests |
-
+Historical note: some checkboxes were first proven on a JS fallback. That does **not** make JS the product. Re-verify every guest feature on `bn_node_test` + WASM boot.
 
 ---
 
+## Future roadmap — C/C++ kernel, host stays thin
 
+Phases ordered by dependency. **Exit criteria = works in C++/WASM**, not in `useWasm: false`.
 
-## Future roadmap — make it powerful
+Estimate bands: S ≤ 1–2 weeks, M ≈ month, L multi-month (small team).
 
-Phases below are ordered by **dependency** (foundation → tooling → apps → product). Each phase has a clear exit criteria. Estimate bands are rough (S ≤ 1–2 weeks, M ≈ month, L multi-month for a small team).
+### Pillar 0 — Kill the JS guest (do this while shipping)
 
-### Pillar A — Runtime foundation (must be rock-solid)
+#### Phase 13b — WASM-only guest `M`
 
+- [ ] CI: `bn_node_test` / `bn_vfs_test` required; Playwright or node loader boots **WASM**
+- [ ] `NodeBrowser.boot()` default remains WASM; `useWasm: false` deprecated
+- [ ] `js-runtime.ts`: freeze; then replace with “kernel required” error
+- [ ] Conformance suite runs against WASM (or native ABI), not JS kernel
+- [ ] Stop documenting JS as a supported Node runtime
 
+**Exit:** demo and tests never need a guest Node written in TypeScript.
 
-#### Phase 13 — WASM ↔ JS parity (default boot) `M` ✅
+---
 
-Make WASM and JS kernels share one host surface; prefer auto-detect with JS fallback.
+### Pillar A — Runtime foundation (C++)
 
-- [x] Host `bn.fs`: `exists` / `stat` / recursive `rm` / `rename` (kernel or portable copy+rm)
-- [x] Binary files: JS VFS stores `Uint8Array`; `readFile(path, 'buffer')` → `Uint8Array`; `writeFile` accepts bytes
-- [x] `process.env` injected from `spawn(..., { env })` on **JS** and **WASM** (`bn_spawn` env_json + node_runner inject)
-- [x] `NodeBrowser.boot({ useWasm: 'auto' | true | false })` — default `true` (C++/WASM primary; JS fallback)
-- [x] `bn.runtime` exposes `'js' | 'wasm'`
-- [x] Conformance suite: `packages/api/test/conformance.mjs` via `npm run test:api`
-- [x] `bn_vfs_read_bytes` ABI + TS `readBytes`
-- [x] Full HTTP keep-alive feature-parity on WASM (see Phase 18) — `bn_http_dispatch` + retained QuickJS handlers
+#### Phase 13 — WASM default `M` ✅ (host surface)
 
-**Exit (met for JS path):** conformance script green; same host FS/spawn-env APIs available; auto boot works.
+- [x] Host `bn.fs` over C ABI (`exists` / `stat` / `rm` / `rename`)
+- [x] Binary `readBytes` / `writeFile` bytes
+- [x] `process.env` from `spawn` env_json in **node_runner**
+- [x] Default `useWasm: true`
+- [x] `bn.runtime` `'wasm' | 'js'` — `'js'` is legacy
+- [x] `bn_http_dispatch` + retained QuickJS handlers
 
-#### Phase 14 — Persistent VFS (OPFS) `M` ✅
+**Still open:** Phase 13b (delete JS guest).
 
-Survive refresh like a real project disk.
+#### Phase 14 — Persistent VFS `M` ✅
 
-- [x] Mount root (or `/home`) backed by Origin Private File System (`boot({ persist: true })`)
-- [x] Snapshot / export / import project as gzipped tar (`exportSnapshot` / `importSnapshot`)
-- [x] “Clear workspace” + export in demo
+Host OPFS is a **cache of C++ VFS**, not a second filesystem.
 
-Optional IndexedDB metadata index for fast readdir (skipped MVP)
+- [x] `boot({ persist: true })` hydrate/flush `/home`
+- [x] Snapshot tar export/import
+- [ ] Optional: kernel-initiated dirty-page flush (fewer host walks)
 
-- [x] Migration from pure RAM → OPFS without breaking mount API
-
-**Exit:** refresh tab → `/home/project` still there when `persist: true`.
+**Exit:** refresh → `/home/project` still there.
 
 #### Phase 15 — Binary + symlink + watch `M` ✅
 
-Tooling needs real files, not only UTF-8 strings.
+- [x] Binary blobs in **C++ VFS**
+- [x] `symlink` / `readlink` / `lstat` C ABI + guest `fs`
+- [x] `fs.watch` → host `fs-change`
+- [x] `chmod` / `utimes` on C++ VFS
 
-- [x] First-class binary blobs in VFS (images, wasm, fonts) — mount/npm bytes end-to-end
-- [x] Symlink create/read/follow (**C++ VFS** `bn_vfs_symlink`/`readlink`/`lstat` + guest `fs.symlinkSync` / `readlinkSync` / `lstatSync`; JS fallback mirrors)
-- [x] `fs.watch` / `fs.watchFile` → host `fs-change` event bus
-- [x] `utimes` / mode bits enough for npm package scripts expectations (`chmod` / `utimes` on C++ VFS + guest `fs`)
+**Exit:** editor save → watch events from kernel.
 
-**Exit:** editor save triggers `fs.watch` / host `fs-change`.
+#### Phase 16 — Process model 2.0 `L` ✅ (C++ MVP) / harden in C++
 
-#### Phase 16 — Process model 2.0 `L` ✅ (JS MVP)
+- [x] Kernel spawn: `node`, `sh`, coreutils
+- [x] Isolated cwd/env; shared VFS
+- [x] stdin + `tty`/`readline` stubs in **guest embed**
+- [x] `kill` → 137
+- [x] `sh -c '… &'` / `wait` MVP
+- [x] Max procs limit
+- [ ] Process groups / kill tree in **C++**
+- [ ] Asyncify or worker so long `node` does not block the tab
 
-Closer to WebContainers process semantics.
-
-- [x] `child_process.spawn` / `execFile` → kernel spawn (node, sh stubs)
-- [x] Concurrent processes with isolated cwd/env; shared VFS
-- [x] stdin write + TTY-ish raw mode stubs (`tty`, `readline`)
-- [x] Exit / signal semantics (`SIGKILL` via `kill` → 137)
-- [x] Background jobs + `wait` from shell (`sh -c '… &'` / `wait`)
-- [x] Resource limits (max procs 32)
-
-**Exit:** parent `node` spawns child `node`; HTTP keep-alive still `-1` from `wait`.
+**Exit:** parent `node` spawns child `node` inside WASM; `wait` is `-1` while HTTP keep-alive.
 
 ---
 
+### Pillar B — Node compatibility (QuickJS embed + C++ ABI only)
 
+All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh` + C++ `__bn.*` bindings. **Never** `js-runtime.ts`.
 
-### Pillar B — Node compatibility (unblock real packages)
+#### Phase 17 — Streams & Buffer `M` ✅ (embed)
 
+- [x] Readable/Writable/Transform/Duplex + `pipe`
+- [x] `buffer`, `util.promisify`, `string_decoder`, `timers/promises`
 
+#### Phase 18 — Network stack `L` ✅ (MVP in WASM)
 
-#### Phase 17 — Streams & Buffer completeness `M` ✅
+- [x] `net` / `http` / `https` stub over virtual ports
+- [x] Chunked write/end; upgrade stub
+- [x] `bn_http_dispatch` + retained handlers
+- [ ] Guest `fetch` allowlist implemented in kernel + host hook (not a JS Node `http`)
+- [ ] Remove any “server only works on JS kernel” paths
 
-- [x] Readable/Writable/Transform/Duplex usable with `pipe`
-- [x] `buffer` common API; encoding edge cases as needed
-- [x] `util.promisify` / `callbackify`
-- [x] `string_decoder`, `timers/promises`
+#### Phase 19 — Crypto / zlib `M` ✅ (embed + C++ where hashing lives)
 
+- [x] sha1/256/384/512; zlib sync + streams in guest
+- [ ] Optional: move hot hash/zlib to C for speed
 
+#### Phase 20 — ESM + CJS `L` ✅ (embed MVP)
 
-#### Phase 18 — Network stack (virtual) `L` ✅ (MVP)
+- [x] `import`/`export` rewrite-to-CJS in QuickJS bootstrap
+- [x] `import.meta.url`, dynamic `import()`, `exports` field, `node:`
+- [ ] Harden package `exports` / ESM in **embed** (not TS)
 
-- [x] `net.Server` / `net.Socket` over virtual ports
-- [x] `http` completeness: headers, chunked write/end, upgrade stub
-- [x] `https` stubs that reuse HTTP bridge
-- [x] `http2` — out of scope; non-goal until needed
-- [x] Fetch from guest → host allowlist (npm registry + same-origin)
-- [x] WASM `bn_http_dispatch` + retained QuickJS keep-alive handlers
+#### Phase 21 — Workers & VM `L` (C++ / WASM Workers — stubs today)
 
+- [x] Stubs in embed (`worker_threads.Worker` throws; `vm` same-realm)
+- [ ] Real `worker_threads`: extra QuickJS runtime or WASM worker + SAB (COOP/COEP)
+- [ ] MessagePort for HMR — kernel or host bridge, not a JS Node
+- [ ] `vm`: additional QuickJS `JSContext` in C++
 
+#### Phase 22 — Builtins matrix `M` (ongoing, embed)
 
-#### Phase 19 — Crypto / zlib / compress `M` ✅
+- [x] `child_process` → kernel spawn; `cluster`/`dns`/`dgram`/`inspector`/`v8`/`wasi` stubs
+- [x] `createReadStream` / `createWriteStream` / `opendir` / `rmdir` / `mkdtemp`
+- [ ] Fill MODULES.md gaps **in embed** as Vite/Next demand them
 
-- [x] `crypto`: sha1/sha256/sha384/sha512 (pure sync); cipher stubs clear errors
-- [x] `zlib` gzip/gunzip/deflate/inflate sync + stream wrappers
-- [x] Guest `zlib` round-trip
-
-
-
-#### Phase 20 — Module system: ESM + CJS dual `L` ✅ (JS MVP)
-
-Critical for modern Vite/Next.
-
-- [x] `import` / `export` in `.mjs` and `"type":"module"` packages (rewrite-to-CJS)
-- [x] `import.meta.url`
-- [x] Dynamic `import()`
-- [x] Conditional exports (`exports` field) resolution
-- [x] Interop with existing CJS `require`
-- [x] `node:` prefix for new modules
-
-
-
-#### Phase 21 — Workers & VM `L` ✅ (stubs)
-
-- [x] `worker_threads` mapped to Web Workers + SharedArrayBuffer when COOP/COEP — **stub** (`isMainThread`, `Worker` throws until SAB bridge)
-- [x] MessagePort bridging for HMR / esbuild services — **not yet**; stub only
-- [x] `vm` / realms (QuickJS contexts) for Jest-like runners — **MVP** `runInThisContext` / `runInNewContext` in guest embed
-- [x] Document when SAB unavailable (fallback single-threaded) — `MODULES.md`
-
-#### Phase 22 — Remaining builtins matrix `M` (ongoing) ✅ (stubs + fs streams)
-
-Track in `MODULES.md`; prioritize by package install telemetry:
-
-- [x] `child_process`, `cluster` (stub/error clearly)
-- [x] `dns`, `dgram` (virtual or stub)
-- [x] `fs` remaining: `createReadStream`, `createWriteStream`, `opendir`, `rmdir`, `mkdtemp`
-- [x] `inspector` / `v8` — stub
-- [x] `wasi` — stub / evaluate later
-
-**Exit for Pillar B:** top 50 npm packages used by Vite scaffold install + run without missing-module crashes (stubs allowed if documented).
+**Pillar B exit:** Vite scaffold packages `require()` without missing-module crashes **on WASM**. Stubs OK if documented.
 
 ---
 
+### Pillar C — Package manager & shell
 
+**Execute in C++. Host only fetches bytes.**
 
-### Pillar C — Package manager & shell (WebContainers DX)
+#### Phase 23 — npm 2.0 `M` ✅ (MVP) / move more into kernel
 
+- [x] Host: lockfile generate, peer warn, optional skip, bin shims, lifecycle allowlist, AbortSignal
+- [x] Kernel: `.bin` on `spawn` PATH
+- [ ] Lifecycle scripts always `kernel.spawn("sh")` (already) — expand allowlist in policy, not a TS shell
+- [ ] Optional: C++ tar/gzip extract (today host `DecompressionStream` + write VFS)
+- [ ] Registry mirror / OPFS tarball cache — **Host** storage, kernel reads blobs
+- [ ] Scoped / unicode / legacy peer edge cases
 
+#### Phase 24 — npx / runners `M` ✅ (MVP)
 
-#### Phase 23 — npm 2.0 `M` ✅ (MVP)
+- [x] Host `npx` / `runScript` → kernel `spawn`
+- [x] Local `.bin/vite` etc. via C++ PATH
+- [ ] `npm` / `npx` as **C++ commands** (parse argv in kernel; host only for registry GET)
 
-- [x] `package-lock.json` respect + generate — **generate** lockfile v3 on install (respect = merge existing)
-- [x] Peer deps warnings; optional deps — warn via progress; optional skip-on-fail
-- [x] `bin` linking into `.bin` + run via spawn path — host writes shims; **C++ kernel** resolves `cwd/node_modules/.bin/<cmd>`
-- [x] Lifecycle scripts (`preinstall`/`postinstall`) with allowlist / sandbox policy — `true`/`echo`/`node` only
-- [x] Progress events already exist — add cancellation — `AbortSignal` on install
-- [ ] Registry mirror / offline OPFS tarball cache — Cache API memory cache only
-- [ ] Scoped + unicode + legacy peer deps edge cases
+#### Phase 25 — Shell `M` ✅ (C++ MVP)
 
-#### Phase 24 — npx / package runners `M` ✅ (MVP)
+- [x] C++ `cmd_sh`: `|`, `&&`, `||`, `;`, redirects, env, `cd`/`export`
+- [x] Builtins: `pwd` `echo` `which` `ls` `cat` `mkdir` `rm` `cp` `mv`
+- [x] Demo line → `spawn('sh', ['-c', line])`
+- [ ] More POSIX in **C++** (glob, quotes, `rm -r` already)
+- [ ] xterm UI is Phase 32 (**Host**); PTY semantics stay kernel
 
-- [x] `npx <pkg>` / `npm exec` — host `NodeBrowser.npx` (install if missing, then kernel spawn)
-- [x] Run local `.bin/vite`, `.bin/tsc`, `.bin/next` — kernel PATH
-- [x] `npm run <script>` reading `package.json` scripts — host `runScript` → `sh -c`
+#### Phase 26 — Alternate lockfiles `S–M`
 
-#### Phase 25 — Shell subset `M` ✅ (MVP)
-
-- [x] Minimal `sh`/`bash`-like: pipes `|`, `&&`, env assignment, redirects — **C++ `cmd_sh`** + guest `child_process`
-- [x] Builtins: `cd`, `pwd`, `echo`, `export`, `which`, `ls`, `cat`, `mkdir`, `rm`, `cp`, `mv`
-- [x] Demo terminal accepts commands (not only button-driven)
-- [ ] Optional **xterm.js** UI — later (Phase 32)
-
-
-
-#### Phase 26 — Alternate clients `S–M`
-
-- [ ] Detect/respect `pnpm-lock.yaml` / `yarn.lock` install algorithms (or clear error + npm convert)
-- [ ] `corepack` stub — document only unless needed
+- [ ] Detect pnpm/yarn lock — Host parse or C++ later; or clear error
+- [ ] `corepack` stub in **embed** if required
 
 ---
 
+### Pillar D — Vite in the browser (runs on WASM `node`)
 
+If Vite only works on the JS fallback, it is **not done**.
 
-### Pillar D — Vite in the browser (killer feature)
+#### Phase 27 — Vite platform APIs `M`
 
-
-
-#### Phase 27 — Vite-capable platform APIs `M`
-
-Everything Vite’s Node side needs from Pillars A–C, plus:
-
-- [ ] File watch events (Phase 15)
-- [ ] HTTP upgrade / WebSocket **emulation** via MessageChannel + SW (HMR)
-- [ ] `esbuild` service running in Worker
-- [ ] `connect`-style middleware bridge to HttpBridge
-
-
+- [x] `fs.watch` (Phase 15, C++)
+- [ ] HTTP upgrade / WebSocket emulation: kernel ports + SW (**not** a JS `net`)
+- [ ] `esbuild` in a Worker — host glue; Vite still spawned as kernel `node`
+- [ ] `connect` middleware → HttpBridge via kernel listen
 
 #### Phase 28 — In-tab `vite` / `vite build` `L`
 
-- [ ] Install `vite` + plugin-react into VFS and run via `node node_modules/vite/bin/vite.js`
-- [ ] Dev server preview in iframe with HMR
-- [ ] Production `vite build` → `/dist` served by `serveStatic`
-- [ ] Config: `vite.config.js` load (CJS+ESM)
-- [ ] Honest fallback: if unsupported plugin, clear error
+- [ ] `node node_modules/vite/bin/vite.js` via **WASM spawn**
+- [ ] Dev server iframe + HMR
+- [ ] `vite build` → `/dist` + `serveStatic` (host static is OK; build is kernel)
+- [ ] `vite.config.js` CJS+ESM in guest
+- [ ] Unsupported plugin → clear error from guest/kernel
 
-**Exit:** official `demo/templates/vite` runs **inside NodeBrowser** (not host `npm run dev:vite`).
+**Exit:** `demo/templates/vite` runs inside NodeBrowser **WASM**, not host `npm run dev:vite`.
 
-#### Phase 29 — Vite ecosystem plugins `M`
+#### Phase 29 — Vite plugins `M`
 
-- [ ] `@vitejs/plugin-react` / `vue` / `svelte` smoke
-- [ ] CSS / PostCSS / Tailwind path (where pure-JS)
-- [ ] Path aliases + `resolve.conditions`
-
----
-
-
-
-### Pillar E — Next.js subset (ambitious, staged)
-
-
-
-#### Phase 30 — Next “hello” path `L`
-
-Not full Next — a **supported subset**:
-
-- [ ] `next dev` / `next build` / `next start` for App Router **static + simple SSR** pages
-- [ ] No middleware edge unless polyfilled
-- [ ] Image optimizer stub / passthrough
-- [ ] Font loader stub or predownload
-- [ ] Document supported Next version pin
-
-
-
-#### Phase 31 — Next hardening `L`
-
-- [ ] Route handlers / server actions (subset)
-- [ ] `node:` builtins used by Next server
-- [ ] Cache / fetch memoization stubs
-- [ ] Turbopack — **non-goal** initially (webpack/turbopack native); stay on Next’s JS paths + our bundler bridges
-
-**Exit:** `demo/templates/next` boots in-tab for the default create-next-app page + one dynamic route.
+- [ ] plugin-react / vue / svelte smoke **on WASM**
+- [ ] CSS / PostCSS / Tailwind where JS packages run in QuickJS
+- [ ] `resolve.conditions` in **embed** resolver
 
 ---
 
+### Pillar E — Next.js subset (WASM `node` only)
 
+#### Phase 30 — Next hello `L`
 
-### Pillar F — Developer product (feel “most powerful”)
+- [ ] `next dev` / `build` / `start` for App Router static + simple SSR **in WASM**
+- [ ] No edge middleware unless polyfilled in embed
+- [ ] Image/font stubs in embed
+- [ ] Pin supported Next version
 
+#### Phase 31 — Next harden `L`
 
+- [ ] Route handlers / server actions subset in guest
+- [ ] `node:` builtins Next needs — **embed + C++**
+- [ ] Cache/fetch stubs
+- [ ] Turbopack = non-goal
 
-#### Phase 32 — Terminal + IDE shell `M`
+**Exit:** `demo/templates/next` default page + one dynamic route on WASM.
 
-- [ ] xterm.js + fit addon
-- [ ] Multi-tab terminals
-- [ ] Split panes remember layout
-- [ ] Command palette (Run / Install / Preview / Export)
+---
 
+### Pillar F — Developer product (Host UI; kernel unchanged)
 
+UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `bn.fs`.
+
+#### Phase 32 — Terminal chrome `M`
+
+- [ ] xterm.js + fit
+- [ ] Multi-tab; each tab = kernel process
+- [ ] Layout persist
+- [ ] Command palette → same ABI
 
 #### Phase 33 — Project UX `M`
 
-- [ ] Multi-root workspaces (`/home/a`, `/home/b`)
-- [ ] Drag-drop files/folders into VFS
-- [ ] Search in files (ripgrep-wasm or JS scan)
-- [ ] Diff view for unsaved buffers
-- [ ] Templates gallery (Vite, Next, Express, Nest subset, Astro later)
+- [ ] Multi-root, drag-drop, search, diff, templates gallery — **Host**; files in C++ VFS
 
+#### Phase 34 — Preview UX `S–M`
 
+- [ ] Multi-port UI, network log, HTTPS via SW — **Host** over kernel ports
 
-#### Phase 34 — Preview & networking UX `S–M`
+#### Phase 35 — Sync `L`
 
-- [ ] Multiple ports UI; open-in-new-tab
-- [ ] Network log (requests through HttpBridge)
-- [ ] HTTPS preview via SW (same-origin)
+- [ ] Snapshot share links — Host + kernel tar
+- [ ] Yjs optional; not WC-required
 
+#### Phase 36 — Agent API `M`
 
-
-#### Phase 35 — Collaboration / sync (optional power) `L`
-
-- [ ] Share workspace snapshot link (exported archive + URL)
-- [ ] Yjs/CRDT sync — only if product needs; not required for WebContainers parity
-- [ ] Read-only public preview boot from static snapshot
-
-
-
-#### Phase 36 — Agent / automation API `M`
-
-Make NodeBrowser the best runtime for AI coding agents in-browser:
-
-- [ ] Stable JSON-RPC or evented API: `fs`, `spawn`, `install`, `ports`
-- [ ] Structured logs / traces for agent tools
-- [ ] Headless mode (no demo UI) for embedding
-- [ ] Cursor/VS Code Web extension exploration
+- [ ] JSON-RPC over the **same C ABI** (`fs`, `spawn`, `install`, `ports`)
+- [ ] Headless: no demo UI; still WASM kernel
+- [ ] Editor extension exploration
 
 ---
 
+### Pillar G — Performance (kernel)
 
+#### Phase 37 — Performance `L`
 
-### Pillar G — Performance & scale
-
-
-
-#### Phase 37 — Performance program `L` (ongoing)
-
-- [ ] Benchmark suite vs StackBlitz WebContainers (boot, npm install ms/vite, cold SSR)
-- [ ] SAB + Atomics fast-path for stdio when available
-- [ ] Incremental OPFS writes; batch mkdir
-- [ ] npm metadata/tarball cache hit-rate metrics
-- [ ] Lazy-load WASM / code-split demo
-- [ ] Memory pressure: GC tips, large `node_modules` eviction policy
-
-
+- [ ] Benchmarks vs WC: boot WASM, install, vite
+- [ ] SAB + Atomics stdio in **C++** when COOP/COEP
+- [ ] Incremental OPFS from dirty VFS nodes
+- [ ] npm cache metrics (host)
+- [ ] Lazy-load WASM
+- [ ] `node_modules` memory policy in VFS
 
 #### Phase 38 — Reliability `M`
 
-- [ ] Crash recovery (reload last snapshot)
-- [ ] Deterministic test fixtures
-- [ ] Fuzz VFS paths / npm pack listings
-- [ ] CI matrix: Chromium, Firefox, WebKit (Playwright)
+- [ ] Crash recovery from last kernel snapshot
+- [ ] Fuzz C++ VFS paths
+- [ ] CI: Chromium/Firefox/WebKit **with WASM**
+- [ ] Native `bn_*_test` on every PR
 
 ---
 
+### Pillar H — Security
 
+#### Phase 39 — Guest policy `M`
 
-### Pillar H — Security model (power without naïveté)
-
-
-
-#### Phase 39 — Guest security policy `M`
-
-- [ ] Document trust boundary (guest JS is untrusted w.r.t. host page)
-- [ ] Allowlist for egress fetch (npm registry, configured CDNs)
-- [ ] Block `eval` to host DOM; iframe sandbox review
-- [ ] Lifecycle script policy (deny by default / prompt)
-- [ ] CSP guidance for embedders
-- [ ] Security audit checklist in `SECURITY.md`
+- [ ] Trust boundary: guest JS in WASM is untrusted vs host page
+- [ ] Egress allowlist: host `fetch` hooked from kernel
+- [ ] No guest `eval` into host DOM
+- [ ] Lifecycle deny-by-default (kernel spawn policy)
+- [ ] CSP for embedders; `SECURITY.md`
 
 ---
 
+### Pillar I — Productization (Host + docs; kernel stays C++)
 
+#### Phase 40 — Publish & docs `M`
 
-### Pillar I — Open-source productization
+- [ ] npm package = WASM artifacts + thin TS
+- [x] Release workflow (1.0.x)
+- [ ] TypeDoc for **host** API only
+- [ ] Guides: boot WASM, VFS, npm, Vite
+- [ ] WC migration table (host method names)
 
+#### Phase 41 — Compat shim `M`
 
-
-#### Phase 40 — Publish & docs site `M`
-
-- [ ] Publish `@foisal/nodebrowser` to npm with semver (automated Trusted Publisher on `main`)
-- [x] Release workflow: npm OIDC + GitHub Packages + GitHub Release (`1.0.0`…`1.0.9`→`1.1.0`)
-- [ ] API reference (TypeDoc)
-- [ ] Guide site: Boot, VFS, npm, Vite, embed
-- [ ] Migration guide from WebContainers API (method mapping table)
-
-
-
-#### Phase 41 — Compatibility layer `M`
-
-- [ ] Optional `@foisal/nodebrowser-compat` shim mirroring StackBlitz WebContainer API shapes where possible
-- [ ] Document deltas honestly
-
-
+- [ ] `@foisal/nodebrowser-compat` — **TS names** wrapping the same WASM kernel
+- [ ] Document deltas
 
 #### Phase 42 — Ecosystem `S–L`
 
-- [ ] Example apps repo
-- [ ] Community plugins (custom builtins)
-- [ ] Browser extension “scratch Node”
-- [ ] Teaching kits (learn Node without local install)
+- [ ] Examples, custom **C++** builtins, teaching kits
+- [ ] Plugins that add kernel commands, not JS Node polyfills
 
 ---
 
+## Priority order (C++-first)
 
+If capacity is limited:
 
-## Priority order (what to do next)
+1. **13b** WASM-only guest; freeze/delete `js-runtime.ts`
+2. **18 harden** HTTP keep-alive only on WASM
+3. **16 harden** process groups / non-blocking `node` in C++
+4. **20/22** ESM + builtins **in embed** as Vite needs
+5. **23–25** npm/shell remaining work in **kernel** (C++ `npm` argv, more sh)
+6. **27–28** Vite in-tab on WASM
+7. **30** Next subset on WASM
+8. **32–34** Host terminal/preview
+9. **41 + 40** compat shim + docs
+10. **37** benchmarks vs WebContainers (WASM)
 
-If capacity is limited, execute for **WebContainers-class power** (see parity section above):
-
-1. **14** OPFS persistence *(WC: project survives refresh)*
-2. **18** WASM HTTP keep-alive parity *(WC: real servers in-tab)*
-3. **15** watch + symlinks / binary polish *(WC: HMR foundation)*
-4. **20** ESM
-5. **23–24** npm bin + `npm run` / npx
-6. **25** shell subset + **16** process 2.0 as needed
-7. **27–28** Vite in-tab
-8. **30** Next subset
-9. **32–34** terminal / preview UX
-10. **41** WebContainer API compat shim + **40** docs
-11. **37** benchmarks vs WebContainers
-
----
-
-
-
-## Success metrics (“most powerful”)
-
-
-| Metric                       | Target                                            |
-| ---------------------------- | ------------------------------------------------- |
-| Boot to usable VFS           | < 1s JS / < 3s WASM on mid laptop                 |
-| `npm install vite` (cached)  | competitive with WebContainers order-of-magnitude |
-| Official Vite React template | **runs in-tab** with HMR                          |
-| create-next-app default page | **runs in-tab** (subset)                          |
-| Refresh durability           | OPFS project survives reload                      |
-| API stability                | semver + WebContainer-compat shim                 |
-| Honesty                      | MODULES.md + PLAN non-goals always accurate       |
-
+Do **not** spend a milestone “catching up JS fallback.”
 
 ---
 
+## Success metrics
 
-
-## Non-goals (explicit — forever or very long-term)
-
-These are **not** required for “most powerful WebContainers-class” and should not block the roadmap:
-
-
-| Non-goal                                                          | Why                                     |
-| ----------------------------------------------------------------- | --------------------------------------- |
-| Native `.node` addons                                             | No arbitrary native code in-browser     |
-| Perfect Node 22 bit-identical APIs                                | Track subset; document gaps             |
-| Full POSIX fork/true threads                                      | Cooperative processes + Workers instead |
-| Raw TCP/UDP to the internet                                       | Virtual ports + controlled egress only  |
-| Full Turbopack / all Next enterprise features                     | Version-pinned subset                   |
-| Running arbitrary malware safely as a hardened multi-tenant cloud | Different product; we document limits   |
-| Replacing the host OS                                             | Tab-scoped runtime only                 |
-
+| Metric | Target |
+| ------ | ------ |
+| Product runtime | **100% guest Node in C++/WASM** |
+| JS remaining | Host API + UI + `fetch`/OPFS/SW only |
+| Boot to usable VFS | < 3s WASM on mid laptop (JS boot is not a goal) |
+| `npm install vite` (cached) | Same order of magnitude as WC |
+| Vite React template | Runs **in-tab on WASM** with HMR |
+| create-next-app default | Runs **in-tab on WASM** (subset) |
+| Refresh | OPFS of kernel VFS survives reload |
+| Tests | Native C++ tests + WASM conformance |
+| Honesty | MODULES.md = embed coverage, not `js-runtime.ts` |
 
 ---
 
+## Non-goals
 
+| Non-goal | Why |
+| -------- | --- |
+| A second Node in TypeScript | This plan forbids it |
+| Native `.node` addons | No arbitrary native code in-browser |
+| Perfect Node 22 bit-identical APIs | Subset; document in MODULES.md |
+| Full POSIX fork / OS threads | Cooperative processes + WASM workers |
+| Raw TCP/UDP to the internet | Virtual ports + host egress |
+| Full Turbopack / all Next enterprise | Version-pinned subset |
+| Hardened multi-tenant malware sandbox | Different product |
+| Replacing the host OS | Tab-scoped WASM kernel |
+| Compiling upstream Node+V8+libuv | Multi-year; QuickJS-in-WASM is the engine |
+
+---
 
 ## Tracking
 
-- Module checklist: `[runtime/node/MODULES.md](./runtime/node/MODULES.md)`
-- Short public summary: `[ROADMAP.md](./ROADMAP.md)`
-- Changelog: `[CHANGELOG.md](./CHANGELOG.md)`
-- Architecture: `[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)`
+- Module checklist (guest embed): [`runtime/node/MODULES.md`](./runtime/node/MODULES.md)
+- Public summary: [`ROADMAP.md`](./ROADMAP.md)
+- Changelog: [`CHANGELOG.md`](./CHANGELOG.md)
+- Architecture: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 
-Update this file when a phase starts/finishes — status table at the top of “Future roadmap” can gain ✅ rows over time.
+Update this file when a phase starts or finishes. If a task can be done in either C++ or JS, **choose C++**. If it needs a browser API, keep a thin host bridge and put state in the kernel.
