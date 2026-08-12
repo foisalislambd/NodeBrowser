@@ -80,7 +80,7 @@ function resolveExportsTarget(target, base) {
     return null;
   }
   if (target && typeof target === 'object') {
-    var order = ['browser', 'import', 'require', 'default', 'node', 'development', 'module'];
+    var order = ['require', 'node', 'default', 'browser', 'import', 'development', 'module'];
     for (var i = 0; i < order.length; i++) {
       if (target[order[i]] != null) {
         var hit = resolveExportsTarget(target[order[i]], base);

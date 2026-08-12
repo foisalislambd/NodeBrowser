@@ -83,6 +83,16 @@ int bn_vfs_unlink(BNKernel* k, const char* path) {
   return k->kernel.vfs().unlink(path) ? 1 : 0;
 }
 
+int bn_vfs_rmdir(BNKernel* k, const char* path) {
+  if (!k || !path) return 0;
+  return k->kernel.vfs().rmdir(path) ? 1 : 0;
+}
+
+int bn_vfs_rename(BNKernel* k, const char* from, const char* to) {
+  if (!k || !from || !to) return 0;
+  return k->kernel.vfs().rename(from, to) ? 1 : 0;
+}
+
 char* bn_vfs_readdir_json(BNKernel* k, const char* path) {
   if (!k || !path) return nullptr;
   auto entries = k->kernel.vfs().readdir(path);

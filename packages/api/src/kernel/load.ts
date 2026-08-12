@@ -18,6 +18,7 @@ export interface KernelModule {
   /** Optional — binary read; host falls back to TextEncoder on readText */
   readBytes?(k: KernelHandle, path: string): Awaitable<Uint8Array | null>;
   unlink(k: KernelHandle, path: string): Awaitable<boolean>;
+  rmdir?(k: KernelHandle, path: string): Awaitable<boolean>;
   /** Optional — host implements portable fallback if missing */
   rename?(k: KernelHandle, from: string, to: string): Awaitable<boolean>;
   readdir(k: KernelHandle, path: string): Awaitable<string[]>;
@@ -81,6 +82,8 @@ type EmscriptenModule = {
   _bn_vfs_read_text: (k: number, path: number) => number;
   _bn_vfs_read_bytes?: (k: number, path: number, outLen: number) => number;
   _bn_vfs_unlink: (k: number, path: number) => number;
+  _bn_vfs_rmdir?: (k: number, path: number) => number;
+  _bn_vfs_rename?: (k: number, from: number, to: number) => number;
   _bn_vfs_readdir_json: (k: number, path: number) => number;
   _bn_vfs_exists: (k: number, path: number) => number;
   _bn_vfs_symlink?: (k: number, target: number, linkpath: number) => number;
@@ -233,6 +236,28 @@ function wrap(mod: EmscriptenModule): KernelModule {
         mod._free(p);
       }
     },
+    rmdir: mod._bn_vfs_rmdir
+      ? (k, path) => {
+          const p = allocStr(path);
+          try {
+            return !!mod._bn_vfs_rmdir!(k, p);
+          } finally {
+            mod._free(p);
+          }
+        }
+      : undefined,
+    rename: mod._bn_vfs_rename
+      ? (k, from, to) => {
+          const a = allocStr(from);
+          const b = allocStr(to);
+          try {
+            return !!mod._bn_vfs_rename!(k, a, b);
+          } finally {
+            mod._free(a);
+            mod._free(b);
+          }
+        }
+      : undefined,
     readdir: (k, path) => {
       const p = allocStr(path);
       try {

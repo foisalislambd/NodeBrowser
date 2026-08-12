@@ -326,12 +326,19 @@ bool Vfs::rmdir(std::string_view path) {
 
 bool Vfs::rename(std::string_view from, std::string_view to) {
   std::lock_guard lock(mu_);
+  auto src = normalize(from);
+  auto dst = normalize(to);
+  if (src == dst) return true;
   auto a = resolve(from, false);
   if (!a.parent || !a.node) return false;
+  if (a.node->kind() == NodeKind::Directory) {
+    if (dst.size() >= src.size() && dst.compare(0, src.size(), src) == 0 &&
+        (dst.size() == src.size() || dst[src.size()] == '/')) {
+      return false;
+    }
+  }
   auto node = a.node;
   if (!a.parent->erase(a.name)) return false;
-  // unlock not possible easily; call internal path creation
-  // Re-resolve destination parent
   auto parts = split(to);
   if (parts.empty()) return false;
   auto dir = root_;

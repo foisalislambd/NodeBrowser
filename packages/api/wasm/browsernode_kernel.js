@@ -1962,6 +1962,8 @@ var _bn_vfs_write_bytes = Module['_bn_vfs_write_bytes'] = makeInvalidEarlyAccess
 var _bn_vfs_read_text = Module['_bn_vfs_read_text'] = makeInvalidEarlyAccess('_bn_vfs_read_text');
 var _bn_vfs_read_bytes = Module['_bn_vfs_read_bytes'] = makeInvalidEarlyAccess('_bn_vfs_read_bytes');
 var _bn_vfs_unlink = Module['_bn_vfs_unlink'] = makeInvalidEarlyAccess('_bn_vfs_unlink');
+var _bn_vfs_rmdir = Module['_bn_vfs_rmdir'] = makeInvalidEarlyAccess('_bn_vfs_rmdir');
+var _bn_vfs_rename = Module['_bn_vfs_rename'] = makeInvalidEarlyAccess('_bn_vfs_rename');
 var _bn_vfs_readdir_json = Module['_bn_vfs_readdir_json'] = makeInvalidEarlyAccess('_bn_vfs_readdir_json');
 var _bn_vfs_exists = Module['_bn_vfs_exists'] = makeInvalidEarlyAccess('_bn_vfs_exists');
 var _bn_vfs_stat_json = Module['_bn_vfs_stat_json'] = makeInvalidEarlyAccess('_bn_vfs_stat_json');
@@ -2004,6 +2006,8 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['bn_vfs_read_text'] != 'undefined', 'missing Wasm export: bn_vfs_read_text');
   assert(typeof wasmExports['bn_vfs_read_bytes'] != 'undefined', 'missing Wasm export: bn_vfs_read_bytes');
   assert(typeof wasmExports['bn_vfs_unlink'] != 'undefined', 'missing Wasm export: bn_vfs_unlink');
+  assert(typeof wasmExports['bn_vfs_rmdir'] != 'undefined', 'missing Wasm export: bn_vfs_rmdir');
+  assert(typeof wasmExports['bn_vfs_rename'] != 'undefined', 'missing Wasm export: bn_vfs_rename');
   assert(typeof wasmExports['bn_vfs_readdir_json'] != 'undefined', 'missing Wasm export: bn_vfs_readdir_json');
   assert(typeof wasmExports['bn_vfs_exists'] != 'undefined', 'missing Wasm export: bn_vfs_exists');
   assert(typeof wasmExports['bn_vfs_stat_json'] != 'undefined', 'missing Wasm export: bn_vfs_stat_json');
@@ -2043,6 +2047,8 @@ function assignWasmExports(wasmExports) {
   _bn_vfs_read_text = Module['_bn_vfs_read_text'] = createExportWrapper('bn_vfs_read_text', wasmExports['bn_vfs_read_text'], 2);
   _bn_vfs_read_bytes = Module['_bn_vfs_read_bytes'] = createExportWrapper('bn_vfs_read_bytes', wasmExports['bn_vfs_read_bytes'], 3);
   _bn_vfs_unlink = Module['_bn_vfs_unlink'] = createExportWrapper('bn_vfs_unlink', wasmExports['bn_vfs_unlink'], 2);
+  _bn_vfs_rmdir = Module['_bn_vfs_rmdir'] = createExportWrapper('bn_vfs_rmdir', wasmExports['bn_vfs_rmdir'], 2);
+  _bn_vfs_rename = Module['_bn_vfs_rename'] = createExportWrapper('bn_vfs_rename', wasmExports['bn_vfs_rename'], 3);
   _bn_vfs_readdir_json = Module['_bn_vfs_readdir_json'] = createExportWrapper('bn_vfs_readdir_json', wasmExports['bn_vfs_readdir_json'], 2);
   _bn_vfs_exists = Module['_bn_vfs_exists'] = createExportWrapper('bn_vfs_exists', wasmExports['bn_vfs_exists'], 2);
   _bn_vfs_stat_json = Module['_bn_vfs_stat_json'] = createExportWrapper('bn_vfs_stat_json', wasmExports['bn_vfs_stat_json'], 3);

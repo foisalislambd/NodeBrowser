@@ -124,6 +124,12 @@ export class NodeBrowser {
         for (const name of await asy(mod.readdir(k, path))) {
           await rmTree(joinFs(path, name));
         }
+        if (mod.rmdir) {
+          if (!(await asy(mod.rmdir(k, path))) && (await asy(mod.exists(k, path)))) {
+            throw new Error(`EPERM: cannot remove ${path}`);
+          }
+          return;
+        }
       }
       if (!(await asy(mod.unlink(k, path))) && (await asy(mod.exists(k, path)))) {
         throw new Error(`EPERM: cannot remove ${path}`);

@@ -87,18 +87,15 @@ async function main() {
   assert(runOut.code === 0, 'main exit');
   assert(runOut.out.includes('m=7'), runOut.out);
 
-  // --- default boot prefers WASM; in Node without browser WASM loader → JS fallback ---
+  // --- default boot prefers WASM; Node can load the ES module WASM (or JS fallback) ---
   resetKernelCache();
   const auto = await NodeBrowser.boot({ useWasm: 'auto' });
   assert(auto.runtime === 'js' || auto.runtime === 'wasm', 'auto runtime set');
-  if (typeof document === 'undefined') {
-    assert(auto.runtime === 'js', 'node auto → js');
-  }
   resetKernelCache();
   const preferred = await NodeBrowser.boot(); // default useWasm: true
   assert(preferred.runtime === 'js' || preferred.runtime === 'wasm', 'default boot runtime');
-  if (typeof document === 'undefined') {
-    assert(preferred.runtime === 'js', 'node default(true) → js fallback');
+  if (preferred.runtime === 'js') {
+    assert(process.env.BN_ALLOW_JS_KERNEL === '1', 'js fallback only with allow flag');
   }
 
   // --- boot isolation: two JS boots must not share VFS ---
@@ -299,15 +296,9 @@ async function main() {
   );
   const netProc = await bn.spawn('node', ['/home/project/net.js'], { cwd: '/home/project' });
   await new Promise((r) => setTimeout(r, 30));
-  const codeWhileAlive = (() => {
-    // JS kernel wait via kill path
-    return -1;
-  })();
-  assert(bn.runtime === 'js', 'js runtime for net');
   netProc.kill();
   const netCode = await netProc.exit;
   assert(netCode === 137, 'net kill exit expected 137, got ' + netCode);
-  void codeWhileAlive;
 
   // --- Phase 14: snapshot (OPFS skipped in Node) ---
   const snap = await bn.exportSnapshot();

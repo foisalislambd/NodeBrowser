@@ -91,6 +91,8 @@ export async function createWorkerKernel(wasmUrl: string): Promise<KernelModule>
     readText: (k, path) => call<string | null>('readText', [k, path]),
     readBytes: (k, path) => call<Uint8Array | null>('readBytes', [k, path]),
     unlink: (k, path) => call<boolean>('unlink', [k, path]),
+    rmdir: (k, path) => call<boolean>('rmdir', [k, path]),
+    rename: (k, from, to) => call<boolean>('rename', [k, from, to]),
     readdir: (k, path) => call<string[]>('readdir', [k, path]),
     exists: (k, path) => call<boolean>('exists', [k, path]),
     isDir: (k, path) => call<boolean>('isDir', [k, path]),

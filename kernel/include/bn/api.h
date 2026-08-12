@@ -21,6 +21,8 @@ char* bn_vfs_read_text(BNKernel* k, const char* path);  // malloc'd; free with b
 /** malloc'd bytes; *out_len set; free with bn_free. NULL if missing. */
 uint8_t* bn_vfs_read_bytes(BNKernel* k, const char* path, size_t* out_len);
 int bn_vfs_unlink(BNKernel* k, const char* path);
+int bn_vfs_rmdir(BNKernel* k, const char* path);
+int bn_vfs_rename(BNKernel* k, const char* from, const char* to);
 char* bn_vfs_readdir_json(BNKernel* k, const char* path);  // ["a","b"]
 int bn_vfs_exists(BNKernel* k, const char* path);
 int bn_vfs_stat_json(BNKernel* k, const char* path, char** out_json);
