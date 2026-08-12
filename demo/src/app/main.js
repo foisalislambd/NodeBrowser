@@ -357,11 +357,11 @@ async function boot() {
     appendTerm(String(e) + '\nfalling back to useWasm:auto\n');
     bn = await NodeBrowser.boot({ useWasm: 'auto', previewBase, persist: true });
   }
-  appendTerm(`runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}\n`);
+  appendTerm(
+    `runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}` +
+      `${bn.worker ? ' worker=true (WASM off UI thread)' : bn.runtime === 'wasm' ? ' worker=false (same-thread WASM)' : ''}\n`,
+  );
   bn.attachServiceWorkerBridge(previewPath);
-  if (bn.runtime === 'wasm') {
-    appendTerm('Note: long-lived HTTP keep-alive is still strongest on JS; preview may use HttpBridge dispatch.\n');
-  }
   await bn.mount({
     home: {
       directory: {
@@ -395,7 +395,8 @@ async function boot() {
   setEditorPath(openPath);
   setCwd(projectCwd);
   await refreshTree();
-  $('status').textContent = bn.runtime === 'wasm' ? 'ready · wasm' : 'ready · js';
+  $('status').textContent =
+    bn.runtime === 'wasm' ? (bn.worker ? 'ready · wasm · worker' : 'ready · wasm') : 'ready · js';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
   appendTerm('Upload ZIP / drop a .zip to unpack and preview (Vite, Next, or static HTML).\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');

@@ -66,7 +66,7 @@ Done means these work on the **WASM kernel** (native `bn_*_test` + browser demo)
 
 1. **WASM is the only guest** — Phase 13b. Dual runtimes are a product lie.
 2. **Real tooling in WASM** — run installed `vite`/`tsc` via QuickJS when the graph fits; keep esbuild-wasm as the fast path, never as a fake “we run Vite”.
-3. **Process + HTTP harden** — kill tree ✅; Asyncify/worker so long `node` does not freeze the tab; HTTP only on retained WASM handlers.
+3. **Process + HTTP harden** — kill tree ✅; WASM **Worker** so long `node` does not freeze the tab ✅ (same-thread fallback; not Asyncify); HTTP on retained WASM handlers.
 4. **Install speed** — OPFS tarball cache, lockfile skip, fewer host copies (Phase 23/37).
 5. **Open audit** — CI green = native C++ tests + WASM boot, not `useWasm: false`.
 6. **Agent API** — `boot` / `fs` / `spawn` / `install` / `ports` / `killTree` without the demo (Phase 36; host class exists).
@@ -90,16 +90,18 @@ Bit-identical Node, native `.node` addons, full Turbopack, compiling Node+V8, mu
 ## Architecture (target = current direction)
 
 ```
-Browser tab
+Browser tab (UI thread)
   Demo UI  ──►  @foisal/nodebrowser (TS host)
-                    │  bn_* C ABI
+                    │  postMessage RPC (browser Worker)
                     ▼
-              browsernode.wasm
+              WASM Worker  ──►  browsernode.wasm
                 VFS │ Process table │ Shell builtins
                 QuickJS + guest_modules (Node subset)
                     │  server-ready / http dispatch
                     ▼
               Service Worker preview  /  OPFS (host flush)
+
+Node / Worker-unavailable: same-thread WASM (tab may freeze on long `node`).
 ```
 
 | Piece | Tech | Role |
@@ -525,7 +527,7 @@ If capacity is limited:
 
 1. **13b** WASM-only guest; delete `js-runtime.ts` (frozen now)
 2. **18 harden** HTTP keep-alive only on WASM
-3. **16 harden** non-blocking `node` (Asyncify/worker) — kill tree is done
+3. ~~**16 harden** non-blocking `node` (Worker)~~ ✅ — kill tree + browser Worker; Asyncify/interrupt still later
 4. **Real Vite/tsc in QuickJS** when the graph fits; esbuild remains the fast path
 5. **37** install cache + benchmarks vs WebContainers
 6. **32** xterm UI

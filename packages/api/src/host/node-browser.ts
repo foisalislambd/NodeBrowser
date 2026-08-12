@@ -41,6 +41,8 @@ export class NodeBrowser {
   #opfsFlusher: ReturnType<typeof createOpfsFlusher> | null = null;
   /** Which kernel is driving this instance. */
   readonly runtime: 'js' | 'wasm';
+  /** True when C++/WASM runs on a Worker (browser); UI thread stays responsive. */
+  readonly worker: boolean;
 
   private constructor(
     mod: KernelModule,
@@ -53,6 +55,7 @@ export class NodeBrowser {
     this.#previewBase = previewBase;
     this.#persist = persist;
     this.runtime = mod.runtime === 'wasm' ? 'wasm' : 'js';
+    this.worker = !!mod.worker;
     this.#wireHttp();
     this.#wireFsChange();
     if (persist) {
@@ -821,6 +824,10 @@ export class WebContainer {
 
   get runtime() {
     return this.#bn.runtime;
+  }
+
+  get worker() {
+    return this.#bn.worker;
   }
 
   mount(tree: FileSystemTree, mountPoint?: string) {
