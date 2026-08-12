@@ -27,10 +27,19 @@
 - stdio ring buffers shared with host
 - Virtual listen ports → host `server-ready` events
 - Export a stable C ABI for the TS host (`bn_*` functions)
+- Own guest Node surface over time (bootstrap + core modules) — **not** the TS host
+
+## Host API responsibilities (TypeScript only)
+
+- `NodeBrowser.boot` / `mount` / `spawn` / events
+- Browser bridges: Service Worker HttpBridge, OPFS, fetch to npm registry
+- Load WASM + call C ABI — **no parallel guest Node implementation as the product path**
+
+See **Architecture rule** in `[PLAN.md](../PLAN.md)`.
 
 ## Why QuickJS (not full Node C++ port)
 
-Compiling upstream Node + libuv + V8 to WASM is a multi-year port. QuickJS is small, embeddable, and enough to run a large subset of JS tooling when paired with Node API polyfills. We can later swap the engine (or add a second) without changing the host API.
+Compiling upstream Node + libuv + V8 to WASM is a multi-year port. QuickJS is small, embeddable, and enough to run a large subset of JS tooling when paired with Node API polyfills **inside the WASM image**. We can later swap the engine (or add a second) without changing the host API.
 
 ## Process model
 

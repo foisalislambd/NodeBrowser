@@ -2,7 +2,29 @@
 
 **North star:** Become the most capable open-source **WebContainers-class** runtime — run real Node tooling (`npm`, Vite, Next subset, tests, monorepos) **entirely in the browser tab**, with no remote compute VM.
 
-**Strategy:** C++/WASM kernel (VFS + processes) + QuickJS/JS engines + progressive Node polyfills + host API that feels like WebContainers. Prefer *working vertical slices* over fake “100% Node” claims.
+**Strategy:** **C++/C → WASM is the product.** The TypeScript/`packages/api` layer is only the **host API** (boot, mount, spawn, events, browser bridges). Guest Node behavior must live in the **C++ kernel + QuickJS bootstrap**, not in a parallel JS runtime. Prefer *working vertical slices* in WASM over fake “100% Node” claims.
+
+---
+
+## Architecture rule (non-negotiable going forward)
+
+| Layer | Language | Allowed to do | Must NOT become |
+|-------|----------|---------------|-----------------|
+| **Kernel / guest Node** | **C++ / C → WASM** (+ QuickJS embed) | VFS, processes, pipes, ports, `node` bootstrap, core modules (`fs`, `http`, `stream`, …), keep-alive HTTP | A second “full Node” written in browser JS |
+| **Host API** | **TypeScript / JS** (`@foisal/nodebrowser`) | `boot` / `mount` / `spawn`, event bus, HttpBridge ↔ SW, OPFS/IndexedDB, npm registry fetch, esbuild-wasm glue | Re-implementing the kernel or guest module surface |
+| **Demo / UI** | JS | Editor, terminal, preview chrome | Runtime semantics |
+
+**Why this rule exists**
+
+- WebContainers-class depth (real `npm`, Vite HMR, process trees, binary VFS) needs **one** authoritative runtime. Dual JS+C++ feature work doubles cost and stalls advances.
+- Browser JS fallback (`js-runtime.ts`) was an MVP accelerator for demos/CI without WASM. It is **not** the long-term product path.
+- Going forward: **new Node/compat work lands in C++/QuickJS first**; host TS only wires ABI + browser APIs. JS fallback may lag or stay intentionally thinner until removed/shrunk.
+
+**Policy for existing JS fallback**
+
+- Keep it only as **emergency / no-WASM fallback** (Pages without COOP/COEP, Node CI without wasm loader).
+- Do **not** add new guest features only in `js-runtime.ts` unless the same slice is scheduled for C++ in the same milestone.
+- Prefer deleting or freezing JS-only guest modules once WASM parity exists.
 
 ---
 
@@ -12,11 +34,11 @@
 | Layer       | Technology                             | Role                                 |
 | ----------- | -------------------------------------- | ------------------------------------ |
 | Kernel      | C++ → WASM (Emscripten) — **primary**  | VFS, processes, pipes, virtual ports |
-| JS Engine   | QuickJS (in WASM) + JS fallback        | Execute JS/CJS like `node`           |
-| Node Compat | Bootstrap + host polyfills             | `fs`, `path`, `http`, `crypto`, …    |
+| JS Engine   | QuickJS (in WASM) + thin JS fallback   | Execute JS/CJS like `node`           |
+| Node Compat | **C++/QuickJS bootstrap** (target)     | `fs`, `path`, `http`, `crypto`, …    |
 | Package Mgr | TS host + npm registry                 | install into VFS (+ deps + cache)    |
-| Networking  | Service Worker ↔ HttpBridge            | Preview `/__bn_preview/:port`        |
-| Host API    | `@foisal/nodebrowser` (`packages/api`) | WebContainer-like DX                 |
+| Networking  | Service Worker ↔ HttpBridge (+ WASM dispatch) | Preview `/__bn_preview/:port` |
+| Host API    | `@foisal/nodebrowser` (`packages/api`) | WebContainer-like DX **only**        |
 | Demo        | Vanilla UI                             | File manager, terminal, preview      |
 
 
