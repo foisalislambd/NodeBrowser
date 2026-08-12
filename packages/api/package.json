@@ -30,7 +30,7 @@
     "esbuild-wasm": "0.25.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.2"
+    "typescript": "^7.0.2"
   },
   "publishConfig": {
     "access": "public",
