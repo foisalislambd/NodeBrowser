@@ -12,7 +12,10 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex + index Proxy |
 | `events` | ok | EventEmitter basics |
 | `stream` | ok (subset) | Readable/Writable/Duplex/Transform + `.pipe()` |
-| `http` / `https` | ok (subset) | createServer + listen → HttpBridge; chunked write/end; upgrade stub |
+| `http` / `https` | ok (subset) | createServer + listen → HttpBridge; chunked write/end; upgrade stub; HMR reload poll |
+| `connect` | stub | middleware stack → `http.createServer` |
+| `ws` | stub | Server/handleUpgrade no-op sockets |
+| `corepack` | stub | npm-only; yarn/pnpm not executed |
 | `net` | ok (subset) | Server/Socket on virtual ports via HttpBridge |
 | `child_process` | ok (subset) | spawn/execFile for `node` + shell stubs; max 32 procs |
 | `module` / `require` | ok | CJS + **createRequire** + `exports` field + ESM rewrite |
@@ -38,9 +41,9 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 ## Vite checklist
 
-- [x] `esbuild-wasm` transform path (`NodeBrowser.bundle`)
+- [x] `esbuild-wasm` transform path (`NodeBrowser.bundle` / `viteDev`)
 - [x] `fs.promises` + Buffer
-- [ ] `http` upgrade / HMR websocket via SW
+- [x] `http` upgrade stub; in-tab HMR = reload poll (`__hmr_gen`)
 - [x] `crypto.randomFillSync`
 - [x] `perf_hooks`
 - [x] `fs.watch` / host `fs-change`

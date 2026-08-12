@@ -752,8 +752,49 @@ export function createJsFallbackKernel(opts?: {
             }
             return p;
           });
+          const expandTok = (tokens: string[]) => {
+            const out: string[] = [];
+            for (const t of tokens) {
+              if (!t.includes('*') && !t.includes('?')) {
+                out.push(t);
+                continue;
+              }
+              const slash = t.lastIndexOf('/');
+              const dirPath = slash < 0 ? cwd : t.startsWith('/') ? t.slice(0, slash) || '/' : norm(cwd + '/' + t.slice(0, slash));
+              const pat = slash < 0 ? t : t.slice(slash + 1);
+              const r = resolve(dirPath);
+              const node = dirPath === '/' ? root : r.node;
+              if (!node || node.kind !== 'dir') {
+                out.push(t);
+                continue;
+              }
+              const re = new RegExp(
+                '^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$',
+              );
+              let n = 0;
+              for (const name of node.children.keys()) {
+                if (re.test(name)) {
+                  out.push(slash < 0 ? name : t.slice(0, slash + 1) + name);
+                  n++;
+                }
+              }
+              if (!n) out.push(t);
+            }
+            return out;
+          };
           const c0 = parts[0] || 'true';
-          const a0 = parts.slice(1);
+          const a0 = expandTok(parts.slice(1));
+          if (c0 === 'test' || c0 === '[') {
+            const args = c0 === '[' && a0[a0.length - 1] === ']' ? a0.slice(0, -1) : a0;
+            const p = args[1] ? (args[1].startsWith('/') ? args[1] : norm(cwd + '/' + args[1])) : '';
+            const node = p ? resolve(p).node : null;
+            let ok = false;
+            if (args[0] === '-e') ok = !!node;
+            else if (args[0] === '-f') ok = !!node && node.kind === 'file';
+            else if (args[0] === '-d') ok = !!node && node.kind === 'dir';
+            else if (args.length === 1) ok = !!args[0];
+            return { out: '', err: '', code: ok ? 0 : 1 };
+          }
           if (c0 === 'true') return { out: '', err: '', code: 0 };
           if (c0 === 'false') return { out: '', err: '', code: 1 };
           if (c0 === 'echo') {

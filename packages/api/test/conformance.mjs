@@ -348,7 +348,39 @@ async function main() {
   assert(redirOut.code === 0, 'redir exit ' + redirOut.out);
   assert((await bn.fs.readFile('/home/project/redir.txt', 'utf8')).includes('hi'), 'redir file');
 
-  console.log('Phases 13–25 conformance: OK (runtime=%s)', bn.runtime);
+  await bn.fs.writeFile('/home/project/g1.txt', '1');
+  await bn.fs.writeFile('/home/project/g2.txt', '2');
+  const globOut = await readOut(await bn.spawn('sh', ['-c', 'echo *.txt'], { cwd: '/home/project' }));
+  assert(globOut.code === 0, 'glob exit');
+  assert(globOut.out.includes('g1.txt') && globOut.out.includes('g2.txt'), globOut.out);
+
+  await bn.fs.writeFile('/home/project/yarn.lock', '# yarn');
+  const { detectForeignLockfile } = await import('../dist/lockfiles.js');
+  const foreign = await detectForeignLockfile(bn.fs, '/home/project');
+  assert(foreign === 'yarn', 'yarn lock detect');
+
+  await bn.fs.mkdir('/vp/src', { recursive: true });
+  await bn.fs.writeFile(
+    '/vp/src/main.jsx',
+    'import { createRoot } from "react-dom/client";\nfunction App(){ return <h1>vite-ok</h1>; }\ncreateRoot(document.getElementById("root")).render(<App/>);\n',
+  );
+  await bn.fs.writeFile('/vp/index.html', '<div id="root"></div><script type="module" src="/src/main.jsx"></script>');
+  const vb = await bn.viteBuild('/vp');
+  const bundled = await bn.fs.readFile(vb.outfile, 'utf8');
+  assert(bundled.length > 50, 'vite bundle');
+
+  await bn.fs.mkdir('/napp/app', { recursive: true });
+  await bn.fs.writeFile('/napp/app/page.js', 'export default function Page(){ return <h1>next-ok</h1>; }\n');
+  const nb = await bn.nextBuild('/napp');
+  const nhtml = await bn.fs.readFile(nb.outDir + '/index.html', 'utf8');
+  assert(nhtml.includes('bundle.js'), 'next html');
+  await bn.fs.mkdir('/napp/app/hello', { recursive: true });
+  await bn.fs.writeFile('/napp/app/hello/page.js', 'export default function Hello(){ return <h1>hello-ok</h1>; }\n');
+  const nb2 = await bn.nextBuild('/napp');
+  const hjs = await bn.fs.readFile(nb2.outDir + '/hello/bundle.js', 'utf8');
+  assert(hjs.length > 20, 'hello route bundle');
+
+  console.log('Phases 13–30 conformance: OK (runtime=%s)', bn.runtime);
 }
 
 main().catch((e) => {

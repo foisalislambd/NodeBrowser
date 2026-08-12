@@ -79,6 +79,30 @@ int main() {
     auto t = k.vfs().read_text("/redir.txt");
     CHECK(t.has_value() && t->find("hi") != std::string::npos);
   }
+  {
+    CHECK(k.vfs().mkdir("/g", true));
+    CHECK(k.vfs().write_text("/g/a.txt", "1"));
+    CHECK(k.vfs().write_text("/g/b.txt", "2"));
+    auto pid = k.spawn("sh", {"-c", "echo *.txt"}, {}, "/g");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("a.txt") != std::string::npos);
+    CHECK(out.find("b.txt") != std::string::npos);
+    auto ls = k.spawn("sh", {"-c", "ls *.txt"}, {}, "/g");
+    CHECK(k.wait(ls).value_or(1) == 0);
+    auto lsout = k.get(ls)->stdout_buf.read_all_string();
+    CHECK(lsout.find("a.txt") != std::string::npos);
+    CHECK(lsout.find("b.txt") != std::string::npos);
+  }
+  {
+    auto pid = k.spawn("test", {"-f", "/redir.txt"});
+    CHECK(k.wait(pid).value_or(1) == 0);
+    pid = k.spawn("test", {"-d", "/g"});
+    CHECK(k.wait(pid).value_or(1) == 0);
+    pid = k.spawn("test", {"-f", "/nope"});
+    CHECK(k.wait(pid).value_or(0) == 1);
+  }
 
 #if defined(BN_HAS_QUICKJS)
   {

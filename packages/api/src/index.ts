@@ -2,8 +2,11 @@ import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEvent
 import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from './kernel.js';
 import { flattenTree } from './fs-tree.js';
 import { installPackage } from './npm-install.js';
+import { detectForeignLockfile } from './lockfiles.js';
 import { HttpBridge } from './http-bridge.js';
 import { bundleWithEsbuild, type BundleOptions } from './esbuild-bundle.js';
+import { viteBuild, viteDev } from './vite-compat.js';
+import { nextBuild, nextDev } from './next-compat.js';
 import type { HttpRegistrar } from './kernel.js';
 import {
   createOpfsFlusher,
@@ -291,11 +294,27 @@ export class NodeBrowser {
       this.#emit('server-ready', port, url);
     };
     notify.__bn_on_http_listen = (port: number) => {
-      // Legacy alias — same as server-ready (deduped via pendingPorts / has(port)).
       pendingPorts.add(port | 0);
       this.#ensureWasmHttpHandler(port | 0);
       const url = `${this.#previewBase}/${port}/`;
       this.#emit('server-ready', port, url);
+    };
+    const self = this;
+    (globalThis as unknown as { __bn_on_tool?: (tool: string, cwd: string, mode: string) => void }).__bn_on_tool = (
+      tool,
+      toolCwd,
+      mode,
+    ) => {
+      const run = async () => {
+        if (tool === 'vite') {
+          if (mode === 'build') await self.viteBuild(toolCwd);
+          else await self.viteDev(toolCwd);
+        } else if (tool === 'next') {
+          if (mode === 'build') await self.nextBuild(toolCwd);
+          else await self.nextDev(toolCwd);
+        }
+      };
+      void run().catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))));
     };
 
     const pid = this.#mod.spawn(this.#k, cmd, args, cwd, opts.env);
@@ -345,6 +364,14 @@ export class NodeBrowser {
 
   /** Install npm packages into cwd/node_modules (deps + cache). */
   async install(packages: string[], cwd = '/'): Promise<void> {
+    const foreign = await detectForeignLockfile(this.fs, cwd);
+    if (foreign) {
+      this.#emit('install-progress', {
+        phase: 'resolve',
+        name: 'lockfile',
+        message: `${foreign} lockfile found — NodeBrowser installs with npm (corepack/yarn/pnpm not executed)`,
+      });
+    }
     for (const pkg of packages) {
       await installPackage(this, pkg, cwd, {
         withDeps: true,
@@ -377,6 +404,24 @@ export class NodeBrowser {
     }
     await this.install([pkg], cwd);
     return this.spawn(binName, args, { cwd });
+  }
+
+  /** In-tab Vite subset: esbuild-wasm + kernel VFS (Phases 27–29). */
+  viteBuild(cwd: string, opts?: { outDir?: string }) {
+    return viteBuild(this, cwd, opts);
+  }
+
+  viteDev(cwd: string, opts?: { port?: number }) {
+    return viteDev(this, cwd, opts);
+  }
+
+  /** In-tab Next App Router subset (Phase 30). */
+  nextBuild(cwd: string) {
+    return nextBuild(this, cwd);
+  }
+
+  nextDev(cwd: string, opts?: { port?: number }) {
+    return nextDev(this, cwd, opts);
   }
 
   /**

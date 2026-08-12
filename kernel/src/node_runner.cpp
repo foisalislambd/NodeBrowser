@@ -213,6 +213,59 @@ std::string join_path(std::string_view cwd, std::string_view rel) {
   return Vfs::normalize(std::string(cwd) + "/" + std::string(rel));
 }
 
+bool glob_match(std::string_view pat, std::string_view name) {
+  auto rec = [&](auto&& self, size_t pi, size_t ni) -> bool {
+    while (pi < pat.size() && ni < name.size()) {
+      if (pat[pi] == '*') {
+        ++pi;
+        if (pi == pat.size()) return true;
+        while (ni <= name.size()) {
+          if (self(self, pi, ni)) return true;
+          ++ni;
+        }
+        return false;
+      }
+      if (pat[pi] == '?' || pat[pi] == name[ni]) {
+        ++pi;
+        ++ni;
+        continue;
+      }
+      return false;
+    }
+    while (pi < pat.size() && pat[pi] == '*') ++pi;
+    return pi == pat.size() && ni == name.size();
+  };
+  return rec(rec, 0, 0);
+}
+
+std::vector<std::string> expand_glob_token(Kernel& k, const std::string& cwd, const std::string& token) {
+  if (token.find('*') == std::string::npos && token.find('?') == std::string::npos) return {token};
+  auto slash = token.rfind('/');
+  std::string dir_rel = slash == std::string::npos ? "." : token.substr(0, slash);
+  std::string pat = slash == std::string::npos ? token : token.substr(slash + 1);
+  std::string dir = dir_rel == "." ? cwd : join_path(cwd, dir_rel);
+  auto ents = k.vfs().readdir(dir);
+  std::vector<std::string> out;
+  if (!ents) return {token};
+  for (const auto& e : *ents) {
+    if (glob_match(pat, e)) {
+      if (slash == std::string::npos) out.push_back(e);
+      else out.push_back(dir_rel + "/" + e);
+    }
+  }
+  if (out.empty()) return {token};
+  return out;
+}
+
+std::vector<std::string> expand_argv_globs(Kernel& k, const std::string& cwd, const std::vector<std::string>& argv) {
+  std::vector<std::string> out;
+  for (const auto& a : argv) {
+    auto exp = expand_glob_token(k, cwd, a);
+    out.insert(out.end(), exp.begin(), exp.end());
+  }
+  return out;
+}
+
 int cmd_echo(Kernel&, Process& proc) {
   std::ostringstream oss;
   for (size_t i = 0; i < proc.argv.size(); ++i) {
@@ -225,11 +278,12 @@ int cmd_echo(Kernel&, Process& proc) {
 }
 
 int cmd_cat(Kernel& k, Process& proc) {
-  if (proc.argv.empty()) {
+  auto argv = expand_argv_globs(k, proc.cwd, proc.argv);
+  if (argv.empty()) {
     write_err(proc, "cat: missing file\n");
     return 1;
   }
-  for (const auto& a : proc.argv) {
+  for (const auto& a : argv) {
     auto path = join_path(proc.cwd, a);
     auto text = k.vfs().read_text(path);
     if (!text) {
@@ -242,8 +296,18 @@ int cmd_cat(Kernel& k, Process& proc) {
 }
 
 int cmd_ls(Kernel& k, Process& proc) {
+  auto argv = expand_argv_globs(k, proc.cwd, proc.argv);
+  if (argv.size() > 1) {
+    for (const auto& a : argv) write_out(proc, a + "\n");
+    return 0;
+  }
   std::string path = proc.cwd;
-  if (!proc.argv.empty()) path = join_path(proc.cwd, proc.argv[0]);
+  if (!argv.empty()) path = join_path(proc.cwd, argv[0]);
+  auto st = k.vfs().stat(path, true);
+  if (st && st->kind == NodeKind::File) {
+    write_out(proc, (argv.empty() ? path : argv[0]) + "\n");
+    return 0;
+  }
   auto entries = k.vfs().readdir(path);
   if (!entries) {
     write_err(proc, "ls: cannot access path\n");
@@ -311,6 +375,7 @@ int cmd_rm(Kernel& k, Process& proc) {
     else if (a == "-f") continue;
     else paths.push_back(a);
   }
+  paths = expand_argv_globs(k, proc.cwd, paths);
   if (paths.empty()) {
     write_err(proc, "rm: missing operand\n");
     return 1;
@@ -372,7 +437,8 @@ int cmd_which(Kernel& k, Process& proc) {
   const auto& name = proc.argv[0];
   if (name == "node" || name == "echo" || name == "cat" || name == "ls" || name == "pwd" ||
       name == "sh" || name == "true" || name == "false" || name == "mkdir" || name == "rm" ||
-      name == "cp" || name == "mv" || name == "which" || name == "npm" || name == "npx") {
+      name == "cp" || name == "mv" || name == "which" || name == "npm" || name == "npx" ||
+      name == "vite" || name == "next" || name == "test") {
     write_out(proc, "/usr/bin/" + name + "\n");
     return 0;
   }
@@ -500,7 +566,25 @@ ShRun sh_run_simple(Kernel& k, std::string line, std::string& cwd,
   }
   if (parts.empty()) return r;
   std::string cmd = parts[0];
-  std::vector<std::string> argv(parts.begin() + 1, parts.end());
+  std::vector<std::string> argv = expand_argv_globs(k, cwd, std::vector<std::string>(parts.begin() + 1, parts.end()));
+  if (cmd == "test" || cmd == "[") {
+    bool bracket = cmd == "[";
+    if (bracket && !argv.empty() && argv.back() == "]") argv.pop_back();
+    bool ok = false;
+    if (argv.size() >= 2 && argv[0] == "-f") {
+      auto st = k.vfs().stat(join_path(cwd, argv[1]), true);
+      ok = st && st->kind == NodeKind::File;
+    } else if (argv.size() >= 2 && argv[0] == "-d") {
+      auto st = k.vfs().stat(join_path(cwd, argv[1]), true);
+      ok = st && st->kind == NodeKind::Directory;
+    } else if (argv.size() >= 2 && argv[0] == "-e") {
+      ok = k.vfs().exists(join_path(cwd, argv[1]));
+    } else if (argv.size() == 1) {
+      ok = !argv[0].empty();
+    }
+    r.code = ok ? 0 : 1;
+    return r;
+  }
   if (cmd == "cd") {
     std::string dest = argv.empty() ? "/home" : join_path(cwd, argv[0]);
     if (!k.vfs().exists(dest)) {
@@ -1895,6 +1979,58 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
 
 #endif  // BN_HAS_QUICKJS
 
+int cmd_test(Kernel& k, Process& proc) {
+  auto argv = proc.argv;
+  bool bracket = proc.cmd == "[";
+  if (bracket && !argv.empty() && argv.back() == "]") argv.pop_back();
+  bool ok = false;
+  if (argv.size() >= 2 && argv[0] == "-f") {
+    auto st = k.vfs().stat(join_path(proc.cwd, argv[1]), true);
+    ok = st && st->kind == NodeKind::File;
+  } else if (argv.size() >= 2 && argv[0] == "-d") {
+    auto st = k.vfs().stat(join_path(proc.cwd, argv[1]), true);
+    ok = st && st->kind == NodeKind::Directory;
+  } else if (argv.size() >= 2 && argv[0] == "-e") {
+    ok = k.vfs().exists(join_path(proc.cwd, argv[1]));
+  } else if (argv.size() == 1) {
+    ok = !argv[0].empty();
+  }
+  return ok ? 0 : 1;
+}
+
+int cmd_vite_or_next(Kernel&, Process& proc) {
+  std::string tool = proc.cmd;
+  std::string mode = "dev";
+  for (const auto& a : proc.argv) {
+    if (a == "build") mode = "build";
+    else if (a == "preview" || a == "start") mode = "preview";
+    else if (a == "dev") mode = "dev";
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM(
+      {
+        var tool = UTF8ToString($0);
+        var cwd = UTF8ToString($1);
+        var mode = UTF8ToString($2);
+        if (typeof globalThis.__bn_on_tool === 'function') {
+          globalThis.__bn_on_tool(tool, cwd, mode);
+        }
+      },
+      tool.c_str(), proc.cwd.c_str(), mode.c_str());
+  write_out(proc, tool + " " + mode + " (host esbuild-wasm)\n");
+  if (mode == "dev" || mode == "preview") {
+    proc.keep_alive = true;
+    return -1;
+  }
+  // build: host runs async; stay alive until the tab's bundler finishes (kill to stop)
+  proc.keep_alive = true;
+  return -1;
+#else
+  write_out(proc, tool + ": in-tab " + mode + " uses host esbuild-wasm (browser/WASM)\n");
+  return 0;
+#endif
+}
+
 int cmd_node(Kernel& kernel, Process& proc) {
 #if defined(BN_HAS_QUICKJS)
   return run_node_quickjs(kernel, proc);
@@ -1931,6 +2067,10 @@ void register_core_commands(Kernel& kernel) {
   kernel.register_command("env", cmd_env);
   kernel.register_command("sh", cmd_sh);
   kernel.register_command("bash", cmd_sh);
+  kernel.register_command("test", cmd_test);
+  kernel.register_command("[", cmd_test);
+  kernel.register_command("vite", cmd_vite_or_next);
+  kernel.register_command("next", cmd_vite_or_next);
 }
 
 void register_node_command(Kernel& kernel) {

@@ -83,7 +83,7 @@ function resolveExportsTarget(target, base) {
     return null;
   }
   if (target && typeof target === 'object') {
-    var order = ['require', 'import', 'default', 'node', 'browser'];
+    var order = ['browser', 'import', 'require', 'default', 'node', 'development', 'module'];
     for (var i = 0; i < order.length; i++) {
       if (target[order[i]] != null) {
         var hit = resolveExportsTarget(target[order[i]], base);
@@ -164,7 +164,8 @@ var __bn_CORE_MODULES = [
   'fs', 'path', 'http', 'https', 'net', 'url', 'events', 'util', 'stream', 'os',
   'module', 'buffer', 'assert', 'querystring', 'crypto', 'perf_hooks', 'async_hooks',
   'diagnostics_channel', 'zlib', 'string_decoder', 'timers', 'timers/promises', 'child_process',
-  'tty', 'readline', 'worker_threads', 'vm', 'cluster', 'dns', 'dgram', 'inspector', 'v8', 'wasi'
+  'tty', 'readline', 'worker_threads', 'vm', 'cluster', 'dns', 'dgram', 'inspector', 'v8', 'wasi',
+  'connect', 'ws', 'corepack'
 ];
 
 function resolveFile(base) {
@@ -1816,6 +1817,46 @@ function loadCore(name) {
   }
   if (name === 'wasi') {
     return { WASI: function() { throw new Error('wasi: not implemented'); } };
+  }
+  if (name === 'connect') {
+    return function createConnect() {
+      var stack = [];
+      function app(req, res) {
+        var i = 0;
+        function next(err) {
+          if (err) { res.statusCode = 500; if (res.end) res.end(String(err)); return; }
+          var fn = stack[i++];
+          if (!fn) return;
+          fn(req, res, next);
+        }
+        next();
+      }
+      app.use = function(fn) { stack.push(fn); return app; };
+      app.listen = function(port, cb) {
+        return loadCore('http').createServer(app).listen(port, cb);
+      };
+      return app;
+    };
+  }
+  if (name === 'ws') {
+    function Socket() {
+      this.send = function() {};
+      this.close = function() {};
+      this.on = function() { return this; };
+    }
+    return {
+      WebSocket: function() { return new Socket(); },
+      Server: function() {
+        this.on = function() { return this; };
+        this.handleUpgrade = function(req, socket, head, cb) { if (cb) cb(new Socket()); };
+      }
+    };
+  }
+  if (name === 'corepack') {
+    return {
+      enable: function() {},
+      prepare: function() { throw new Error('corepack: NodeBrowser uses npm; yarn/pnpm lockfiles are not executed'); }
+    };
   }
   throw new Error('Unknown core ' + name);
 }

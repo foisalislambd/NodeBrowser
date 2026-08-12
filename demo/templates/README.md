@@ -7,4 +7,4 @@ Real scaffolded apps (not hand-rolled stubs):
 | `vite/` | `create-vite` (React) | `npm run dev:vite` · `build:vite` · `preview:vite` |
 | `next/` | `create-next-app` (App Router) | `npm run dev:next` · `build:next` · `start:next` |
 
-The NodeBrowser demo UI can **Load** these into the VFS (`/apps/vite`, `/apps/next`). Full Vite/Next CLIs still run on the host until NodeBrowser can host them in-tab.
+The NodeBrowser demo **Load + Preview** buttons run an **in-tab** Vite/Next subset (esbuild-wasm + C++ VFS). Upstream `vite`/`next` CLIs are not executed inside QuickJS.

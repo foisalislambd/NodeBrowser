@@ -315,53 +315,57 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 - [x] C++ `cmd_sh`: `|`, `&&`, `||`, `;`, redirects, env, `cd`/`export`
 - [x] Builtins: `pwd` `echo` `which` `ls` `cat` `mkdir` `rm` `cp` `mv`
 - [x] Demo line → `spawn('sh', ['-c', line])`
-- [ ] More POSIX in **C++** (glob, quotes, `rm -r` already)
+- [x] More POSIX in **C++**: glob `*`/`?`, `test`/`[` `-f`/`-d`/`-e`
 - [ ] xterm UI is Phase 32 (**Host**); PTY semantics stay kernel
 
-#### Phase 26 — Alternate lockfiles `S–M`
+#### Phase 26 — Alternate lockfiles `S–M` ✅ (MVP)
 
-- [ ] Detect pnpm/yarn lock — Host parse or C++ later; or clear error
-- [ ] `corepack` stub in **embed** if required
+- [x] Detect pnpm/yarn lock — warn on `install`; npm still extracts into kernel VFS
+- [x] `corepack` stub in **embed** (does not run yarn/pnpm)
 
 ---
 
-### Pillar D — Vite in the browser (runs on WASM `node`)
+### Pillar D — Vite in the browser (kernel VFS + esbuild-wasm)
 
-If Vite only works on the JS fallback, it is **not done**.
+Upstream `vite` CLI is too large for QuickJS. In-tab Vite = C++ `vite` command + host esbuild-wasm + kernel files.
 
-#### Phase 27 — Vite platform APIs `M`
+#### Phase 27 — Vite platform APIs `M` ✅ (MVP)
 
 - [x] `fs.watch` (Phase 15, C++)
-- [ ] HTTP upgrade / WebSocket emulation: kernel ports + SW (**not** a JS `net`)
-- [ ] `esbuild` in a Worker — host glue; Vite still spawned as kernel `node`
-- [ ] `connect` middleware → HttpBridge via kernel listen
+- [x] HTTP upgrade / WebSocket: guest `ws` stub + HMR **reload** via `__hmr_gen` poll
+- [x] `esbuild` in a Worker — host `esbuild-wasm` `{ worker: true }` in browser
+- [x] `connect`-style middleware — guest `connect` stub → `http.createServer`
 
-#### Phase 28 — In-tab `vite` / `vite build` `L`
+#### Phase 28 — In-tab `vite` / `vite build` `L` ✅ (subset)
 
-- [ ] `node node_modules/vite/bin/vite.js` via **WASM spawn**
-- [ ] Dev server iframe + HMR
-- [ ] `vite build` → `/dist` + `serveStatic` (host static is OK; build is kernel)
-- [ ] `vite.config.js` CJS+ESM in guest
-- [ ] Unsupported plugin → clear error from guest/kernel
+- [x] `vite` / `vite build` — C++ command → host `__bn_on_tool` → `viteDev` / `viteBuild`
+- [x] Dev server iframe + reload-on-save (`fs-change` → rebuild)
+- [x] Production `vite build` → `dist/` + `serveStatic`
+- [x] `vite.config.js` read; Vue/Svelte plugins → clear error
+- [x] Demo Load Vite + Preview uses in-tab path (not host `npm run dev:vite`)
 
-**Exit:** `demo/templates/vite` runs inside NodeBrowser **WASM**, not host `npm run dev:vite`.
+**Exit (subset):** `demo/templates/vite` bundles in-tab. Not bit-identical to Vite 8.
 
-#### Phase 29 — Vite plugins `M`
+#### Phase 29 — Vite plugins `M` ✅ (MVP)
 
-- [ ] plugin-react / vue / svelte smoke **on WASM**
-- [ ] CSS / PostCSS / Tailwind where JS packages run in QuickJS
-- [ ] `resolve.conditions` in **embed** resolver
+- [x] React path = esbuild `jsx: automatic` + react shim
+- [x] CSS imports + CSS modules proxy; SVG/PNG as URL strings
+- [x] Vue/Svelte: explicit unsupported error
+- [x] `resolve.conditions` includes `browser` / `development` in **embed**
 
 ---
 
-### Pillar E — Next.js subset (WASM `node` only)
+### Pillar E — Next.js subset (esbuild + kernel VFS; not full `next` CLI)
 
-#### Phase 30 — Next hello `L`
+#### Phase 30 — Next hello `L` ✅ (subset)
 
-- [ ] `next dev` / `build` / `start` for App Router static + simple SSR **in WASM**
-- [ ] No edge middleware unless polyfilled in embed
-- [ ] Image/font stubs in embed
-- [ ] Pin supported Next version
+- [x] In-tab `nextDev` / `nextBuild` for App Router client pages (`app/page.js`)
+- [x] No edge middleware (documented)
+- [x] `next/image` + `next/link` shims; CSS modules proxy
+- [x] Pin: Next **15.5.x** template; runtime is subset not `next start`
+- [x] Extra route `app/hello/page.js` → `/hello`
+
+**Exit (subset):** demo Next preview serves bundled App Router page + `/hello`. Not full SSR/Turbopack.
 
 #### Phase 31 — Next harden `L`
 
@@ -370,7 +374,7 @@ If Vite only works on the JS fallback, it is **not done**.
 - [ ] Cache/fetch stubs
 - [ ] Turbopack = non-goal
 
-**Exit:** `demo/templates/next` default page + one dynamic route on WASM.
+**Exit (subset):** demo Next preview serves bundled App Router page + `/hello`. Full SSR is Phase 31.
 
 ---
 
