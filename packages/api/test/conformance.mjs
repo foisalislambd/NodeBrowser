@@ -3,7 +3,7 @@
  * Exit 0 on success.
  */
 import { NodeBrowser } from '../dist/index.js';
-import { resetKernelCache } from '../dist/kernel.js';
+import { resetKernelCache } from '../dist/kernel/load.js';
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg || 'assert failed');
@@ -355,7 +355,7 @@ async function main() {
   assert(globOut.out.includes('g1.txt') && globOut.out.includes('g2.txt'), globOut.out);
 
   await bn.fs.writeFile('/home/project/yarn.lock', '# yarn');
-  const { detectForeignLockfile } = await import('../dist/lockfiles.js');
+  const { detectForeignLockfile } = await import('../dist/npm/lockfiles.js');
   const foreign = await detectForeignLockfile(bn.fs, '/home/project');
   assert(foreign === 'yarn', 'yarn lock detect');
 
@@ -380,7 +380,7 @@ async function main() {
   const hjs = await bn.fs.readFile(nb2.outDir + '/hello/bundle.js', 'utf8');
   assert(hjs.length > 20, 'hello route bundle');
 
-  const { makeStoredZip } = await import('../dist/zip.js');
+  const { makeStoredZip } = await import('../dist/fs/zip.js');
   const zip = makeStoredZip({
     'site/index.html': '<!doctype html><h1>zip-ok</h1>',
     'site/app.js': 'console.log(1)',
@@ -388,7 +388,7 @@ async function main() {
   const imp = await bn.importZip(zip, '/home/uploads/sitezip');
   assert(imp.files === 2, 'zip file count');
   assert((await bn.fs.readFile('/home/uploads/sitezip/index.html', 'utf8')).includes('zip-ok'));
-  const kind = (await import('../dist/project-preview.js')).detectProjectKind;
+  const kind = (await import('../dist/bundler/preview.js')).detectProjectKind;
   assert((await kind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
 
   const { WebContainer } = await import('../dist/compat.js');
@@ -398,7 +398,7 @@ async function main() {
   assert((await wc.fs.readFile('/home/compat/compat.txt', 'utf8')) === 'ok');
   wc.teardown();
 
-  const { assertAllowedFetchUrl } = await import('../dist/egress.js');
+  const { assertAllowedFetchUrl } = await import('../dist/net/egress.js');
   let blocked = false;
   try {
     assertAllowedFetchUrl('https://evil.example/x');

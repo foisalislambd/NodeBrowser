@@ -13,7 +13,7 @@ This is the whole system. Do not grow a parallel Node in browser JS.
 | Layer | Language | Owns | Forbidden |
 | ----- | -------- | ---- | --------- |
 | **Kernel** | **C / C++ → WASM** (Emscripten) | VFS, processes, pipes, ports, spawn, shell builtins, C ABI (`bn_*`) | Reimplementing this in TS |
-| **Guest Node** | **C++ + QuickJS** (`kernel/embed/guest_modules.js` baked into `generated_guest_modules.hpp`) | `require`, ESM rewrite, `fs`/`http`/`stream`/`crypto`/… as Node sees them | New guest features in `packages/api/src/js-runtime.ts` |
+| **Guest Node** | **C++ + QuickJS** (`kernel/embed/guest_modules.js` baked into `generated_guest_modules.hpp`) | `require`, ESM rewrite, `fs`/`http`/`stream`/`crypto`/… as Node sees them | New guest features in `packages/api/src/kernel/js-runtime.ts` |
 | **Host API** | TypeScript (`@foisal/nodebrowser`) | `boot` / `mount` / `spawn` / events; load WASM; call C ABI | Guest semantics, shell, Node modules |
 | **Browser bridges** | TypeScript | Service Worker HttpBridge, OPFS persist, `fetch` to npm registry, esbuild-wasm glue | Treating fetch/OPFS as “the Node runtime” |
 | **Demo / docs UI** | JS/HTML/CSS | Editor, terminal chrome, preview iframe | Runtime behavior |

@@ -1,23 +1,23 @@
 import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
-import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from './kernel.js';
-import { flattenTree } from './fs-tree.js';
-import { installPackage } from './npm-install.js';
-import { detectForeignLockfile } from './lockfiles.js';
-import { HttpBridge } from './http-bridge.js';
-import { bundleWithEsbuild, type BundleOptions } from './esbuild-bundle.js';
-import { viteBuild, viteDev } from './vite-compat.js';
-import { nextBuild, nextDev } from './next-compat.js';
-import type { HttpRegistrar } from './kernel.js';
+import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from '../kernel/load.js';
+import { flattenTree } from '../fs/tree.js';
+import { installPackage } from '../npm/install.js';
+import { detectForeignLockfile } from '../npm/lockfiles.js';
+import { HttpBridge } from '../net/http-bridge.js';
+import { bundleWithEsbuild, type BundleOptions } from '../bundler/esbuild.js';
+import { viteBuild, viteDev } from '../bundler/vite.js';
+import { nextBuild, nextDev } from '../bundler/next.js';
+import type { HttpRegistrar } from '../kernel/load.js';
 import {
   createOpfsFlusher,
   exportHomeTarGz,
   hydrateFromOpfs,
   importHomeTarGz,
   opfsAvailable,
-} from './opfs.js';
-import { zlibPureSync } from './zlib-pure.js';
-import { extractArchive, stripSingleRoot, joinArchivePath } from './zip.js';
-import { previewProject, type PreviewResult } from './project-preview.js';
+} from '../fs/opfs.js';
+import { zlibPureSync } from '../compress/zlib.js';
+import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
+import { previewProject, type PreviewResult } from '../bundler/preview.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -755,13 +755,13 @@ function joinFsPath(...parts: string[]): string {
 }
 
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
-export type { BundleOptions } from './esbuild-bundle.js';
-export type { PreviewResult, ProjectKind } from './project-preview.js';
-export { detectProjectKind } from './project-preview.js';
-export { extractArchive, isZip, isGzip } from './zip.js';
-export { HttpBridge } from './http-bridge.js';
-export { resetKernelCache, type UseWasmOption } from './kernel.js';
-export { assertAllowedFetchUrl } from './egress.js';
+export type { BundleOptions } from '../bundler/esbuild.js';
+export type { PreviewResult, ProjectKind } from '../bundler/preview.js';
+export { detectProjectKind } from '../bundler/preview.js';
+export { extractArchive, isZip, isGzip } from '../fs/zip.js';
+export { HttpBridge } from '../net/http-bridge.js';
+export { resetKernelCache, type UseWasmOption } from '../kernel/load.js';
+export { assertAllowedFetchUrl } from '../net/egress.js';
 /** @deprecated Use `NodeBrowser` — kept for older snippets */
 export const BrowserNode = NodeBrowser;
 

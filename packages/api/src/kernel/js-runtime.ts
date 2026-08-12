@@ -4,7 +4,7 @@
  * kernel/embed/guest_modules.js + C++. This file exists only so Node CI
  * can boot without a WASM loader; it will be replaced with a hard error.
  */
-import type { KernelModule } from './kernel.js';
+import type { KernelModule } from './load.js';
 import {
   BUFFER_POLYFILL,
   FS_PROMISES_HELPER,
@@ -14,7 +14,7 @@ import {
   UTIL_POLYFILL,
   ZLIB_POLYFILL,
 } from './node-polyfills.js';
-import { zlibPureSync } from './zlib-pure.js';
+import { zlibPureSync } from '../compress/zlib.js';
 
 export type HttpRegistrar = (
   port: number,

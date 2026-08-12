@@ -4,8 +4,8 @@
  * Not the upstream `vite` CLI — same DX: dev / build / HMR reload.
  */
 
-import type { NodeBrowser } from './index.js';
-import { bundleWithEsbuild } from './esbuild-bundle.js';
+import type { NodeBrowser } from '../host/node-browser.js';
+import { bundleWithEsbuild } from './esbuild.js';
 
 const HMR_CLIENT = `(() => {
   let g = '';

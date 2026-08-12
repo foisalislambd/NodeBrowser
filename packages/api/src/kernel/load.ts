@@ -355,12 +355,12 @@ export function resetKernelCache(): void {
 }
 
 async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
-  const url = wasmUrl ?? new URL('../../wasm/browsernode_kernel.js', import.meta.url).href;
+  const url = wasmUrl ?? new URL('../../../wasm/browsernode_kernel.js', import.meta.url).href;
   try {
     const factory = await import(/* @vite-ignore */ url).catch(() => null);
     if (factory && typeof (factory as { default?: unknown }).default === 'function') {
       const mod = (await (factory as { default: (o?: object) => Promise<EmscriptenModule> }).default({
-        locateFile: (path: string) => new URL(`../../wasm/${path}`, import.meta.url).href,
+        locateFile: (path: string) => new URL(`../../../wasm/${path}`, import.meta.url).href,
       })) as EmscriptenModule;
       const wrapped = wrap(mod);
       wrapped.runtime = 'wasm';

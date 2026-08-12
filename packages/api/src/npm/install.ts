@@ -1,6 +1,6 @@
-import type { NodeBrowser } from './index.js';
-import { binRelTarget, makeBinShim, parseBinField } from './npm-bin.js';
-import { assertAllowedFetchUrl } from './egress.js';
+import type { NodeBrowser } from '../host/node-browser.js';
+import { binRelTarget, makeBinShim, parseBinField } from './bin.js';
+import { assertAllowedFetchUrl } from '../net/egress.js';
 
 export type InstallProgress = {
   phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done';

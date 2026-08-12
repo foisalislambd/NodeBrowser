@@ -35,7 +35,20 @@
 - Browser bridges: Service Worker HttpBridge, OPFS, **allowlisted** fetch to npm registry
 - Load WASM + call C ABI
 
-**There is no product guest Node in TypeScript.** `js-runtime.ts` is a frozen legacy fallback to delete (PLAN Phase 13b).
+**There is no product guest Node in TypeScript.** `packages/api/src/kernel/js-runtime.ts` is a frozen legacy fallback to delete (PLAN Phase 13b).
+
+### Host package layout (`packages/api/src`)
+
+| Folder | Owns |
+| ------ | ---- |
+| `host/` | `NodeBrowser`, types, WebContainer class |
+| `kernel/` | WASM loader + frozen JS fallback |
+| `fs/` | VFS tree flatten, OPFS, zip/tar |
+| `net/` | HttpBridge, npm egress allowlist |
+| `npm/` | install, bin shims, lockfile detect |
+| `bundler/` | esbuild-wasm, in-tab Vite/Next subset, ZIP preview |
+| `compress/` | gzip/inflate helper |
+| `index.ts` / `compat.ts` | public barrels (`dist/index.js`, `dist/compat.js`) |
 
 See **Language law** in `[PLAN.md](../PLAN.md)`.
 

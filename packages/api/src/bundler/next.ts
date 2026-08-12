@@ -4,8 +4,8 @@
  * Pinned intent: Next 15 App Router static + simple client pages.
  */
 
-import type { NodeBrowser } from './index.js';
-import { bundleWithEsbuild } from './esbuild-bundle.js';
+import type { NodeBrowser } from '../host/node-browser.js';
+import { bundleWithEsbuild } from './esbuild.js';
 
 function join(...parts: string[]): string {
   return parts.join('/').replace(/\/+/g, '/');

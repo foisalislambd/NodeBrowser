@@ -96,8 +96,8 @@ async function main() {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
 
-  writeFileSync(join(out, 'main.js'), readFileSync(join(demoRoot, 'src/main.vanilla.js'), 'utf8'));
-  writeFileSync(join(out, 'apps.js'), readFileSync(join(demoRoot, 'src/apps.js'), 'utf8'));
+  writeFileSync(join(out, 'main.js'), readFileSync(join(demoRoot, 'src/app/main.js'), 'utf8'));
+  writeFileSync(join(out, 'apps.js'), readFileSync(join(demoRoot, 'src/app/apps.js'), 'utf8'));
   writeFileSync(join(out, 'sw.js'), readFileSync(join(demoRoot, 'sw.js'), 'utf8'));
   cpSync(join(demoRoot, 'styles.css'), join(out, 'styles.css'));
   writeFileSync(join(out, '.nojekyll'), '');

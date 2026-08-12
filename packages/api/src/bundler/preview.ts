@@ -1,4 +1,4 @@
-import type { NodeBrowser } from './index.js';
+import type { NodeBrowser } from '../host/node-browser.js';
 
 async function readUtf8(bn: NodeBrowser, path: string): Promise<string | null> {
   try {
