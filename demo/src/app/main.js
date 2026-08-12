@@ -42,8 +42,9 @@ function $(id) {
   return document.getElementById(id);
 }
 
-function appendTerm(text) {
-  const term = $('term');
+function appendTerm(text, which) {
+  const id = which || window.__bn_active_term || 'term';
+  const term = $(id) || $('term');
   term.textContent += text;
   term.scrollTop = term.scrollHeight;
 }
@@ -349,7 +350,12 @@ async function boot() {
   const previewPath = new URL('__bn_preview', import.meta.url).pathname.replace(/\/$/, '');
   const previewBase = new URL('__bn_preview', import.meta.url).href.replace(/\/$/, '');
   // Primary path: C++ kernel via WASM (JS only if WASM fails to load)
-  bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true });
+  try {
+    bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true });
+  } catch (e) {
+    appendTerm(String(e) + '\nfalling back to useWasm:auto\n');
+    bn = await NodeBrowser.boot({ useWasm: 'auto', previewBase, persist: true });
+  }
   appendTerm(`runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}\n`);
   bn.attachServiceWorkerBridge(previewPath);
   if (bn.runtime === 'wasm') {
@@ -365,6 +371,13 @@ async function boot() {
         },
       },
     },
+  });
+  bn.on('http-log', (e) => {
+    const log = $('net-log');
+    if (log) {
+      log.textContent += `${e.method} :${e.port}${e.path} → ${e.status}\n`;
+      log.scrollTop = log.scrollHeight;
+    }
   });
   bn.on('server-ready', (port, url) => {
     appendTerm(`\n[server-ready] port=${port} url=${url}\n`);
@@ -682,6 +695,134 @@ $('btn-vite-load')?.addEventListener('click', () => viteLoad().catch((e) => appe
 $('btn-vite-preview')?.addEventListener('click', () => vitePreview().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-load')?.addEventListener('click', () => nextLoad().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-preview')?.addEventListener('click', () => nextPreview().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-express-load')?.addEventListener('click', () => {
+  (async () => {
+    if (!bn) return;
+    const { loadExpress } = await loadApps();
+    await loadExpress(bn, appendTerm);
+    await refreshTree();
+  })().catch((e) => appendTerm(String(e) + '\n'));
+});
+
+$('activity-search')?.addEventListener('click', () => {
+  const sp = $('search-panel');
+  const tree = $('file-tree');
+  if (!sp) return;
+  const show = sp.hidden;
+  sp.hidden = !show;
+  if (tree) tree.hidden = show;
+});
+
+$('fs-search')?.addEventListener('input', () => {
+  searchFiles($('fs-search').value).catch((e) => appendTerm(String(e) + '\n'));
+});
+
+async function searchFiles(q) {
+  const box = $('search-results');
+  if (!box || !bn) return;
+  box.textContent = '';
+  const needle = String(q || '').toLowerCase();
+  if (needle.length < 2) return;
+  const hits = [];
+  async function walk(dir) {
+    let names = [];
+    try {
+      names = await bn.fs.readdir(dir);
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const full = joinPath(dir, n);
+      if (n.toLowerCase().includes(needle)) hits.push(full);
+      try {
+        if ((await bn.fs.stat(full)).isDirectory()) await walk(full);
+      } catch {
+        /* skip */
+      }
+      if (hits.length > 80) return;
+    }
+  }
+  await walk('/');
+  for (const p of hits) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tree-item';
+    b.textContent = p;
+    b.addEventListener('click', () => onTreeClick(p, false).catch((e) => appendTerm(String(e) + '\n')));
+    box.appendChild(b);
+  }
+}
+
+function setTermTab(which) {
+  window.__bn_active_term = which === 2 ? 'term-2' : 'term';
+  $('term-wrap-1').hidden = which === 2;
+  $('term-wrap-2').hidden = which !== 2;
+  $('net-log').hidden = true;
+  $('tab-term-1')?.classList.toggle('active', which === 1);
+  $('tab-term-2')?.classList.toggle('active', which === 2);
+  $('tab-output')?.classList.remove('active');
+}
+
+$('tab-term-1')?.addEventListener('click', () => setTermTab(1));
+$('tab-term-2')?.addEventListener('click', () => setTermTab(2));
+$('tab-output')?.addEventListener('click', () => {
+  $('term-wrap-1').hidden = true;
+  $('term-wrap-2').hidden = true;
+  $('net-log').hidden = false;
+  $('tab-term-1')?.classList.remove('active');
+  $('tab-term-2')?.classList.remove('active');
+  $('tab-output')?.classList.add('active');
+});
+
+$('term-input-2')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const line = $('term-input-2').value.trim();
+  if (!line) return;
+  $('term-input-2').value = '';
+  window.__bn_active_term = 'term-2';
+  runShellLine(line).catch((err) => appendTerm(String(err) + '\n', 'term-2'));
+});
+
+const PALETTE = [
+  ['Run file', () => runNode()],
+  ['Save', () => saveFile()],
+  ['Install lodash', () => installPkg()],
+  ['HTTP demo', () => httpDemo()],
+  ['Vite preview', () => vitePreview()],
+  ['Next preview', () => nextPreview()],
+  ['Export snapshot', () => $('btn-fs-export')?.click()],
+];
+
+function openPalette() {
+  const d = $('palette');
+  const list = $('palette-list');
+  const input = $('palette-input');
+  if (!d || !list) return;
+  list.textContent = '';
+  for (const [label, fn] of PALETTE) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'palette-item';
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      d.close();
+      Promise.resolve(fn()).catch((e) => appendTerm(String(e) + '\n'));
+    });
+    list.appendChild(b);
+  }
+  d.showModal();
+  input.value = '';
+  input.focus();
+}
+
+$('btn-palette')?.addEventListener('click', () => openPalette());
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openPalette();
+  }
+});
 $('btn-zip-upload')?.addEventListener('click', () => openZipPicker());
 $('btn-fs-import')?.addEventListener('click', () => openZipPicker());
 $('btn-zip-run')?.addEventListener('click', () => runCurrentProject().catch((e) => appendTerm(String(e) + '\n')));

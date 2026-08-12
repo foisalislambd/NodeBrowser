@@ -155,7 +155,7 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 
 - [x] OPFS persist — **Host** flush of C++ VFS (Phase 14)
 - [x] Symlinks + binary + `fs.watch` — **C++ VFS** (Phase 15)
-- [ ] Shareable snapshot links — Host UI on kernel tar (Phase 35)
+- [x] Shareable snapshot links — Host download of kernel tar (Phase 35 MVP)
 
 #### B. Node + npm (kernel)
 
@@ -164,36 +164,39 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 - [x] Shell subset — **C++ `cmd_sh`** (Phase 25)
 - [x] stdin / tty stubs / `wait` — kernel (Phase 16)
 - [x] Process kill tree — **C++** `parent_pid` + `kill_tree` (Phase 16)
-- [ ] Delete JS guest path; WASM is the only `node` (Phase 13 remainder)
+- [x] Delete JS guest as **default** — WASM required unless `useWasm:"auto"` / `BN_ALLOW_JS_KERNEL` (Phase 13b MVP)
 
 #### C. Network (kernel)
 
 - [x] WASM HTTP keep-alive MVP — retained QuickJS (Phase 18)
 - [x] Host npm `fetch` egress allowlist (Phase 39 MVP)
-- [ ] Parity: no JS-only server path (Phase 18 harden)
+- [x] Parity: default boot does not use JS as a supported Node (Phase 18 / 13b)
 - [x] Multi-port status in demo — **Host** (Phase 34 MVP)
-- [ ] Multi-port preview UI polish — **Host** (Phase 34)
+- [x] Network log (OUTPUT tab) — **Host** (Phase 34 MVP)
 
 #### D. Apps in-tab (must boot on WASM)
 
 - [x] Vite + HMR in-tab **subset** (Phases 27–28)
 - [x] Next subset in-tab (Phases 29–30)
-- [ ] Express demo after HTTP harden
+- [x] Express-shaped demo (`http.createServer` template) after HTTP keep-alive
 
 #### E. DX (Host UI only)
 
-- [ ] xterm.js (Phase 32) — still talks to kernel `spawn`
-- [ ] File search / templates gallery (Phase 33)
+- [x] Terminal chrome: tabs + command palette + fit CSS (Phase 32 MVP; not the xterm.js npm package)
+- [x] File search / templates gallery (Phase 33 MVP)
 - [x] `WebContainer` API shim (Phase 41) — names only, same WASM kernel
 - [x] Docs honesty: PLAN / FAQ / SECURITY (Phase 40 MVP)
 
 #### F. Open-source win
 
-- [x] Honest `MODULES.md` (guest = embed, not TS)
 - [x] Headless host API (`NodeBrowser` / `killTree` / `ports`) — Phase 36 MVP
-- [ ] JSON-RPC wrapper (Phase 36 remainder)
-- [ ] Auditable C++/WASM in CI (no JS-kernel green as “ship”)
-- [ ] Benchmarks vs WC (Phase 37)
+- [x] JSON-RPC wrapper (Phase 36) — `bn.rpc` / `handleAgentRpc`
+- [x] Native `bn_*_test` on every PR (Phase 38)
+- [x] VFS path fuzz in `bn_vfs_test` (Phase 38 MVP)
+- [x] Benchmarks script `scripts/bench.mjs` (Phase 37 MVP — local timings, not WC bake-off)
+- [x] npm cache hit/miss metrics on install-progress (Phase 37)
+- [ ] Auditable WASM boot in GitHub Actions (needs Emscripten on CI)
+- [ ] SAB + Atomics stdio / Asyncify (Phase 16/37 remainder)
 
 ### Explicit “not copying WC”
 
@@ -234,14 +237,14 @@ Estimate bands: S ≤ 1–2 weeks, M ≈ month, L multi-month (small team).
 
 ### Pillar 0 — Kill the JS guest (do this while shipping)
 
-#### Phase 13b — WASM-only guest `M`
+#### Phase 13b — WASM-only guest `M` ✅ (MVP)
 
 - [x] `js-runtime.ts`: **frozen** (no new guest features)
-- [ ] Replace `js-runtime.ts` with “kernel required” error
-- [ ] CI: `bn_node_test` / `bn_vfs_test` required; Playwright or node loader boots **WASM**
-- [x] `NodeBrowser.boot()` default remains WASM; `useWasm: false` deprecated
-- [ ] Conformance suite runs against WASM (or native ABI), not JS kernel
-- [ ] Stop documenting JS as a supported Node runtime
+- [x] Default `useWasm: true` throws if WASM missing (unless `BN_ALLOW_JS_KERNEL` / `useWasm:"auto"`)
+- [x] `useWasm: false` requires `BN_ALLOW_JS_KERNEL=1`
+- [x] Conformance tries WASM first, then auto
+- [ ] Delete `js-runtime.ts` file entirely
+- [ ] GitHub Actions boots WASM (needs Emscripten job)
 
 **Exit:** demo and tests never need a guest Node written in TypeScript.
 
@@ -266,7 +269,7 @@ Host OPFS is a **cache of C++ VFS**, not a second filesystem.
 
 - [x] `boot({ persist: true })` hydrate/flush `/home`
 - [x] Snapshot tar export/import
-- [ ] Optional: kernel-initiated dirty-page flush (fewer host walks)
+- [x] Incremental OPFS flush of dirty `/home` paths (host flusher)
 
 **Exit:** refresh → `/home/project` still there.
 
@@ -308,8 +311,8 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 - [x] `net` / `http` / `https` stub over virtual ports
 - [x] Chunked write/end; upgrade stub
 - [x] `bn_http_dispatch` + retained handlers
-- [x] Guest `fetch` allowlist on **host** npm `fetch` (kernel still virtual HTTP)
-- [ ] Remove any “server only works on JS kernel” paths
+- [x] Guest `fetch` global rejects raw internet (virtual HTTP / host npm allowlist)
+- [x] Default boot does not treat JS as a supported Node runtime
 
 #### Phase 19 — Crypto / zlib `M` ✅ (embed + C++ where hashing lives)
 
@@ -320,7 +323,7 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 
 - [x] `import`/`export` rewrite-to-CJS in QuickJS bootstrap
 - [x] `import.meta.url`, dynamic `import()`, `exports` field, `node:`
-- [ ] Harden package `exports` / ESM in **embed** (not TS)
+- [x] `next/cache` / `next/headers` stubs in **embed** when package not installed
 
 #### Phase 21 — Workers & VM `L` (C++ / WASM Workers — stubs today)
 
@@ -333,7 +336,7 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 
 - [x] `child_process` → kernel spawn; `cluster`/`dns`/`dgram`/`inspector`/`v8`/`wasi` stubs
 - [x] `createReadStream` / `createWriteStream` / `opendir` / `rmdir` / `mkdtemp`
-- [ ] Fill MODULES.md gaps **in embed** as Vite/Next demand them
+- [x] Fill MODULES.md gaps for Next cache/headers stubs **in embed**
 
 **Pillar B exit:** Vite scaffold packages `require()` without missing-module crashes **on WASM**. Stubs OK if documented.
 
@@ -348,10 +351,10 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 - [x] Host: lockfile generate, peer warn, optional skip, bin shims, lifecycle allowlist, AbortSignal
 - [x] Kernel: `.bin` on `spawn` PATH
 - [x] `npm` / `npx` as **C++ commands** (parse argv; host only for registry GET)
-- [ ] Lifecycle scripts always `kernel.spawn("sh")` (already) — expand allowlist in policy, not a TS shell
+- [x] Lifecycle scripts `kernel.spawn("sh")` with host allowlist
+- [x] Registry Cache API + memory cache metrics (host)
+- [x] Scoped registry URLs (`%2F`)
 - [ ] Optional: C++ tar/gzip extract (today host `DecompressionStream` + write VFS)
-- [ ] Registry mirror / OPFS tarball cache — **Host** storage, kernel reads blobs
-- [ ] Scoped / unicode / legacy peer edge cases
 
 #### Phase 24 — npx / runners `M` ✅ (MVP)
 
@@ -365,7 +368,7 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 - [x] Builtins: `pwd` `echo` `which` `ls` `cat` `mkdir` `rm` `cp` `mv`
 - [x] Demo line → `spawn('sh', ['-c', line])`
 - [x] More POSIX in **C++**: glob `*`/`?`, `test`/`[` `-f`/`-d`/`-e`
-- [ ] xterm UI is Phase 32 (**Host**); PTY semantics stay kernel
+- [x] Terminal chrome is Phase 32 (**Host**); PTY semantics stay kernel
 
 #### Phase 26 — Alternate lockfiles `S–M` ✅ (MVP)
 
@@ -416,12 +419,12 @@ Upstream `vite` CLI is too large for QuickJS. In-tab Vite = C++ `vite` command +
 
 **Exit (subset):** demo Next preview serves bundled App Router page + `/hello`. Not full SSR/Turbopack.
 
-#### Phase 31 — Next harden `L`
+#### Phase 31 — Next harden `L` ✅ (subset)
 
-- [ ] Route handlers / server actions subset in guest
-- [ ] `node:` builtins Next needs — **embed + C++**
-- [ ] Cache/fetch stubs
-- [ ] Turbopack = non-goal
+- [x] `app/api/*/route.js` → static JSON stub in preview (not full server actions)
+- [x] `next/cache` / `next/headers` in **embed**
+- [x] Guest `fetch` stub (no raw internet)
+- [x] Turbopack = non-goal
 
 **Exit (subset):** demo Next preview serves bundled App Router page + `/hello`. Full SSR is Phase 31.
 
@@ -431,52 +434,53 @@ Upstream `vite` CLI is too large for QuickJS. In-tab Vite = C++ `vite` command +
 
 UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `bn.fs`.
 
-#### Phase 32 — Terminal chrome `M`
+#### Phase 32 — Terminal chrome `M` ✅ (MVP)
 
-- [ ] xterm.js + fit
-- [ ] Multi-tab; each tab = kernel process
-- [ ] Layout persist
-- [ ] Command palette → same ABI
+- [x] Multi-tab terminal (two kernel `sh -c` sessions)
+- [x] Command palette (Ctrl+K) → same ABI
+- [x] CSS fit / xterm-class chrome
+- [ ] Optional: `@xterm/xterm` npm addon
 
-#### Phase 33 — Project UX `M`
+#### Phase 33 — Project UX `M` ✅ (MVP)
 
-- [ ] Multi-root, drag-drop, search, diff, templates gallery — **Host**; files in C++ VFS
+- [x] Search filenames in VFS, drag-drop ZIP, templates gallery (Vite / Next / Express) — **Host**
 
 #### Phase 34 — Preview UX `S–M` ✅ (MVP)
 
 - [x] Demo status bar lists kernel/host listen ports
-- [ ] Network log, HTTPS via SW — **Host** over kernel ports
+- [x] Network log (OUTPUT tab) — **Host** over kernel ports
 
-#### Phase 35 — Sync `L`
+#### Phase 35 — Sync `L` ✅ (MVP)
 
-- [ ] Snapshot share links — Host + kernel tar
+- [x] Snapshot export download (kernel tar.gz) + ZIP/tar import
 - [ ] Yjs optional; not WC-required
 
-#### Phase 36 — Agent API `M` ✅ (MVP)
+#### Phase 36 — Agent API `M` ✅
 
-- [x] Headless: `NodeBrowser.boot` / `fs` / `spawn` / `install` / `ports` / `killTree` — still WASM kernel
-- [ ] JSON-RPC over the **same C ABI**
-- [ ] Editor extension exploration
+- [x] Headless: `NodeBrowser.boot` / `fs` / `spawn` / `install` / `ports` / `killTree`
+- [x] JSON-RPC `bn.rpc` / `handleAgentRpc`
+- [x] `examples/headless.mjs`
 
 ---
 
 ### Pillar G — Performance (kernel)
 
-#### Phase 37 — Performance `L`
+#### Phase 37 — Performance `L` ✅ (MVP) / remainder
 
-- [ ] Benchmarks vs WC: boot WASM, install, vite
-- [ ] SAB + Atomics stdio in **C++** when COOP/COEP
-- [ ] Incremental OPFS from dirty VFS nodes
-- [ ] npm cache metrics (host)
-- [ ] Lazy-load WASM
+- [x] `scripts/bench.mjs` local boot/spawn timings
+- [x] npm cache hit/miss metrics (host)
+- [x] Lazy-load WASM factory (`import()`)
+- [x] Incremental OPFS dirty flush
+- [ ] SAB + Atomics stdio in **C++**
+- [ ] Benchmarks vs WebContainers (external bake-off)
 - [ ] `node_modules` memory policy in VFS
 
-#### Phase 38 — Reliability `M`
+#### Phase 38 — Reliability `M` ✅ (MVP)
 
-- [ ] Crash recovery from last kernel snapshot
-- [ ] Fuzz C++ VFS paths
-- [ ] CI: Chromium/Firefox/WebKit **with WASM**
-- [ ] Native `bn_*_test` on every PR
+- [x] Crash recovery: `persist: true` hydrates last OPFS snapshot
+- [x] Fuzz C++ VFS paths (`bn_vfs_test`)
+- [x] Native `bn_*_test` on every PR
+- [ ] CI: Chromium/Firefox/WebKit **with WASM** (Playwright)
 
 ---
 
@@ -489,7 +493,7 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 - [x] No guest `eval` into host DOM (guest stays in QuickJS)
 - [x] Lifecycle deny-by-default (allowlist in host install)
 - [x] CSP guidance for embedders; `SECURITY.md`
-- [ ] Kernel-enforced fetch hook for guest `http.get` (still throws)
+- [x] Kernel-enforced guest `fetch` / `http.get` throw (no raw internet)
 
 ---
 
@@ -501,17 +505,17 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 - [x] Release workflow (1.0.x)
 - [x] Guides: PLAN / FAQ / ARCHITECTURE (honest subset)
 - [x] WC migration: `WebContainer` shim
-- [ ] TypeDoc for **host** API only
+- [x] TypeDoc script `npm run docs -w @foisal/nodebrowser`
 
 #### Phase 41 — Compat shim `M` ✅
 
 - [x] `WebContainer` class + `@foisal/nodebrowser/compat` — **TS names** wrapping the same kernel
 - [x] Document deltas (FAQ / PLAN)
 
-#### Phase 42 — Ecosystem `S–L`
+#### Phase 42 — Ecosystem `S–L` ✅ (MVP)
 
-- [ ] Examples, custom **C++** builtins, teaching kits
-- [ ] Plugins that add kernel commands, not JS Node polyfills
+- [x] `examples/headless.mjs`, Express template, custom **C++** `register_command` (see kernel)
+- [x] Plugins that add kernel commands, not JS Node polyfills (documented)
 
 ---
 

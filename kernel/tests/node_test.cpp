@@ -273,6 +273,17 @@ int main() {
     auto out = k.get(pid)->stdout_buf.read_all_string();
     CHECK(out.find("frombin") != std::string::npos);
   }
+  {
+    k.vfs().write_text(
+        "/ncache.js",
+        "const c=require('next/cache');\n"
+        "c.revalidatePath('/');\n"
+        "console.log('ncache='+typeof c.unstable_cache);\n");
+    auto pid = k.spawn("node", {"/ncache.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("ncache=function") != std::string::npos);
+  }
 #endif
 
   {

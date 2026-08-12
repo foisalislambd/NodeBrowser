@@ -50,6 +50,24 @@ export class HttpBridge {
     return [...this.#servers.keys()];
   }
 
+  #access: { port: number; method: string; path: string; status: number }[] = [];
+  #onAccess: ((e: { port: number; method: string; path: string; status: number }) => void) | null = null;
+
+  setAccessListener(fn: ((e: { port: number; method: string; path: string; status: number }) => void) | null): void {
+    this.#onAccess = fn;
+  }
+
+  accessLog(): { port: number; method: string; path: string; status: number }[] {
+    return this.#access.slice(-200);
+  }
+
+  #noteAccess(port: number, method: string, path: string, status: number): void {
+    const e = { port, method, path, status };
+    this.#access.push(e);
+    if (this.#access.length > 200) this.#access.shift();
+    this.#onAccess?.(e);
+  }
+
   /** Invoke registered Node-style handler; returns a Response payload. */
   async dispatch(req: IncomingHttpRequest): Promise<OutgoingHttpResponse> {
     const handler = this.#servers.get(req.port | 0);
@@ -71,6 +89,7 @@ export class HttpBridge {
       const finish = () => {
         if (ended) return;
         ended = true;
+        this.#noteAccess(req.port | 0, req.method || 'GET', req.path || '/', status);
         resolve({ id: req.id, status, headers, body });
       };
 

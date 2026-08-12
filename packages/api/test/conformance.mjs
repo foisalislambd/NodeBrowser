@@ -23,8 +23,13 @@ async function readOut(proc) {
 
 async function main() {
   resetKernelCache();
-  const bn = await NodeBrowser.boot({ useWasm: false });
-  assert(bn.runtime === 'js', 'expected js runtime');
+  process.env.BN_ALLOW_JS_KERNEL = '1';
+  let bn;
+  try {
+    bn = await NodeBrowser.boot({ useWasm: true });
+  } catch {
+    bn = await NodeBrowser.boot({ useWasm: 'auto' });
+  }
 
   // --- exists / mkdir / write / read utf8 ---
   await bn.fs.mkdir('/home/project', { recursive: true });
@@ -408,7 +413,14 @@ async function main() {
   assert(blocked, 'egress block');
   assertAllowedFetchUrl('https://registry.npmjs.org/left-pad');
 
-  console.log('Phases 13–30 + zip upload + production v1: OK (runtime=%s)', bn.runtime);
+  const rpc = await bn.rpc({ method: 'runtime', id: 1 });
+  assert(rpc.result === bn.runtime, 'rpc runtime');
+  const wr = await bn.rpc({ method: 'fs.writeFile', params: { path: '/rpc.txt', contents: 'rpc-ok' } });
+  assert(wr.result === true, 'rpc write');
+  const rr = await bn.rpc({ method: 'fs.readFile', params: { path: '/rpc.txt' } });
+  assert(rr.result === 'rpc-ok', 'rpc read');
+
+  console.log('Phases 13–42 MVP + zip upload: OK (runtime=%s)', bn.runtime);
 }
 
 main().catch((e) => {

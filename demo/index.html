@@ -38,7 +38,7 @@
               <path d="M17.5 0h-9L7 1.5V6H2.5L1 7.5v15.07L2.5 24h6.07L10 22.5V18h4.7l1.3-1.43V9.5L17.5 8H22V1.5L17.5 0zM9 20.5l-.5.5H3l-.5-.5V8l.5-.5H7v5.5L8.5 14H9v6.5zm8-7l-.5.5H10V7.5L10.5 7H16v6.5zM21 7h-3.5V2H21v5z"/>
             </svg>
           </button>
-          <button type="button" class="activity-btn" data-view="search" title="Search" aria-label="Search" disabled>
+          <button type="button" class="activity-btn" data-view="search" title="Search" aria-label="Search" id="activity-search">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
               <path d="M15.25 0a8.25 8.25 0 0 0-6.18 13.72L1 22.79l1.12 1.12 8.07-9.09A8.25 8.25 0 1 0 15.25.01zm0 15a6.75 6.75 0 1 1 0-13.5 6.75 6.75 0 0 1 0 13.5z"/>
             </svg>
@@ -77,6 +77,10 @@
             </div>
           </div>
           <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
+          <div id="search-panel" class="search-panel" hidden>
+            <input id="fs-search" type="search" placeholder="Search filenames…" spellcheck="false" />
+            <div id="search-results" class="file-tree"></div>
+          </div>
           <div class="cwd-bar">
             <span class="cwd-label">cwd</span>
             <code id="cwd-path">/home/project</code>
@@ -110,6 +114,9 @@
               <button type="button" id="btn-vite-load" class="btn ghost">Load Vite</button>
               <button type="button" id="btn-vite-preview" class="btn ghost">Vite preview</button>
               <button type="button" id="btn-next-load" class="btn ghost">Load Next</button>
+              <button type="button" id="btn-next-preview" class="btn ghost">Next preview</button>
+              <button type="button" id="btn-express-load" class="btn ghost">Express</button>
+              <button type="button" id="btn-palette" class="btn ghost" title="Ctrl+K">Palette</button>
               <button type="button" id="btn-zip-upload" class="btn ghost">Upload ZIP</button>
               <button type="button" id="btn-zip-run" class="btn ghost">Run project</button>
               <input type="file" id="zip-file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" hidden />
@@ -121,13 +128,13 @@
 
           <section class="panel" data-panel="term">
             <div class="panel-tabs">
-              <button type="button" class="panel-tab active">TERMINAL</button>
-              <button type="button" class="panel-tab" disabled>OUTPUT</button>
-              <button type="button" class="panel-tab" disabled>PROBLEMS</button>
+              <button type="button" class="panel-tab active" id="tab-term-1" data-term="1">TERMINAL</button>
+              <button type="button" class="panel-tab" id="tab-term-2" data-term="2">TERMINAL 2</button>
+              <button type="button" class="panel-tab" id="tab-output">OUTPUT</button>
               <span class="panel-spacer"></span>
               <span class="live-dot" aria-hidden="true"></span>
             </div>
-            <div class="term-wrap">
+            <div class="term-wrap" id="term-wrap-1">
               <pre id="term" class="term" aria-live="polite"></pre>
               <label class="term-input-row">
                 <span class="prompt">$</span>
@@ -140,6 +147,14 @@
                 />
               </label>
             </div>
+            <div class="term-wrap" id="term-wrap-2" hidden>
+              <pre id="term-2" class="term" aria-live="polite"></pre>
+              <label class="term-input-row">
+                <span class="prompt">$</span>
+                <input type="text" id="term-input-2" spellcheck="false" autocomplete="off" placeholder="sh -c …" />
+              </label>
+            </div>
+            <pre id="net-log" class="term" hidden></pre>
           </section>
         </div>
 
@@ -200,6 +215,11 @@
       <button type="button" class="mobile-nav-btn" data-pane="term">Terminal</button>
       <button type="button" class="mobile-nav-btn" data-pane="preview">Browser</button>
     </nav>
+
+    <dialog id="palette" class="palette">
+      <input id="palette-input" placeholder="Run command…" />
+      <div id="palette-list"></div>
+    </dialog>
 
     <script type="importmap">
       {

@@ -27,6 +27,12 @@ type RegistryMeta = {
 };
 
 const memoryCache = new Map<string, Uint8Array>();
+let npmCacheHits = 0;
+let npmCacheMisses = 0;
+
+export function npmCacheStats(): { hits: number; misses: number } {
+  return { hits: npmCacheHits, misses: npmCacheMisses };
+}
 const MAX_DEPTH = 8;
 const LIFECYCLE_ALLOW = new Set(['true', 'echo', 'node']);
 
@@ -155,7 +161,12 @@ async function installOne(
   }
 
   const cacheKey = verMeta.dist.integrity || `${name}@${verMeta.version}`;
-  onProgress?.({ phase: 'fetch', name, version: verMeta.version });
+  onProgress?.({
+    phase: 'fetch',
+    name,
+    version: verMeta.version,
+    message: `tarball cache hits=${npmCacheHits} misses=${npmCacheMisses}`,
+  });
   const buf = await fetchTarball(verMeta.dist.tarball, cacheKey);
 
   onProgress?.({ phase: 'extract', name, version: verMeta.version });
@@ -246,7 +257,10 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> {
   assertAllowedFetchUrl(url);
-  if (memoryCache.has(cacheKey)) return memoryCache.get(cacheKey)!;
+  if (memoryCache.has(cacheKey)) {
+    npmCacheHits++;
+    return memoryCache.get(cacheKey)!;
+  }
 
   if (typeof caches !== 'undefined') {
     try {
@@ -254,6 +268,7 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
       const hit = await cache.match(url);
       if (hit) {
         const ab = new Uint8Array(await hit.arrayBuffer());
+        npmCacheHits++;
         memoryCache.set(cacheKey, ab);
         return ab;
       }
@@ -261,6 +276,7 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
       if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
       await cache.put(url, res.clone());
       const ab = new Uint8Array(await res.arrayBuffer());
+      npmCacheMisses++;
       memoryCache.set(cacheKey, ab);
       return ab;
     } catch {
@@ -268,6 +284,7 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
     }
   }
 
+  npmCacheMisses++;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
   const ab = new Uint8Array(await res.arrayBuffer());

@@ -23,7 +23,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
     "clean": "rm -rf dist",
-    "test": "npm run build && node ./test/conformance.mjs"
+    "test": "npm run build && node ./test/conformance.mjs",
+    "docs": "npx --yes typedoc --options typedoc.json"
   },
   "dependencies": {
     "esbuild-wasm": "0.25.0"

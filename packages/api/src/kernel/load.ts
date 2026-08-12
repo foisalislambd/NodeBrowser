@@ -393,10 +393,22 @@ async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
 
 export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Promise<KernelModule> {
   const mode: UseWasmOption = opts?.useWasm === undefined ? true : opts.useWasm;
+  const env =
+    typeof globalThis !== 'undefined'
+      ? (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+      : undefined;
+  const allowJs =
+    mode === 'auto' ||
+    env?.BN_ALLOW_JS_KERNEL === '1' ||
+    (typeof globalThis !== 'undefined' &&
+      (globalThis as { BN_ALLOW_JS_KERNEL?: boolean }).BN_ALLOW_JS_KERNEL === true);
 
-  // JS kernel owns VFS in a closure — always create a fresh instance per boot
-  // so concurrent NodeBrowser.boot() calls do not share filesystems.
   if (mode === false) {
+    if (!allowJs) {
+      throw new Error(
+        'WASM kernel required (Phase 13b). Pass useWasm: "auto" or set BN_ALLOW_JS_KERNEL=1 for the frozen JS fallback.',
+      );
+    }
     return createJsFallbackKernel();
   }
 
@@ -404,13 +416,18 @@ export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Pr
 
   const wasm = await tryLoadWasm(wasmUrl);
   if (wasm) {
-    // WASM create() allocates a new kernel handle/VFS per boot — safe to reuse wrapper
     cachedWasmFactory = wasm;
     return wasm;
   }
 
+  if (mode === true && !allowJs) {
+    throw new Error(
+      'WASM kernel required but browsernode_kernel.wasm failed to load. Build with npm run build:wasm, or useWasm: "auto".',
+    );
+  }
+
   if (mode === true) {
-    console.warn('[browsernode] WASM kernel requested but unavailable — using JS runtime');
+    console.warn('[browsernode] WASM kernel requested but unavailable — using JS runtime (BN_ALLOW_JS_KERNEL)');
   }
 
   return createJsFallbackKernel();

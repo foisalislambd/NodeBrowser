@@ -16,7 +16,7 @@ Host templates still exist (`npm run dev:vite` / `dev:next`) for comparison.
 
 ## WASM vs JS fallback?
 
-Primary kernel is **C++ → WASM**. `NodeBrowser.boot()` defaults to `{ useWasm: true }`. The JS guest (`js-runtime.ts`) is **frozen** and will be removed (PLAN Phase 13b). Do not treat JS-fallback tests as product completeness.
+Primary kernel is **C++ → WASM**. `NodeBrowser.boot()` defaults to `{ useWasm: true }` and **throws** if WASM is missing. Use `{ useWasm: 'auto' }` or `BN_ALLOW_JS_KERNEL=1` only for the frozen JS fallback. Do not treat JS-fallback tests as product completeness.
 
 ## Is this a drop-in for StackBlitz WebContainers?
 

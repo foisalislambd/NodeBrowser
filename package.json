@@ -25,7 +25,7 @@
     "start:next": "npm run start --prefix demo/templates/next",
     "test": "npm run test -w @foisal/nodebrowser && npm run build:native",
     "test:api": "npm run test -w @foisal/nodebrowser",
-    "test:native": "npm run build:native",
+    "bench": "node scripts/bench.mjs",
     "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md']) require('fs').accessSync(f)\""
   },
   "engines": {

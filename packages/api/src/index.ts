@@ -13,6 +13,7 @@ export {
   extractArchive,
   isZip,
   isGzip,
+  handleAgentRpc,
 } from './host/node-browser.js';
 export type {
   FileSystemTree,
@@ -24,4 +25,6 @@ export type {
   PreviewResult,
   ProjectKind,
   UseWasmOption,
+  AgentRpcRequest,
+  AgentRpcResponse,
 } from './host/node-browser.js';

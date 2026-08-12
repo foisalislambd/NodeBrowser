@@ -19,11 +19,11 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 
 ## Must add (still C++/WASM)
 
-1. **Delete JS guest** (`js-runtime.ts` is frozen → remove) — WASM is the only `node`
-2. Harden WASM HTTP; Asyncify/worker so long `node` does not freeze the tab
-3. Run real installed `vite`/`tsc` in QuickJS when possible (esbuild remains fast path)
-4. xterm + snapshot links (**UI only**)
-5. Benchmarks vs WebContainers  
+1. Delete `js-runtime.ts` entirely; WASM job on GitHub Actions  
+2. Asyncify / worker so long `node` does not freeze the tab  
+3. Real installed `vite`/`tsc` in QuickJS when the graph fits  
+4. Optional `@xterm/xterm`; SAB stdio  
+5. External bake-off vs WebContainers  
 
 ## Non-goals
 

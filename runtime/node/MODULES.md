@@ -30,6 +30,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `async_hooks` | stub | AsyncLocalStorage + createHook no-op |
 | `diagnostics_channel` | stub | channel subscribe/publish |
 | `worker_threads` | stub | `isMainThread`; `Worker` throws until SAB/Web Worker bridge |
+| `next/cache` / `next/headers` | stub | revalidate/cookies no-ops when package not installed |
 | `vm` | stub | `runInThisContext` / `runInNewContext` (same realm) |
 | `cluster` | stub | `fork` throws |
 | `dns` / `dgram` | stub | lookup → 127.0.0.1 |
@@ -52,5 +53,6 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 - [x] broader `fs` + `module.createRequire`
 - [x] `async_hooks` / `diagnostics_channel` stubs
-- [ ] edge vs node runtime split
+- [x] `next/cache` / `next/headers` stubs
+- [x] `app/api/*/route.js` static JSON subset
 - [x] OPFS persist (`boot({ persist: true })`) for `/home`

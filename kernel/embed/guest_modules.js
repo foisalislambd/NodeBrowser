@@ -162,7 +162,7 @@ var __bn_CORE_MODULES = [
   'module', 'buffer', 'assert', 'querystring', 'crypto', 'perf_hooks', 'async_hooks',
   'diagnostics_channel', 'zlib', 'string_decoder', 'timers', 'timers/promises', 'child_process',
   'tty', 'readline', 'worker_threads', 'vm', 'cluster', 'dns', 'dgram', 'inspector', 'v8', 'wasi',
-  'connect', 'ws', 'corepack'
+  'connect', 'ws', 'corepack', 'next/cache', 'next/headers'
 ];
 
 function resolveFile(base) {
@@ -1855,6 +1855,20 @@ function loadCore(name) {
       prepare: function() { throw new Error('corepack: NodeBrowser uses npm; yarn/pnpm lockfiles are not executed'); }
     };
   }
+  if (name === 'next/cache') {
+    return {
+      revalidatePath: function() {},
+      revalidateTag: function() {},
+      unstable_cache: function(fn) { return fn; },
+      unstable_noStore: function() {}
+    };
+  }
+  if (name === 'next/headers') {
+    return {
+      cookies: function() { return { get: function() { return undefined; }, getAll: function() { return []; } }; },
+      headers: function() { return { get: function() { return null; } }; }
+    };
+  }
   throw new Error('Unknown core ' + name);
 }
 
@@ -1862,6 +1876,19 @@ function loadCore(name) {
 function createRequire(fromFile) {
   var fromDir = dirname(fromFile);
   return function require(request) {
+    var reqs = String(request);
+    if (reqs === 'next/cache' || reqs === 'next/headers') {
+      try {
+        var installed = resolveFrom(fromDir, reqs);
+        if (installed && __bn.readFile(installed) !== null) {
+          request = reqs;
+        } else {
+          return loadCore(reqs);
+        }
+      } catch (e) {
+        return loadCore(reqs);
+      }
+    }
     var resolved = resolveFrom(fromDir, String(request));
     if (resolved.indexOf('node:') === 0) return loadCore(resolved.slice(5));
     if (moduleCache[resolved]) return moduleCache[resolved].exports;
@@ -1920,3 +1947,8 @@ globalThis.__bn_dynamic_import = __bn_dynamic_import;
 globalThis.__bn_runMain = __bn_runMain;
 globalThis.__bn_rewrite_esm = __bn_rewrite_esm;
 globalThis.isEsmFile = isEsmFile;
+if (typeof globalThis.fetch !== 'function') {
+  globalThis.fetch = function() {
+    return Promise.reject(new Error('fetch: guest has no raw internet; use virtual http.Server or host npm allowlist'));
+  };
+}

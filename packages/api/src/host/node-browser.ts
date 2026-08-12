@@ -18,6 +18,7 @@ import {
 import { zlibPureSync } from '../compress/zlib.js';
 import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
 import { previewProject, type PreviewResult } from '../bundler/preview.js';
+import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './json-rpc.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -548,6 +549,14 @@ export class NodeBrowser {
     return { ...result, url };
   }
 
+  httpLog() {
+    return this.#http.accessLog();
+  }
+
+  rpc(req: AgentRpcRequest): Promise<AgentRpcResponse> {
+    return handleAgentRpc(this, req);
+  }
+
   on<K extends keyof BrowserNodeEventMap>(event: K, fn: Listener<K>): void {
     if (!this.#listeners.has(event)) this.#listeners.set(event, new Set());
     this.#listeners.get(event)!.add(fn);
@@ -564,6 +573,7 @@ export class NodeBrowser {
   }
 
   #wireHttp(): void {
+    this.#http.setAccessListener((e) => this.#emit('http-log', e));
     const registrar: HttpRegistrar = (port, handler) => {
       this.#http.listen(port, handler as Parameters<HttpBridge['listen']>[1]);
     };
@@ -754,6 +764,8 @@ function joinFsPath(...parts: string[]): string {
   return parts.join('/').replace(/\/+/g, '/');
 }
 
+export { handleAgentRpc } from './json-rpc.js';
+export type { AgentRpcRequest, AgentRpcResponse } from './json-rpc.js';
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
 export type { BundleOptions } from '../bundler/esbuild.js';
 export type { PreviewResult, ProjectKind } from '../bundler/preview.js';

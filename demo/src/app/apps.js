@@ -50,6 +50,13 @@ export async function loadVite(bn, append) {
   return { root: VITE_ROOT, files };
 }
 
+export async function loadExpress(bn, append) {
+  append('mounting demo/templates/express → /apps/express …\n');
+  const files = await mountTemplate(bn, 'express', '/apps/express');
+  append(`mounted ${files.length} files — spawn: node /apps/express/server.js\n`);
+  return { root: '/apps/express', files };
+}
+
 export async function loadNext(bn, append) {
   append('mounting demo/templates/next (create-next-app) → /apps/next …\n');
   const files = await mountTemplate(bn, 'next', NEXT_ROOT);

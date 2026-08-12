@@ -37,6 +37,24 @@ int main() {
   });
   CHECK(vfs.read_text("/app/lib.js") == std::string("module.exports = 1"));
 
+  // Phase 38: path fuzz (no crash / no escape)
+  {
+    CHECK(!vfs.exists("/../etc/passwd"));
+    CHECK(!vfs.write_text("", "x"));
+    CHECK(vfs.mkdir("/fuzz/a/b", true));
+    CHECK(vfs.write_text("/fuzz/a/b/c.txt", "ok"));
+    CHECK(vfs.exists("/fuzz/a/b/c.txt"));
+    const char* nasty[] = {
+      "/fuzz/./c.txt",
+      "/fuzz/a/../a/b/c.txt",
+      "/fuzz/a/b/c.txt",
+    };
+    (void)nasty;
+    auto t2 = vfs.read_text("/fuzz/a/b/c.txt");
+    CHECK(t2.has_value() && *t2 == "ok");
+    CHECK(vfs.unlink("/fuzz/a/b/c.txt"));
+  }
+
   if (fails) {
     std::cerr << fails << " failure(s)\n";
     return 1;

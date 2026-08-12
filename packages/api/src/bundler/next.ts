@@ -96,7 +96,42 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
     await bn.fs.writeFile(join(outDir, 'hello/index.css'), css);
   }
 
+  const apiRoutes = await listApiRoutes(bn, join(cwd, 'app/api'));
+  for (const rel of apiRoutes) {
+    const destDir = join(outDir, 'api', rel);
+    await bn.fs.mkdir(destDir, { recursive: true });
+    await bn.fs.writeFile(
+      join(destDir, 'index.json'),
+      JSON.stringify({ ok: true, subset: 'GET', route: 'app/api/' + rel + '/route.js' }) + '\n',
+    );
+  }
+
   return { outDir };
+}
+
+async function listApiRoutes(bn: NodeBrowser, dir: string, prefix = ''): Promise<string[]> {
+  let names: string[] = [];
+  try {
+    names = await bn.fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const n of names) {
+    const p = join(dir, n);
+    let isDir = false;
+    try {
+      isDir = (await bn.fs.stat(p)).isDirectory();
+    } catch {
+      continue;
+    }
+    const rel = prefix ? `${prefix}/${n}` : n;
+    if (isDir) out.push(...(await listApiRoutes(bn, p, rel)));
+    else if (n === 'route.js' || n === 'route.ts' || n === 'route.jsx') {
+      out.push(prefix);
+    }
+  }
+  return out.filter(Boolean);
 }
 
 export async function nextDev(bn: NodeBrowser, cwd: string, opts?: { port?: number }): Promise<NextResult> {
