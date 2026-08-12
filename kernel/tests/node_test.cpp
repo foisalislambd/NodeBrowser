@@ -92,6 +92,98 @@ int main() {
     auto code = k.wait(pid);
     CHECK(code.has_value() && *code == 42);
   }
+  // Guest modules in C++/QuickJS: zlib + symlink + streams + ESM
+  {
+    k.vfs().write_text(
+        "/zlib.js",
+        "const z=require('zlib');\n"
+        "const b=Buffer.from('hello-cpp');\n"
+        "const g=z.gzipSync(b);\n"
+        "console.log(z.gunzipSync(g).toString());\n");
+    auto pid = k.spawn("node", {"/zlib.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto proc = k.get(pid);
+    CHECK(proc->stdout_buf.read_all_string().find("hello-cpp") != std::string::npos);
+  }
+  {
+    CHECK(k.vfs().write_text("/target.txt", "T"));
+    CHECK(k.vfs().symlink("/target.txt", "/alias.txt"));
+    auto rl = k.vfs().readlink("/alias.txt");
+    CHECK(rl.has_value() && *rl == "/target.txt");
+    k.vfs().write_text(
+        "/link.js",
+        "const fs=require('fs');\n"
+        "console.log(fs.readlinkSync('/alias.txt'));\n"
+        "console.log(fs.readFileSync('/alias.txt'));\n"
+        "console.log(fs.lstatSync('/alias.txt').isSymbolicLink());\n");
+    auto pid = k.spawn("node", {"/link.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("/target.txt") != std::string::npos);
+    CHECK(out.find("true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/stream.js",
+        "const {Readable,Writable}=require('stream');\n"
+        "const chunks=[];\n"
+        "const r=new Readable({read:function(){}});\n"
+        "const w=new Writable({write:function(c,_,cb){chunks.push(String(c));cb();}});\n"
+        "w.on('finish',function(){console.log('pipe='+chunks.join(''));});\n"
+        "r.pipe(w); r.push('hi'); r.push(null);\n");
+    auto pid = k.spawn("node", {"/stream.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("pipe=hi") != std::string::npos);
+  }
+  {
+    k.vfs().write_text("/mod.mjs", "export const n=42;\nexport default function(){return n;}\n");
+    k.vfs().write_text(
+        "/run.mjs",
+        "import d,{n} from './mod.mjs';\n"
+        "console.log('esm='+n+':'+d());\n");
+    auto pid = k.spawn("node", {"/run.mjs"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("esm=42:42") != std::string::npos);
+  }
+  // Buffer/ArrayBuffer + crypto + binary write (QuickJS parity regressions)
+  {
+    k.vfs().write_file("/bin.dat", std::vector<uint8_t>{0, 1, 255}, true);
+    k.vfs().write_text(
+        "/buf.js",
+        "const fs=require('fs');\n"
+        "const crypto=require('crypto');\n"
+        "const b=fs.readFileSync('/bin.dat','buffer');\n"
+        "if(b.length!==3||b._data[0]!==0||b._data[2]!==255) throw new Error('read buffer');\n"
+        "const rb=crypto.randomBytes(8);\n"
+        "if(rb.length!==8) throw new Error('randomBytes');\n"
+        "const buf=Buffer.alloc(4); crypto.randomFillSync(buf);\n"
+        "const hex=crypto.createHash('sha256').update('abc').digest('hex');\n"
+        "if(hex!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') throw new Error('sha');\n"
+        "const dig=crypto.createHash('sha256').update('abc').digest();\n"
+        "if(dig.length!==32) throw new Error('digest buf');\n"
+        "fs.writeFileSync('/out.bin', Buffer.from([9,8,7]));\n"
+        "const o=fs.readFileSync('/out.bin','buffer');\n"
+        "if(o.length!==3||o._data[0]!==9) throw new Error('write buffer');\n"
+        "console.log('bufok');\n");
+    auto pid = k.spawn("node", {"/buf.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("bufok") != std::string::npos);
+  }
+  // Intermediate symlink must resolve for read/lstat of nested path
+  {
+    CHECK(k.vfs().mkdir("/realdir", true));
+    CHECK(k.vfs().write_text("/realdir/nested.txt", "NEST"));
+    CHECK(k.vfs().symlink("/realdir", "/via"));
+    auto nested = k.vfs().read_text("/via/nested.txt");
+    CHECK(nested.has_value() && *nested == "NEST");
+    auto st = k.vfs().stat("/via/nested.txt", false);
+    CHECK(st.has_value() && st->kind == NodeKind::File);
+  }
 #endif
 
   if (fails) {

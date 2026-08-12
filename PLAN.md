@@ -68,7 +68,8 @@ StackBlitz **WebContainers** = WASM micro-OS + Node-in-tab + VFS + virtual netwo
 | Watch / HMR FS events | ✅ | ✅ `fs.watch` + `fs-change` | — |
 | Vite **in-tab** (dev + HMR) | ✅ | Host templates only | **Phases 27–28** |
 | Next.js **in-tab** (subset) | ✅ (common apps) | Host templates only | **Phases 29–30** |
-| Keep-alive HTTP servers | ✅ | JS strong; WASM retained QuickJS MVP | Harden Phase 18 |
+| Keep-alive HTTP servers | ✅ | **C++/QuickJS retain MVP** + JS fallback | Harden Phase 18 |
+| Guest Node modules (stream/zlib/ESM/…) | ✅ | **Primary: C++ embed `guest_modules.js`** | Shrink JS fallback |
 | Multi-port preview UX | ✅ | Basic iframe | **Phase 34** |
 | COOP/COEP / SAB fast-path | Used where needed | Demo local only; Pages limited | **Phase 37** + Pages headers strategy |
 | Package install speed / cache | Highly optimized | Memory cache only | **Phases 23, 37** |
@@ -184,7 +185,7 @@ Survive refresh like a real project disk.
 Tooling needs real files, not only UTF-8 strings.
 
 - [x] First-class binary blobs in VFS (images, wasm, fonts) — mount/npm bytes end-to-end
-- [x] Symlink create/read/follow (JS VFS + guest `fs.symlinkSync` / `readlinkSync` / `lstatSync`)
+- [x] Symlink create/read/follow (**C++ VFS** `bn_vfs_symlink`/`readlink`/`lstat` + guest `fs.symlinkSync` / `readlinkSync` / `lstatSync`; JS fallback mirrors)
 - [x] `fs.watch` / `fs.watchFile` → host `fs-change` event bus
 - [ ] `utimes` / mode bits enough for npm package scripts expectations
 

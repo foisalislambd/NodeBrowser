@@ -84,22 +84,89 @@ let selectedPath = '/home/project';
 let dirty = false;
 const expanded = new Set(['/', '/home', '/home/project']);
 
+function setDirty(v) {
+  dirty = !!v;
+  const mark = $('tab-dirty');
+  if (mark) mark.hidden = !dirty;
+}
+
 editor.addEventListener('input', () => {
-  dirty = true;
+  setDirty(true);
 });
+
+function basename(path) {
+  const i = String(path).lastIndexOf('/');
+  return i >= 0 ? path.slice(i + 1) || path : path;
+}
+
+function setBreadcrumb(path) {
+  const el = $('breadcrumb');
+  if (!el) return;
+  const parts = String(path).split('/').filter(Boolean);
+  el.textContent = '';
+  parts.forEach((part, idx) => {
+    if (idx) {
+      const sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '›';
+      el.appendChild(sep);
+    }
+    const span = document.createElement('span');
+    if (idx === parts.length - 1) span.className = 'current';
+    span.textContent = part;
+    el.appendChild(span);
+  });
+}
 
 function setEditorPath(path) {
   openPath = path;
-  $('editor-path').textContent = path;
+  const label = $('editor-path');
+  if (label) {
+    label.textContent = basename(path);
+    label.title = path;
+  }
+  setBreadcrumb(path);
+  const title = document.querySelector('.window-title');
+  if (title) title.textContent = `NodeBrowser — ${path}`;
+  const tabIcon = document.querySelector('.tab-icon');
+  if (tabIcon) {
+    if (/\.jsx?$/i.test(path)) tabIcon.textContent = 'JS';
+    else if (/\.tsx?$/i.test(path)) tabIcon.textContent = 'TS';
+    else if (/\.css$/i.test(path)) tabIcon.textContent = 'CSS';
+    else if (/\.json$/i.test(path)) tabIcon.textContent = '{}';
+    else if (/\.html?$/i.test(path)) tabIcon.textContent = '<>';
+    else tabIcon.textContent = '·';
+  }
 }
 
 function setCwd(path) {
   projectCwd = path;
   $('cwd-path').textContent = path;
+  const st = $('status-cwd');
+  if (st) st.textContent = path;
+}
+
+function setPreviewVisible(show) {
+  const wb = $('workbench');
+  if (!wb) return;
+  wb.classList.toggle('preview-hidden', !show);
+  document.querySelectorAll('.activity-btn[data-view="preview"]').forEach((btn) => {
+    btn.classList.toggle('active', show);
+  });
+}
+
+function setPreviewChrome(url) {
+  const hidden = $('preview-url');
+  if (hidden) hidden.textContent = url || '';
+  const input = $('preview-url-input');
+  if (input && url) input.value = url;
+  const empty = $('preview-empty');
+  if (empty) empty.classList.toggle('hidden', !!url || !!$('preview').srcdoc);
+  setPreviewVisible(true);
 }
 
 async function showPreview(port, url, opts = {}) {
-  $('preview-url').textContent = url || '';
+  setPreviewChrome(url || (port != null ? `port ${port}` : ''));
   if (opts.preferUrl && url) {
     $('preview').removeAttribute('srcdoc');
     $('preview').src = url;
@@ -120,6 +187,8 @@ async function showPreview(port, url, opts = {}) {
         if (String(type).includes('html') || res.body.trimStart().startsWith('<')) {
           $('preview').removeAttribute('src');
           $('preview').srcdoc = res.body;
+          const empty = $('preview-empty');
+          if (empty) empty.classList.add('hidden');
           appendTerm(`[preview] rendered port ${port} via HttpBridge (${res.status})\n`);
           if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
           return;
@@ -199,7 +268,7 @@ async function onTreeClick(path, isDirectory) {
   }
   const text = await bn.fs.readFile(path, 'utf8');
   editor.value = text;
-  dirty = false;
+  setDirty(false);
   setEditorPath(path);
   setCwd(dirname(path));
   await refreshTree();
@@ -209,7 +278,7 @@ async function onTreeClick(path, isDirectory) {
 async function saveFile() {
   if (!bn || !openPath) return;
   await bn.fs.writeFile(openPath, editor.value);
-  dirty = false;
+  setDirty(false);
   appendTerm(`[save] ${openPath}\n`);
   await refreshTree();
 }
@@ -223,7 +292,7 @@ async function newFile() {
   await bn.fs.writeFile(path, '');
   expanded.add(base);
   editor.value = '';
-  dirty = false;
+  setDirty(false);
   setEditorPath(path);
   selectedPath = path;
   setCwd(base);
@@ -267,7 +336,7 @@ async function deleteSelected() {
     } catch {
       editor.value = '';
     }
-    dirty = false;
+    setDirty(false);
   }
   selectedPath = dirname(selectedPath);
   setCwd(selectedPath);
@@ -353,7 +422,7 @@ async function installPkg() {
       const smokePath = joinPath(cwd, 'index.js');
       await bn.fs.writeFile(smokePath, smoke);
       editor.value = smoke;
-      dirty = false;
+      setDirty(false);
       setEditorPath(smokePath);
       selectedPath = smokePath;
     }
@@ -373,7 +442,7 @@ async function httpDemo() {
     httpProc = null;
   }
   editor.value = HTTP_DEMO;
-  dirty = false;
+  setDirty(false);
   const path = joinPath(projectCwd || '/home/project', 'server.js');
   await bn.fs.writeFile(path, HTTP_DEMO);
   setEditorPath(path);
@@ -407,7 +476,7 @@ async function bundleDemo() {
     const { outfile } = await bn.bundle({ entry: '/src/main.js', outfile: '/dist/bundle.js', format: 'iife' });
     appendTerm(`wrote ${outfile}\n`);
     editor.value = BUNDLE_ENTRY;
-    dirty = false;
+    setDirty(false);
     setEditorPath('/src/main.js');
     expanded.add('/src');
     expanded.add('/dist');
@@ -429,7 +498,7 @@ async function viteLoad() {
   try {
     editor.value = await bn.fs.readFile('/apps/vite/src/App.jsx', 'utf8');
     setEditorPath('/apps/vite/src/App.jsx');
-    dirty = false;
+    setDirty(false);
   } catch {
     editor.value = files.slice(0, 12).join('\n');
   }
@@ -458,7 +527,7 @@ async function nextLoad() {
   try {
     editor.value = await bn.fs.readFile('/apps/next/app/page.js', 'utf8');
     setEditorPath('/apps/next/app/page.js');
-    dirty = false;
+    setDirty(false);
   } catch {
     editor.value = files.slice(0, 12).join('\n');
   }
@@ -496,7 +565,7 @@ $('btn-fs-clear')?.addEventListener('click', () => {
     editor.value = DEFAULT;
     setEditorPath('/home/project/index.js');
     await bn.fs.writeFile('/home/project/index.js', DEFAULT);
-    dirty = false;
+    setDirty(false);
     await refreshTree();
     appendTerm('[workspace] cleared\n');
   })().catch((e) => appendTerm(String(e) + '\n'));
@@ -520,9 +589,9 @@ $('btn-next-load')?.addEventListener('click', () => nextLoad().catch((e) => appe
 $('btn-next-preview')?.addEventListener('click', () => nextPreview().catch((e) => appendTerm(String(e) + '\n')));
 
 function setMobilePane(name) {
-  const stage = document.querySelector('.stage');
-  if (!stage) return;
-  stage.dataset.pane = name;
+  const wb = $('workbench');
+  if (!wb) return;
+  wb.dataset.pane = name;
   document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.pane === name);
   });
@@ -530,6 +599,126 @@ function setMobilePane(name) {
 
 document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => setMobilePane(btn.dataset.pane));
+});
+
+document.querySelectorAll('.activity-btn[data-view="explorer"]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const wb = $('workbench');
+    if (!wb) return;
+    const hide = !wb.classList.contains('sidebar-hidden');
+    wb.classList.toggle('sidebar-hidden', hide);
+    btn.classList.toggle('active', !hide);
+  });
+});
+
+$('activity-preview')?.addEventListener('click', () => {
+  const wb = $('workbench');
+  if (!wb) return;
+  setPreviewVisible(wb.classList.contains('preview-hidden'));
+});
+
+$('activity-run')?.addEventListener('click', () => {
+  runNode().catch((e) => appendTerm(String(e) + '\n'));
+});
+
+$('btn-preview-close')?.addEventListener('click', () => setPreviewVisible(false));
+
+$('btn-preview-reload')?.addEventListener('click', () => {
+  const iframe = $('preview');
+  const input = $('preview-url-input');
+  if (iframe.srcdoc) {
+    const html = iframe.srcdoc;
+    iframe.srcdoc = '';
+    iframe.srcdoc = html;
+    return;
+  }
+  const url = (input && input.value) || iframe.src;
+  if (url) {
+    iframe.removeAttribute('srcdoc');
+    iframe.src = 'about:blank';
+    iframe.src = url;
+  }
+});
+
+$('btn-preview-open')?.addEventListener('click', () => {
+  const url = ($('preview-url-input') && $('preview-url-input').value) || $('preview-url')?.textContent;
+  if (url && /^https?:/i.test(url)) window.open(url, '_blank', 'noopener');
+});
+
+$('preview-url-input')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const url = e.currentTarget.value.trim();
+  if (!url) return;
+  const iframe = $('preview');
+  iframe.removeAttribute('srcdoc');
+  iframe.src = url;
+  const empty = $('preview-empty');
+  if (empty) empty.classList.add('hidden');
+  setPreviewVisible(true);
+});
+
+function bindSash(sashId, { axis, onDelta }) {
+  const sash = $(sashId);
+  if (!sash) return;
+  let last = 0;
+  const onMove = (e) => {
+    const point = e.touches ? e.touches[0] : e;
+    const pos = axis === 'x' ? point.clientX : point.clientY;
+    const delta = pos - last;
+    last = pos;
+    onDelta(delta);
+    e.preventDefault();
+  };
+  const onUp = () => {
+    sash.classList.remove('dragging');
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    window.removeEventListener('touchmove', onMove);
+    window.removeEventListener('touchend', onUp);
+  };
+  const onDown = (e) => {
+    const point = e.touches ? e.touches[0] : e;
+    last = axis === 'x' ? point.clientX : point.clientY;
+    sash.classList.add('dragging');
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+    e.preventDefault();
+  };
+  sash.addEventListener('mousedown', onDown);
+  sash.addEventListener('touchstart', onDown, { passive: false });
+}
+
+bindSash('sash-sidebar', {
+  axis: 'x',
+  onDelta: (dx) => {
+    const side = $('sidebar');
+    if (!side || side.classList.contains('collapsed')) return;
+    const next = Math.min(420, Math.max(140, side.getBoundingClientRect().width + dx));
+    document.documentElement.style.setProperty('--sidebar-w', `${next}px`);
+  },
+});
+
+bindSash('sash-preview', {
+  axis: 'x',
+  onDelta: (dx) => {
+    const pane = $('preview-pane');
+    if (!pane) return;
+    // dragging left sash of preview: moving right shrinks preview
+    const next = Math.min(window.innerWidth * 0.7, Math.max(240, pane.getBoundingClientRect().width - dx));
+    document.documentElement.style.setProperty('--preview-w', `${next}px`);
+  },
+});
+
+bindSash('sash-panel', {
+  axis: 'y',
+  onDelta: (dy) => {
+    const panel = document.querySelector('.panel');
+    if (!panel) return;
+    const next = Math.min(window.innerHeight * 0.55, Math.max(100, panel.getBoundingClientRect().height - dy));
+    document.documentElement.style.setProperty('--panel-h', `${next}px`);
+  },
 });
 
 async function registerSw() {

@@ -120,6 +120,32 @@ int bn_vfs_stat_json(BNKernel* k, const char* path, char** out_json) {
   return 1;
 }
 
+int bn_vfs_lstat_json(BNKernel* k, const char* path, char** out_json) {
+  if (!k || !path || !out_json) return 0;
+  auto st = k->kernel.vfs().stat(path, false);
+  if (!st) return 0;
+  const char* kind = "file";
+  if (st->kind == bn::NodeKind::Directory) kind = "directory";
+  else if (st->kind == bn::NodeKind::Symlink) kind = "symlink";
+  std::ostringstream oss;
+  oss << "{\"kind\":\"" << kind << "\",\"size\":" << st->size
+      << ",\"mtimeMs\":" << st->mtime_ms << ",\"mode\":" << st->mode << '}';
+  *out_json = dup_cstr(oss.str());
+  return 1;
+}
+
+int bn_vfs_symlink(BNKernel* k, const char* target, const char* linkpath) {
+  if (!k || !target || !linkpath) return 0;
+  return k->kernel.vfs().symlink(target, linkpath) ? 1 : 0;
+}
+
+char* bn_vfs_readlink(BNKernel* k, const char* path) {
+  if (!k || !path) return nullptr;
+  auto t = k->kernel.vfs().readlink(path);
+  if (!t) return nullptr;
+  return dup_cstr(*t);
+}
+
 // Minimal JSON string array parser: ["a","b"]
 static std::vector<std::string> parse_json_string_array(const char* json) {
   std::vector<std::string> out;

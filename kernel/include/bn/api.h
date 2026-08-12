@@ -24,6 +24,10 @@ int bn_vfs_unlink(BNKernel* k, const char* path);
 char* bn_vfs_readdir_json(BNKernel* k, const char* path);  // ["a","b"]
 int bn_vfs_exists(BNKernel* k, const char* path);
 int bn_vfs_stat_json(BNKernel* k, const char* path, char** out_json);
+/** lstat: do not follow final symlink */
+int bn_vfs_lstat_json(BNKernel* k, const char* path, char** out_json);
+int bn_vfs_symlink(BNKernel* k, const char* target, const char* linkpath);
+char* bn_vfs_readlink(BNKernel* k, const char* path);  // malloc'd; free with bn_free
 
 // Process — env_json is optional JSON object {"KEY":"VAL"} (may be null or "{}")
 int bn_spawn(BNKernel* k, const char* cmd, const char* argv_json, const char* cwd, const char* env_json);

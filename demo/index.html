@@ -4,47 +4,75 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>NodeBrowser</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
-      rel="stylesheet"
-    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="atmosphere" aria-hidden="true">
-      <div class="grid-bg"></div>
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-    </div>
-
-    <div class="shell">
-      <header class="top">
-        <div class="brand">
-          <span class="mark" aria-hidden="true"></span>
-          <div class="brand-text">
-            <h1>NodeBrowser</h1>
-            <p class="tag">Node in the tab — VFS, install, run. No remote server.</p>
-          </div>
+    <div class="workbench" id="workbench" data-pane="editor">
+      <!-- Title bar -->
+      <header class="titlebar" role="banner">
+        <div class="titlebar-left">
+          <span class="app-icon" aria-hidden="true"></span>
+          <nav class="menubar" aria-label="Menu">
+            <span class="menu-item">File</span>
+            <span class="menu-item">Edit</span>
+            <span class="menu-item">View</span>
+            <span class="menu-item">Run</span>
+            <span class="menu-item">Terminal</span>
+          </nav>
         </div>
-        <div class="top-meta">
-          <span class="pill">in-browser</span>
-          <span class="pill soft" id="status">booting…</span>
+        <div class="titlebar-center">
+          <span class="window-title">NodeBrowser — /home/project</span>
+        </div>
+        <div class="titlebar-right">
+          <span class="window-controls" aria-hidden="true">
+            <span class="wc"></span><span class="wc"></span><span class="wc"></span>
+          </span>
         </div>
       </header>
 
-      <main class="stage" data-pane="editor">
-        <section class="pane files-pane" data-panel="files">
-          <div class="pane-head">
-            <span class="pane-title">files</span>
-            <div class="actions">
-              <button type="button" id="btn-fs-refresh" class="btn ghost" title="Refresh">↻</button>
-              <button type="button" id="btn-fs-newfile" class="btn ghost" title="New file">+ file</button>
-              <button type="button" id="btn-fs-newdir" class="btn ghost" title="New folder">+ dir</button>
-              <button type="button" id="btn-fs-delete" class="btn ghost danger" title="Delete">del</button>
-              <button type="button" id="btn-fs-clear" class="btn ghost danger" title="Clear workspace">clear</button>
-              <button type="button" id="btn-fs-export" class="btn ghost" title="Export snapshot">export</button>
+      <div class="workbench-body">
+        <!-- Activity bar (VS Code left strip) -->
+        <aside class="activitybar" aria-label="Activity Bar">
+          <button type="button" class="activity-btn active" data-view="explorer" title="Explorer" aria-label="Explorer">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+              <path d="M17.5 0h-9L7 1.5V6H2.5L1 7.5v15.07L2.5 24h6.07L10 22.5V18h4.7l1.3-1.43V9.5L17.5 8H22V1.5L17.5 0zM9 20.5l-.5.5H3l-.5-.5V8l.5-.5H7v5.5L8.5 14H9v6.5zm8-7l-.5.5H10V7.5L10.5 7H16v6.5zM21 7h-3.5V2H21v5z"/>
+            </svg>
+          </button>
+          <button type="button" class="activity-btn" data-view="search" title="Search" aria-label="Search" disabled>
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+              <path d="M15.25 0a8.25 8.25 0 0 0-6.18 13.72L1 22.79l1.12 1.12 8.07-9.09A8.25 8.25 0 1 0 15.25.01zm0 15a6.75 6.75 0 1 1 0-13.5 6.75 6.75 0 0 1 0 13.5z"/>
+            </svg>
+          </button>
+          <button type="button" class="activity-btn" data-view="run" title="Run" aria-label="Run and Debug" id="activity-run">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+              <path d="M5.5 3.5v17l14-8.5z"/>
+            </svg>
+          </button>
+          <div class="activity-spacer"></div>
+          <button type="button" class="activity-btn active" data-view="preview" title="Simple Browser" aria-label="Toggle Preview" id="activity-preview">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+              <path d="M3 3h18v18H3V3zm1.5 1.5v3h15v-3h-15zm15 4.5h-15V19.5h15V9z"/>
+            </svg>
+          </button>
+        </aside>
+
+        <!-- Side bar: Explorer -->
+        <aside class="sidebar" id="sidebar" data-panel="files">
+          <div class="sidebar-title">
+            <span>EXPLORER</span>
+            <div class="sidebar-actions">
+              <button type="button" id="btn-fs-newfile" class="icon-btn" title="New File">+</button>
+              <button type="button" id="btn-fs-newdir" class="icon-btn" title="New Folder">⌂</button>
+              <button type="button" id="btn-fs-refresh" class="icon-btn" title="Refresh">↻</button>
+              <button type="button" id="btn-fs-delete" class="icon-btn danger" title="Delete">×</button>
+            </div>
+          </div>
+          <div class="sidebar-section-head">
+            <span class="twistie">▾</span>
+            <span class="section-label">NODEBROWSER</span>
+            <div class="section-actions">
+              <button type="button" id="btn-fs-export" class="icon-btn" title="Export snapshot">↓</button>
+              <button type="button" id="btn-fs-clear" class="icon-btn danger" title="Clear workspace">✕</button>
             </div>
           </div>
           <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
@@ -52,55 +80,110 @@
             <span class="cwd-label">cwd</span>
             <code id="cwd-path">/home/project</code>
           </div>
-        </section>
+        </aside>
 
-        <section class="pane editor-pane" data-panel="editor">
-          <div class="pane-head">
-            <span class="path-chip" id="editor-path" title="/home/project/index.js">/home/project/index.js</span>
-            <div class="actions scroll-x">
-              <button type="button" id="btn-save" class="btn">Save</button>
-              <button type="button" id="btn-run" class="btn primary">Run</button>
-              <button type="button" id="btn-install" class="btn">Install</button>
-              <button type="button" id="btn-http" class="btn">HTTP</button>
-              <button type="button" id="btn-bundle" class="btn">Bundle</button>
+        <div class="sash vertical" id="sash-sidebar" role="separator" aria-orientation="vertical" title="Resize"></div>
+
+        <!-- Editor + terminal column -->
+        <div class="editor-column" id="editor-column">
+          <section class="editor-group" data-panel="editor">
+            <div class="tabs">
+              <div class="tab active" id="editor-tab">
+                <span class="tab-icon">JS</span>
+                <span class="tab-label" id="editor-path" title="/home/project/index.js">index.js</span>
+                <span class="tab-dirty" id="tab-dirty" hidden>●</span>
+              </div>
+              <div class="tabs-actions">
+                <button type="button" id="btn-save" class="btn">Save</button>
+                <button type="button" id="btn-run" class="btn primary">Run</button>
+                <button type="button" id="btn-install" class="btn">Install</button>
+                <button type="button" id="btn-http" class="btn">HTTP</button>
+                <button type="button" id="btn-bundle" class="btn">Bundle</button>
+              </div>
             </div>
-          </div>
-          <div class="app-bar" aria-label="Templates">
-            <span class="app-bar-label">Templates</span>
-            <div class="actions scroll-x">
+            <div class="breadcrumb" id="breadcrumb">
+              <span>home</span><span class="sep">›</span><span>project</span><span class="sep">›</span><span class="current">index.js</span>
+            </div>
+            <div class="toolbar-templates" aria-label="Templates">
+              <span class="tmpl-label">Templates</span>
               <button type="button" id="btn-vite-load" class="btn ghost">Load Vite</button>
               <button type="button" id="btn-vite-preview" class="btn ghost">Vite preview</button>
               <button type="button" id="btn-next-load" class="btn ghost">Load Next</button>
               <button type="button" id="btn-next-preview" class="btn ghost">Next preview</button>
             </div>
-          </div>
-          <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
-        </section>
+            <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
+          </section>
 
-        <section class="pane term-pane" data-panel="term">
-          <div class="pane-head">
-            <span class="pane-title">terminal</span>
-            <span class="live-dot" aria-hidden="true"></span>
-          </div>
-          <pre id="term" class="term" aria-live="polite"></pre>
-        </section>
+          <div class="sash horizontal" id="sash-panel" role="separator" aria-orientation="horizontal" title="Resize panel"></div>
 
-        <section class="pane preview-pane" data-panel="preview">
-          <div class="pane-head">
-            <span class="pane-title">preview</span>
-            <span id="preview-url" class="status url-chip"></span>
-          </div>
-          <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin"></iframe>
-        </section>
-      </main>
+          <section class="panel" data-panel="term">
+            <div class="panel-tabs">
+              <button type="button" class="panel-tab active">TERMINAL</button>
+              <button type="button" class="panel-tab" disabled>OUTPUT</button>
+              <button type="button" class="panel-tab" disabled>PROBLEMS</button>
+              <span class="panel-spacer"></span>
+              <span class="live-dot" aria-hidden="true"></span>
+            </div>
+            <pre id="term" class="term" aria-live="polite"></pre>
+          </section>
+        </div>
 
-      <nav class="mobile-nav" aria-label="Panels">
-        <button type="button" class="mobile-nav-btn active" data-pane="files">Files</button>
-        <button type="button" class="mobile-nav-btn" data-pane="editor">Editor</button>
-        <button type="button" class="mobile-nav-btn" data-pane="term">Term</button>
-        <button type="button" class="mobile-nav-btn" data-pane="preview">Preview</button>
-      </nav>
+        <div class="sash vertical" id="sash-preview" role="separator" aria-orientation="vertical" title="Resize preview"></div>
+
+        <!-- Simple Browser (right) — VS Code style -->
+        <aside class="simple-browser" id="preview-pane" data-panel="preview">
+          <div class="sb-titlebar">
+            <span class="sb-title">Simple Browser</span>
+            <button type="button" class="icon-btn" id="btn-preview-close" title="Close Preview">✕</button>
+          </div>
+          <div class="sb-chrome">
+            <button type="button" class="icon-btn" id="btn-preview-back" title="Back" disabled>←</button>
+            <button type="button" class="icon-btn" id="btn-preview-forward" title="Forward" disabled>→</button>
+            <button type="button" class="icon-btn" id="btn-preview-reload" title="Reload">↻</button>
+            <div class="sb-urlbox">
+              <input
+                type="text"
+                id="preview-url-input"
+                class="sb-url"
+                placeholder="Run HTTP / Vite preview to open…"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <span id="preview-url" class="status url-chip visually-hidden"></span>
+            </div>
+            <button type="button" class="icon-btn" id="btn-preview-open" title="Open in new tab">↗</button>
+          </div>
+          <div class="sb-viewport">
+            <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+            <div class="sb-empty" id="preview-empty">
+              <div class="sb-empty-icon" aria-hidden="true"></div>
+              <p>Simple Browser</p>
+              <span>Preview opens here when a server is ready<br />(HTTP · Vite · Next)</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Status bar -->
+      <footer class="statusbar" role="contentinfo">
+        <div class="status-left">
+          <span class="status-item accent" id="status">booting…</span>
+          <span class="status-item" id="status-cwd">/home/project</span>
+        </div>
+        <div class="status-right">
+          <span class="status-item">UTF-8</span>
+          <span class="status-item">JavaScript</span>
+          <span class="status-item">Ln 1, Col 1</span>
+        </div>
+      </footer>
     </div>
+
+    <nav class="mobile-nav" aria-label="Panels">
+      <button type="button" class="mobile-nav-btn" data-pane="files">Explorer</button>
+      <button type="button" class="mobile-nav-btn active" data-pane="editor">Editor</button>
+      <button type="button" class="mobile-nav-btn" data-pane="term">Terminal</button>
+      <button type="button" class="mobile-nav-btn" data-pane="preview">Browser</button>
+    </nav>
 
     <script type="importmap">
       {

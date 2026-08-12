@@ -15,6 +15,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 - GitHub Pages demo deploy (self-contained `demo/dist`, base path `/NodeBrowser/`)
 - Release/Pages CI builds **C++ → WASM** with Emscripten before npm publish / demo deploy
 - **Phases 13–20:** WASM spawn `env` + `read_bytes`; streams/util/timers; zlib + crypto hashes; symlink/`fs.watch`/`fs-change`; `child_process`; ESM + `exports`; OPFS `persist` + snapshot export/import; `net`/`https`; WASM HTTP keep-alive via retained QuickJS handlers
+- **C++/QuickJS guest modules:** `kernel/embed/guest_modules.js` (stream/util/zlib/crypto/child_process/http/https/net/ESM) + VFS symlink/`readlink`/`lstat` ABI; host `kernel.ts` wires those ABI entry points
 
 ### Changed
 

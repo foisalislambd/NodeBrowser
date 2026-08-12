@@ -2,6 +2,8 @@
 
 Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
+**Canonical guest implementation:** C++/QuickJS (`kernel/embed/guest_modules.js` → WASM). JS fallback mirrors for no-WASM boots only.
+
 | Module | Status | Notes |
 |--------|--------|-------|
 | `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch, binary buffer I/O, host `rename` |
@@ -17,7 +19,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `url` | stub | |
 | `util` | ok (subset) | promisify/callbackify/format/inherits |
 | `os` | stub | |
-| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(sha1/256/384/512) |
+| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(**sha1/sha256** only) |
 | `zlib` | ok (subset) | gzip/gunzip/deflate/inflate sync (+ streams) |
 | `string_decoder` | ok (subset) | |
 | `timers` / `timers/promises` | ok (subset) | |

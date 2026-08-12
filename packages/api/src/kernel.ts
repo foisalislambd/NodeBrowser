@@ -21,6 +21,11 @@ export interface KernelModule {
   exists(k: KernelHandle, path: string): boolean;
   /** Optional — JS fallback; WASM may use readText heuristic via NodeBrowser.fs */
   isDir?(k: KernelHandle, path: string): boolean;
+  /** Optional — C++ VFS symlink ABI (WASM) / JS kernel */
+  symlink?(k: KernelHandle, target: string, linkpath: string): boolean;
+  readlink?(k: KernelHandle, path: string): string | null;
+  /** Returns "file" | "directory" | "symlink" (WASM lstat JSON) or JS kind */
+  lstatKind?(k: KernelHandle, path: string): string | null;
   spawn(
     k: KernelHandle,
     cmd: string,
@@ -70,6 +75,10 @@ type EmscriptenModule = {
   _bn_vfs_unlink: (k: number, path: number) => number;
   _bn_vfs_readdir_json: (k: number, path: number) => number;
   _bn_vfs_exists: (k: number, path: number) => number;
+  _bn_vfs_symlink?: (k: number, target: number, linkpath: number) => number;
+  _bn_vfs_readlink?: (k: number, path: number) => number;
+  _bn_vfs_lstat_json?: (k: number, path: number, outJson: number) => number;
+  _bn_vfs_stat_json?: (k: number, path: number, outJson: number) => number;
   _bn_spawn: (k: number, cmd: number, argvJson: number, cwd: number, envJson: number) => number;
   _bn_wait: (k: number, pid: number) => number;
   _bn_kill: (k: number, pid: number) => number;
@@ -118,6 +127,28 @@ function wrap(mod: EmscriptenModule): KernelModule {
       return new TextDecoder().decode(mod.HEAPU8.subarray(buf, buf + n));
     } finally {
       mod._free(buf);
+    }
+  };
+
+  const readLstatKind = (k: number, path: string): string | null => {
+    if (!mod._bn_vfs_lstat_json) return null;
+    const p = allocStr(path);
+    const outPtr = mod._malloc(4);
+    try {
+      if (!mod._bn_vfs_lstat_json(k, p, outPtr)) return null;
+      const jsonPtr =
+        mod.getValue?.(outPtr, 'i32') ??
+        new DataView(mod.HEAPU8.buffer).getUint32(outPtr, true);
+      const json = readCString(jsonPtr);
+      if (!json) return null;
+      try {
+        return (JSON.parse(json) as { kind?: string }).kind ?? null;
+      } catch {
+        return null;
+      }
+    } finally {
+      mod._free(p);
+      mod._free(outPtr);
     }
   };
 
@@ -209,6 +240,8 @@ function wrap(mod: EmscriptenModule): KernelModule {
     },
     isDir: (k, path) => {
       if (path === '/' || path === '') return true;
+      const kind = readLstatKind(k, path);
+      if (kind != null) return kind === 'directory';
       const p = allocStr(path);
       try {
         if (!mod._bn_vfs_exists(k, p)) return false;
@@ -224,6 +257,31 @@ function wrap(mod: EmscriptenModule): KernelModule {
         mod._free(p2);
       }
     },
+    symlink: mod._bn_vfs_symlink
+      ? (k, target, linkpath) => {
+          const t = allocStr(target);
+          const p = allocStr(linkpath);
+          try {
+            return !!mod._bn_vfs_symlink!(k, t, p);
+          } finally {
+            mod._free(t);
+            mod._free(p);
+          }
+        }
+      : undefined,
+    readlink: mod._bn_vfs_readlink
+      ? (k, path) => {
+          const p = allocStr(path);
+          try {
+            return readCString(mod._bn_vfs_readlink!(k, p));
+          } finally {
+            mod._free(p);
+          }
+        }
+      : undefined,
+    lstatKind: mod._bn_vfs_lstat_json
+      ? (k, path) => readLstatKind(k, path)
+      : undefined,
     spawn: (k, cmd, argv, cwd, env) => {
       const c = allocStr(cmd);
       const a = allocStr(JSON.stringify(argv));

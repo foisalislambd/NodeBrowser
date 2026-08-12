@@ -544,6 +544,26 @@ export function createJsFallbackKernel(opts?: {
       const r = resolve(path);
       return !!r.node && r.node.kind === 'dir';
     },
+    symlink: (_k, target, linkpath) => {
+      const r = resolveRaw(linkpath, true);
+      if (!r.parent) return false;
+      r.parent.set(r.name, { kind: 'symlink', target: String(target) });
+      emitFs('rename', norm(linkpath));
+      return true;
+    },
+    readlink: (_k, path) => {
+      const r = resolveRaw(path);
+      if (!r.node || r.node.kind !== 'symlink') return null;
+      return r.node.target;
+    },
+    lstatKind: (_k, path) => {
+      if (path === '/' || path === '') return 'directory';
+      const r = resolveRaw(path);
+      if (!r.node) return null;
+      if (r.node.kind === 'dir') return 'directory';
+      if (r.node.kind === 'symlink') return 'symlink';
+      return 'file';
+    },
     spawn: (_k, cmd, argv, cwd, env) => {
       if (cmd === 'node' && countRunning() >= MAX_PROCS) {
         const pid = nextPid++;

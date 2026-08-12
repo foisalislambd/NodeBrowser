@@ -8,6 +8,7 @@
 
 #if defined(BN_HAS_QUICKJS)
 #include "quickjs.h"
+#include "generated_guest_modules.hpp"
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -265,6 +266,21 @@ static NodeCtx* get_opaque(JSContext* ctx) {
   return static_cast<NodeCtx*>(JS_GetContextOpaque(ctx));
 }
 
+static void emit_fs_js(JSContext* ctx, const char* type, const char* path) {
+  if (!ctx || !type || !path) return;
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue fn = JS_GetPropertyStr(ctx, global, "__bn_emit_fs");
+  if (JS_IsFunction(ctx, fn)) {
+    JSValue args[2] = {JS_NewString(ctx, type), JS_NewString(ctx, path)};
+    JSValue ret = JS_Call(ctx, fn, JS_UNDEFINED, 2, args);
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, args[1]);
+  }
+  JS_FreeValue(ctx, fn);
+  JS_FreeValue(ctx, global);
+}
+
 static JSValue js_bn_read_file(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   auto* nc = get_opaque(ctx);
   if (!nc || argc < 1) return JS_EXCEPTION;
@@ -276,21 +292,182 @@ static JSValue js_bn_read_file(JSContext* ctx, JSValueConst, int argc, JSValueCo
   return JS_NewStringLen(ctx, text->data(), text->size());
 }
 
+static JSValue js_bn_read_bytes(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+  auto data = nc->kernel->vfs().read_file(path);
+  JS_FreeCString(ctx, path);
+  if (!data) return JS_NULL;
+  return JS_NewArrayBufferCopy(ctx, data->data(), data->size());
+}
+
 static JSValue js_bn_write_file(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   auto* nc = get_opaque(ctx);
   if (!nc || argc < 2) return JS_EXCEPTION;
   const char* path = JS_ToCString(ctx, argv[0]);
-  size_t len = 0;
-  const char* data = JS_ToCStringLen(ctx, &len, argv[1]);
-  if (!path || !data) {
-    if (path) JS_FreeCString(ctx, path);
-    if (data) JS_FreeCString(ctx, data);
+  if (!path) return JS_EXCEPTION;
+  bool ok = false;
+  size_t ab_size = 0;
+  uint8_t* ab = JS_GetArrayBuffer(ctx, &ab_size, argv[1]);
+  if (ab) {
+    ok = nc->kernel->vfs().write_file(path, std::vector<uint8_t>(ab, ab + ab_size), true);
+  } else {
+    // Prefer ArrayBuffer from guest (Uint8Array.buffer). TypedArray objects are not
+    // unwrapped by JS_GetArrayBuffer — fall back to string only for text writes.
+    size_t len = 0;
+    const char* data = JS_ToCStringLen(ctx, &len, argv[1]);
+    if (!data) {
+      JS_FreeCString(ctx, path);
+      return JS_EXCEPTION;
+    }
+    ok = nc->kernel->vfs().write_text(path, std::string_view(data, len), true);
+    JS_FreeCString(ctx, data);
+  }
+  if (ok) emit_fs_js(ctx, "change", path);
+  JS_FreeCString(ctx, path);
+  return JS_NewBool(ctx, ok);
+}
+
+static JSValue js_bn_write_bytes(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  return js_bn_write_file(ctx, JS_UNDEFINED, argc, argv);
+}
+
+static JSValue js_bn_symlink(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 2) return JS_EXCEPTION;
+  const char* target = JS_ToCString(ctx, argv[0]);
+  const char* linkpath = JS_ToCString(ctx, argv[1]);
+  if (!target || !linkpath) {
+    if (target) JS_FreeCString(ctx, target);
+    if (linkpath) JS_FreeCString(ctx, linkpath);
     return JS_EXCEPTION;
   }
-  bool ok = nc->kernel->vfs().write_text(path, std::string_view(data, len), true);
-  JS_FreeCString(ctx, path);
-  JS_FreeCString(ctx, data);
+  bool ok = nc->kernel->vfs().symlink(target, linkpath);
+  if (ok) emit_fs_js(ctx, "rename", linkpath);
+  JS_FreeCString(ctx, target);
+  JS_FreeCString(ctx, linkpath);
   return JS_NewBool(ctx, ok);
+}
+
+static JSValue js_bn_readlink(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+  auto t = nc->kernel->vfs().readlink(path);
+  JS_FreeCString(ctx, path);
+  if (!t) return JS_NULL;
+  return JS_NewStringLen(ctx, t->data(), t->size());
+}
+
+static JSValue js_bn_lstat_kind(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+  auto st = nc->kernel->vfs().stat(path, false);
+  JS_FreeCString(ctx, path);
+  if (!st) return JS_NULL;
+  if (st->kind == NodeKind::Directory) return JS_NewString(ctx, "dir");
+  if (st->kind == NodeKind::Symlink) return JS_NewString(ctx, "symlink");
+  return JS_NewString(ctx, "file");
+}
+
+static JSValue js_bn_is_symlink(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+  auto st = nc->kernel->vfs().stat(path, false);
+  JS_FreeCString(ctx, path);
+  return JS_NewBool(ctx, st && st->kind == NodeKind::Symlink);
+}
+
+static JSValue js_bn_get_env(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+  auto* nc = get_opaque(ctx);
+  if (!nc) return JS_EXCEPTION;
+  JSValue obj = JS_NewObject(ctx);
+  for (const auto& kv : nc->proc->env) {
+    JS_SetPropertyStr(ctx, obj, kv.first.c_str(), JS_NewString(ctx, kv.second.c_str()));
+  }
+  return obj;
+}
+
+static JSValue js_bn_spawn_cmd(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* cmd = JS_ToCString(ctx, argv[0]);
+  if (!cmd) return JS_EXCEPTION;
+  std::vector<std::string> args;
+  if (argc >= 2 && JS_IsArray(ctx, argv[1])) {
+    JSValue lenv = JS_GetPropertyStr(ctx, argv[1], "length");
+    int32_t n = 0;
+    JS_ToInt32(ctx, &n, lenv);
+    JS_FreeValue(ctx, lenv);
+    for (int32_t i = 0; i < n; ++i) {
+      JSValue el = JS_GetPropertyUint32(ctx, argv[1], static_cast<uint32_t>(i));
+      const char* s = JS_ToCString(ctx, el);
+      if (s) {
+        args.emplace_back(s);
+        JS_FreeCString(ctx, s);
+      }
+      JS_FreeValue(ctx, el);
+    }
+  }
+  std::string cwd = nc->proc->cwd;
+  if (argc >= 3 && JS_IsString(argv[2])) {
+    const char* c = JS_ToCString(ctx, argv[2]);
+    if (c) {
+      cwd = c;
+      JS_FreeCString(ctx, c);
+    }
+  }
+  std::unordered_map<std::string, std::string> env = nc->proc->env;
+  int pid = nc->kernel->spawn(cmd, args, env, cwd);
+  JS_FreeCString(ctx, cmd);
+  auto proc = nc->kernel->get(pid);
+  JSValue out = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, out, "pid", JS_NewInt32(ctx, pid));
+  if (proc) {
+    auto stdout_s = proc->stdout_buf.read_all_string();
+    auto stderr_s = proc->stderr_buf.read_all_string();
+    // Note: read_all may drain; for MVP OK after sync spawn
+    JS_SetPropertyStr(ctx, out, "stdout", JS_NewString(ctx, stdout_s.c_str()));
+    JS_SetPropertyStr(ctx, out, "stderr", JS_NewString(ctx, stderr_s.c_str()));
+    bool running = proc->state == ProcessState::Running;
+    JS_SetPropertyStr(ctx, out, "running", JS_NewBool(ctx, running));
+    JS_SetPropertyStr(ctx, out, "code", JS_NewInt32(ctx, running ? -1 : proc->exit_code));
+  } else {
+    JS_SetPropertyStr(ctx, out, "stdout", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, out, "stderr", JS_NewString(ctx, "spawn failed"));
+    JS_SetPropertyStr(ctx, out, "running", JS_NewBool(ctx, 0));
+    JS_SetPropertyStr(ctx, out, "code", JS_NewInt32(ctx, 1));
+  }
+  return out;
+}
+
+static JSValue js_bn_spawn_node(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+  // spawnNode(script, cwd, envObj) → spawn("node", [script], ...)
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  JSValue arr = JS_NewArray(ctx);
+  JS_SetPropertyUint32(ctx, arr, 0, JS_DupValue(ctx, argv[0]));
+  JSValue args[3] = {JS_NewString(ctx, "node"), arr, argc >= 2 ? JS_DupValue(ctx, argv[1]) : JS_NewString(ctx, nc->proc->cwd.c_str())};
+  JSValue ret = js_bn_spawn_cmd(ctx, this_val, 3, args);
+  JS_FreeValue(ctx, args[0]);
+  JS_FreeValue(ctx, args[1]);
+  JS_FreeValue(ctx, args[2]);
+  return ret;
+}
+
+static JSValue js_bn_kill_pid(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  int32_t pid = 0;
+  JS_ToInt32(ctx, &pid, argv[0]);
+  return JS_NewBool(ctx, nc->kernel->kill(pid));
 }
 
 static JSValue js_bn_exists(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -345,6 +522,7 @@ static JSValue js_bn_mkdir(JSContext* ctx, JSValueConst, int argc, JSValueConst*
   if (!path) return JS_EXCEPTION;
   bool recursive = argc > 1 ? JS_ToBool(ctx, argv[1]) : true;
   bool ok = nc->kernel->vfs().mkdir(path, recursive);
+  if (ok) emit_fs_js(ctx, "rename", path);
   JS_FreeCString(ctx, path);
   return JS_NewBool(ctx, ok);
 }
@@ -355,6 +533,7 @@ static JSValue js_bn_unlink(JSContext* ctx, JSValueConst, int argc, JSValueConst
   const char* path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
   bool ok = nc->kernel->vfs().unlink(path);
+  if (ok) emit_fs_js(ctx, "rename", path);
   JS_FreeCString(ctx, path);
   return JS_NewBool(ctx, ok);
 }
@@ -470,6 +649,25 @@ var Buffer = (function() {
       this._data = Buffer._encode(arg, enc || 'utf8');
     } else if (Array.isArray(arg)) {
       this._data = arg.slice();
+    } else if (arg && typeof arg === 'object') {
+      // QuickJS: readBytes returns ArrayBuffer; TypedArray/array-like must copy into _data.
+      var src = null;
+      if (typeof ArrayBuffer !== 'undefined' && arg instanceof ArrayBuffer) {
+        src = new Uint8Array(arg);
+      } else if (typeof Uint8Array !== 'undefined' && arg instanceof Uint8Array) {
+        src = arg;
+      } else if (typeof arg.byteLength === 'number' && typeof arg.byteOffset === 'number' && arg.buffer) {
+        src = new Uint8Array(arg.buffer, arg.byteOffset, arg.byteLength);
+      } else if (typeof arg.length === 'number') {
+        this._data = [];
+        for (var ai = 0; ai < arg.length; ai++) this._data.push((arg[ai] || 0) & 255);
+        this.length = this._data.length;
+        return;
+      }
+      this._data = [];
+      if (src) {
+        for (var si = 0; si < src.length; si++) this._data.push(src[si] & 255);
+      }
     } else {
       this._data = [];
     }
@@ -1097,18 +1295,28 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue bn = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, bn, "readFile", JS_NewCFunction(ctx, js_bn_read_file, "readFile", 1));
+  JS_SetPropertyStr(ctx, bn, "readBytes", JS_NewCFunction(ctx, js_bn_read_bytes, "readBytes", 1));
   JS_SetPropertyStr(ctx, bn, "writeFile", JS_NewCFunction(ctx, js_bn_write_file, "writeFile", 2));
+  JS_SetPropertyStr(ctx, bn, "writeBytes", JS_NewCFunction(ctx, js_bn_write_bytes, "writeBytes", 2));
   JS_SetPropertyStr(ctx, bn, "exists", JS_NewCFunction(ctx, js_bn_exists, "exists", 1));
   JS_SetPropertyStr(ctx, bn, "isFile", JS_NewCFunction(ctx, js_bn_is_file, "isFile", 1));
   JS_SetPropertyStr(ctx, bn, "isDir", JS_NewCFunction(ctx, js_bn_is_dir, "isDir", 1));
+  JS_SetPropertyStr(ctx, bn, "isSymlink", JS_NewCFunction(ctx, js_bn_is_symlink, "isSymlink", 1));
+  JS_SetPropertyStr(ctx, bn, "lstatKind", JS_NewCFunction(ctx, js_bn_lstat_kind, "lstatKind", 1));
   JS_SetPropertyStr(ctx, bn, "readdir", JS_NewCFunction(ctx, js_bn_readdir, "readdir", 1));
   JS_SetPropertyStr(ctx, bn, "mkdir", JS_NewCFunction(ctx, js_bn_mkdir, "mkdir", 2));
   JS_SetPropertyStr(ctx, bn, "unlink", JS_NewCFunction(ctx, js_bn_unlink, "unlink", 1));
+  JS_SetPropertyStr(ctx, bn, "symlink", JS_NewCFunction(ctx, js_bn_symlink, "symlink", 2));
+  JS_SetPropertyStr(ctx, bn, "readlink", JS_NewCFunction(ctx, js_bn_readlink, "readlink", 1));
   JS_SetPropertyStr(ctx, bn, "print", JS_NewCFunction(ctx, js_bn_print, "print", 0));
   JS_SetPropertyStr(ctx, bn, "eprint", JS_NewCFunction(ctx, js_bn_eprint, "eprint", 0));
   JS_SetPropertyStr(ctx, bn, "cwd", JS_NewCFunction(ctx, js_bn_cwd, "cwd", 0));
+  JS_SetPropertyStr(ctx, bn, "getEnv", JS_NewCFunction(ctx, js_bn_get_env, "getEnv", 0));
   JS_SetPropertyStr(ctx, bn, "serverReady", JS_NewCFunction(ctx, js_bn_server_ready, "serverReady", 1));
   JS_SetPropertyStr(ctx, bn, "registerHttp", JS_NewCFunction(ctx, js_bn_register_http, "registerHttp", 2));
+  JS_SetPropertyStr(ctx, bn, "spawnCmd", JS_NewCFunction(ctx, js_bn_spawn_cmd, "spawnCmd", 3));
+  JS_SetPropertyStr(ctx, bn, "spawnNode", JS_NewCFunction(ctx, js_bn_spawn_node, "spawnNode", 3));
+  JS_SetPropertyStr(ctx, bn, "killPid", JS_NewCFunction(ctx, js_bn_kill_pid, "killPid", 1));
   JS_SetPropertyStr(ctx, global, "__bn", bn);
 
   JSValue boot = JS_Eval(ctx, kBootstrap, std::strlen(kBootstrap), "<bootstrap>", JS_EVAL_TYPE_GLOBAL);
@@ -1124,6 +1332,24 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
     return 1;
   }
   JS_FreeValue(ctx, boot);
+
+  // Guest Node modules (streams/zlib/ESM/child_process/…) — C++/QuickJS path
+  {
+    JSValue guest = JS_Eval(ctx, kGuestModules, std::strlen(kGuestModules), "<guest_modules>",
+                            JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(guest)) {
+      JSValue ex = JS_GetException(ctx);
+      const char* msg = JS_ToCString(ctx, ex);
+      write_err(proc, std::string("guest_modules error: ") + (msg ? msg : "?") + "\n");
+      if (msg) JS_FreeCString(ctx, msg);
+      JS_FreeValue(ctx, ex);
+      JS_FreeValue(ctx, global);
+      JS_FreeContext(ctx);
+      JS_FreeRuntime(rt);
+      return 1;
+    }
+    JS_FreeValue(ctx, guest);
+  }
 
   std::string script = proc.argv.empty() ? "" : proc.argv[0];
   // Inject argv + env, then run main

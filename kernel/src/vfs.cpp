@@ -160,10 +160,12 @@ Vfs::ResolveResult Vfs::resolve(std::string_view path, bool follow_symlinks, int
     return {nullptr, "", root_};
   }
 
+  // Intermediate path components always follow symlinks (POSIX / Node lstat semantics:
+  // AT_SYMLINK_NOFOLLOW applies only to the final component).
   for (size_t i = 0; i + 1 < parts.size(); ++i) {
     auto child = dir->get(parts[i]);
     if (!child) return {dir, parts[i], nullptr};
-    if (child->kind() == NodeKind::Symlink && follow_symlinks) {
+    if (child->kind() == NodeKind::Symlink) {
       auto* sl = static_cast<VfsSymlink*>(child.get());
       auto target = sl->target();
       std::string next;
@@ -350,6 +352,13 @@ bool Vfs::symlink(std::string_view target, std::string_view linkpath) {
   if (!r.parent) return false;
   r.parent->set(r.name, std::make_shared<VfsSymlink>(std::string(target)));
   return true;
+}
+
+std::optional<std::string> Vfs::readlink(std::string_view path) const {
+  std::lock_guard lock(mu_);
+  auto r = resolve(path, false);
+  if (!r.node || r.node->kind() != NodeKind::Symlink) return std::nullopt;
+  return static_cast<VfsSymlink*>(r.node.get())->target();
 }
 
 void Vfs::mount_tree(const std::unordered_map<std::string, std::string>& files) {

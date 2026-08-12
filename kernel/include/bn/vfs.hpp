@@ -96,6 +96,8 @@ public:
   bool rename(std::string_view from, std::string_view to);
   std::optional<std::vector<std::string>> readdir(std::string_view path) const;
   bool symlink(std::string_view target, std::string_view linkpath);
+  /** Read symlink target without following. */
+  std::optional<std::string> readlink(std::string_view path) const;
 
   // Mount a JSON-like tree from host: path -> file contents
   void mount_tree(const std::unordered_map<std::string, std::string>& files);

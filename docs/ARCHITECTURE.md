@@ -41,6 +41,8 @@ See **Architecture rule** in `[PLAN.md](../PLAN.md)`.
 
 Compiling upstream Node + libuv + V8 to WASM is a multi-year port. QuickJS is small, embeddable, and enough to run a large subset of JS tooling when paired with Node API polyfills **inside the WASM image**. We can later swap the engine (or add a second) without changing the host API.
 
+Guest core modules live in `kernel/embed/guest_modules.js`, compiled into the kernel as `generated_guest_modules.hpp`, and evaluated after the QuickJS bootstrap. That is the product Node surface — not `packages/api/src/js-runtime.ts` (emergency fallback only).
+
 ## Process model
 
 Processes are **cooperative**, not OS threads:
