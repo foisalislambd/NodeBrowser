@@ -35,7 +35,6 @@ for await (const chunk of proc.output) console.log(chunk);
 |------------|--------|
 | C++/WASM kernel (VFS, spawn, shell) | ✅ |
 | QuickJS guest Node (embed, not host JS) | ✅ subset |
-| JS fallback guest | ❄️ frozen / not the product |
 | npm install → VFS (HTTPS registry allowlist) | ✅ |
 | C++ `npm` / `npx` / kill-tree | ✅ |
 | Service Worker HTTP preview | ✅ |
@@ -43,7 +42,6 @@ for await (const chunk of proc.output) console.log(chunk);
 | ZIP upload → unpack → preview | ✅ |
 | `WebContainer` name shim | ✅ |
 | Full Vite/Next CLI in QuickJS | 🔜 |
-| WASM-only (no JS guest) | 🔜 Phase 13b |
 
 Honest roadmap & architecture: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md).
 
@@ -60,7 +58,7 @@ npm run build:demo
 npm run dev          # http://localhost:5173 (COOP/COEP enabled)
 ```
 
-Without a WASM binary, the API **falls back to the in-browser JS runtime**. Default boot prefers the **C++/WASM** kernel (`useWasm: true`).
+`NodeBrowser.boot()` loads the **C++/WASM** kernel and **throws** if `browsernode_kernel.wasm` is missing (`npm run build:wasm`). There is no JavaScript guest Node.
 
 ### Native kernel tests
 
@@ -69,7 +67,7 @@ npm run build:native   # CMake + QuickJS tests
 npm test
 ```
 
-### WASM (optional)
+### WASM (required for boot)
 
 ```bash
 bash scripts/setup-toolchain.sh
@@ -131,7 +129,7 @@ Release process: [`docs/RELEASING.md`](./docs/RELEASING.md).
 
 ## Design
 
-Shipping full Node+V8+libuv to WASM is a multi-year effort. NodeBrowser embeds **QuickJS** (and a JS fallback) behind a C++/host kernel and grows Node compatibility incrementally — aimed at real `npm` / tooling workflows over time.
+Shipping full Node+V8+libuv to WASM is a multi-year effort. NodeBrowser embeds **QuickJS** inside the C++/WASM kernel and grows Node compatibility incrementally — aimed at real `npm` / tooling workflows over time.
 
 ## License
 

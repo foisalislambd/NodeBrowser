@@ -19,14 +19,13 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 - npm install = host **allowlisted** fetch into **kernel VFS**; C++ `npm`/`npx`
 - `WebContainer` name shim; ZIP → preview
 - Host API over C ABI
+- WASM-only `boot()` (no TypeScript guest Node); PR CI builds kernel with Emscripten
 
 ## Must add (still C++/WASM)
 
-1. Delete `js-runtime.ts` entirely; WASM job on GitHub Actions  
-2. ~~Asyncify / worker so long `node` does not freeze the tab~~ **Worker in browser** (same-thread fallback)  
-3. Real installed `vite`/`tsc` in QuickJS when the graph fits  
-4. Optional `@xterm/xterm`; SAB stdio  
-5. External bake-off vs WebContainers  
+1. Real installed `vite`/`tsc` in QuickJS when the graph fits  
+2. Optional `@xterm/xterm`; SAB stdio  
+3. External bake-off vs WebContainers  
 
 ## Non-goals
 

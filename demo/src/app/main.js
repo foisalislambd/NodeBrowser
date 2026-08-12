@@ -354,8 +354,9 @@ async function boot() {
   try {
     bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true });
   } catch (e) {
-    appendTerm(String(e) + '\nfalling back to useWasm:auto\n');
-    bn = await NodeBrowser.boot({ useWasm: 'auto', previewBase, persist: true });
+    appendTerm(String(e) + '\nWASM kernel required — npm run build:wasm\n');
+    $('status').textContent = 'wasm missing';
+    throw e;
   }
   appendTerm(
     `runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}` +

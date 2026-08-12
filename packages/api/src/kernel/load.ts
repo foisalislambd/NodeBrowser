@@ -1,10 +1,20 @@
-import { createJsFallbackKernel as createJsRuntime, type HttpRegistrar } from './js-runtime.js';
-
-export type { HttpRegistrar };
+/** Host HTTP bridge registrar (JS kernel used this; WASM uses httpDispatch). */
+export type HttpRegistrar = (
+  port: number,
+  handler: (
+    req: { method: string; url: string; headers: Record<string, string>; body?: string },
+    res: {
+      writeHead: (code: number, h?: Record<string, string>) => void;
+      end: (chunk?: string) => void;
+      setHeader?: (k: string, v: string) => void;
+      write?: (c: string) => void;
+    },
+  ) => void,
+) => void;
 
 export type KernelHandle = number;
 
-/** Sync JS fallback or Promise when the WASM kernel runs on a Worker. */
+/** Sync WASM ABI or Promise when the kernel runs on a Worker. */
 export type Awaitable<T> = T | Promise<T>;
 
 export interface KernelModule {
@@ -382,11 +392,12 @@ function wrap(mod: EmscriptenModule): KernelModule {
   };
 }
 
-/** Pure-JS Node runtime (keep-alive HTTP, Buffer, fs.promises). */
-export function createJsFallbackKernel(): KernelModule {
-  const mod = createJsRuntime();
-  mod.runtime = 'js';
-  return mod;
+const WASM_REQUIRED =
+  'WASM kernel required. There is no JavaScript guest Node. Build with npm run build:wasm.';
+
+/** @deprecated Removed in Phase 13b — always throws. */
+export function createJsFallbackKernel(): never {
+  throw new Error(WASM_REQUIRED);
 }
 
 let cachedWasmFactory: KernelModule | null = null;
@@ -395,9 +406,9 @@ export type UseWasmOption = boolean | 'auto';
 
 export type LoadKernelOptions = {
   /**
-   * - `true` (default) — C++/WASM only; throws if WASM missing unless `BN_ALLOW_JS_KERNEL=1`
-   * - `false` — JS fallback only; requires `BN_ALLOW_JS_KERNEL=1` or throws
-   * - `'auto'` — try WASM, else frozen JS fallback
+   * Guest is C++/WASM only.
+   * - `true` / `'auto'` / omitted — load WASM or throw
+   * - `false` — throws (`js-runtime.ts` deleted)
    */
   useWasm?: UseWasmOption;
 };
@@ -471,23 +482,8 @@ async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
 
 export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Promise<KernelModule> {
   const mode: UseWasmOption = opts?.useWasm === undefined ? true : opts.useWasm;
-  const env =
-    typeof globalThis !== 'undefined'
-      ? (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
-      : undefined;
-  const allowJs =
-    mode === 'auto' ||
-    env?.BN_ALLOW_JS_KERNEL === '1' ||
-    (typeof globalThis !== 'undefined' &&
-      (globalThis as { BN_ALLOW_JS_KERNEL?: boolean }).BN_ALLOW_JS_KERNEL === true);
-
   if (mode === false) {
-    if (!allowJs) {
-      throw new Error(
-        'WASM kernel required (Phase 13b). Pass useWasm: "auto" or set BN_ALLOW_JS_KERNEL=1 for the frozen JS fallback.',
-      );
-    }
-    return createJsFallbackKernel();
+    throw new Error(WASM_REQUIRED);
   }
 
   if (cachedWasmFactory) return cachedWasmFactory;
@@ -498,15 +494,5 @@ export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Pr
     return wasm;
   }
 
-  if (mode === true && !allowJs) {
-    throw new Error(
-      'WASM kernel required but browsernode_kernel.wasm failed to load. Build with npm run build:wasm, or useWasm: "auto".',
-    );
-  }
-
-  if (mode === true) {
-    console.warn('[browsernode] WASM kernel requested but unavailable — using JS runtime (BN_ALLOW_JS_KERNEL)');
-  }
-
-  return createJsFallbackKernel();
+  throw new Error(WASM_REQUIRED);
 }

@@ -1,13 +1,11 @@
 /**
  * Headless agent example — same C++/WASM kernel, no demo UI (Phase 36 / 42).
- * Run from repo root after `npm run build:api`:
+ * Run from repo root after `npm run build:wasm && npm run build:api`:
  *   node examples/headless.mjs
  */
 import { NodeBrowser } from '../packages/api/dist/index.js';
 
-process.env.BN_ALLOW_JS_KERNEL = '1';
-
-const bn = await NodeBrowser.boot({ useWasm: 'auto' });
+const bn = await NodeBrowser.boot();
 await bn.fs.mkdir('/home/agent', { recursive: true });
 await bn.fs.writeFile('/home/agent/hi.js', "console.log('agent-ok')");
 const rpc = await bn.rpc({ method: 'fs.readFile', params: { path: '/home/agent/hi.js' } });

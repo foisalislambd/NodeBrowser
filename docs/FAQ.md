@@ -2,7 +2,7 @@
 
 ## Does NodeBrowser run on a remote server?
 
-No. The runtime executes in the browser tab (JS fallback and/or WASM). The optional demo `npm run dev` process only serves static files with COOP/COEP headers.
+No. The runtime executes in the browser tab (C++/WASM + QuickJS). The optional demo `npm run dev` process only serves static files with COOP/COEP headers.
 
 ## Where do npm packages install?
 
@@ -14,9 +14,9 @@ Into the in-memory **VFS** (e.g. `/home/project/node_modules`), not your host di
 
 Host templates still exist (`npm run dev:vite` / `dev:next`) for comparison.
 
-## WASM vs JS fallback?
+## WASM kernel?
 
-Primary kernel is **C++ → WASM**. `NodeBrowser.boot()` defaults to `{ useWasm: true }` and **throws** if WASM is missing. Use `{ useWasm: 'auto' }` or `BN_ALLOW_JS_KERNEL=1` only for the frozen JS fallback. Do not treat JS-fallback tests as product completeness.
+`NodeBrowser.boot()` loads **C++ → WASM** and **throws** if the kernel is missing (`npm run build:wasm`). There is no JavaScript guest Node (`js-runtime.ts` was removed). CI builds WASM with Emscripten and runs conformance against that binary.
 
 ## Is this a drop-in for StackBlitz WebContainers?
 

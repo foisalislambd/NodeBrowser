@@ -1,6 +1,5 @@
 /**
- * Phase 13 conformance suite — runs against the JS kernel (useWasm: false).
- * Exit 0 on success.
+ * Conformance against the C++/WASM kernel (Phase 13b). Exit 0 on success.
  */
 import { NodeBrowser } from '../dist/index.js';
 import { resetKernelCache } from '../dist/kernel/load.js';
@@ -23,13 +22,8 @@ async function readOut(proc) {
 
 async function main() {
   resetKernelCache();
-  process.env.BN_ALLOW_JS_KERNEL = '1';
-  let bn;
-  try {
-    bn = await NodeBrowser.boot({ useWasm: true });
-  } catch {
-    bn = await NodeBrowser.boot({ useWasm: 'auto' });
-  }
+  const bn = await NodeBrowser.boot({ useWasm: true });
+  assert(bn.runtime === 'wasm', 'boot must use WASM kernel, got ' + bn.runtime);
 
   // --- exists / mkdir / write / read utf8 ---
   await bn.fs.mkdir('/home/project', { recursive: true });
@@ -87,20 +81,25 @@ async function main() {
   assert(runOut.code === 0, 'main exit');
   assert(runOut.out.includes('m=7'), runOut.out);
 
-  // --- default boot prefers WASM; Node can load the ES module WASM (or JS fallback) ---
+  // --- default boot is WASM; useWasm:false throws ---
   resetKernelCache();
   const auto = await NodeBrowser.boot({ useWasm: 'auto' });
-  assert(auto.runtime === 'js' || auto.runtime === 'wasm', 'auto runtime set');
+  assert(auto.runtime === 'wasm', 'auto runtime wasm');
   resetKernelCache();
-  const preferred = await NodeBrowser.boot(); // default useWasm: true
-  assert(preferred.runtime === 'js' || preferred.runtime === 'wasm', 'default boot runtime');
-  if (preferred.runtime === 'js') {
-    assert(process.env.BN_ALLOW_JS_KERNEL === '1', 'js fallback only with allow flag');
+  const preferred = await NodeBrowser.boot();
+  assert(preferred.runtime === 'wasm', 'default boot wasm');
+  let falseThrew = false;
+  try {
+    await NodeBrowser.boot({ useWasm: false });
+  } catch (e) {
+    falseThrew = String(e).includes('WASM kernel required');
   }
+  assert(falseThrew, 'useWasm:false must throw');
 
-  // --- boot isolation: two JS boots must not share VFS ---
-  const a = await NodeBrowser.boot({ useWasm: false });
-  const b = await NodeBrowser.boot({ useWasm: false });
+  // --- boot isolation: two WASM kernels must not share VFS ---
+  resetKernelCache();
+  const a = await NodeBrowser.boot({ useWasm: true });
+  const b = await NodeBrowser.boot({ useWasm: true });
   await a.fs.writeFile('/iso.txt', 'A');
   assert(!(await b.fs.exists('/iso.txt')), 'boots must isolate VFS');
   await b.fs.writeFile('/iso.txt', 'B');
@@ -303,7 +302,7 @@ async function main() {
   // --- Phase 14: snapshot (OPFS skipped in Node) ---
   const snap = await bn.exportSnapshot();
   assert(snap instanceof Uint8Array && snap.length > 20, 'snapshot bytes');
-  const bn2 = await NodeBrowser.boot({ useWasm: false });
+  const bn2 = await NodeBrowser.boot({ useWasm: true });
   await bn2.importSnapshot(snap);
   assert(await bn2.fs.exists('/home/project/b.txt') || await bn2.fs.exists('/home/project/target.txt'), 'import snapshot');
 
@@ -388,8 +387,8 @@ async function main() {
   assert((await kind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
 
   const { WebContainer } = await import('../dist/compat.js');
-  const wc = await WebContainer.boot({ useWasm: false });
-  assert(wc.runtime === 'js', 'compat runtime');
+  const wc = await WebContainer.boot({ useWasm: true });
+  assert(wc.runtime === 'wasm', 'compat runtime');
   await wc.mount({ 'compat.txt': { file: { contents: 'ok' } } }, '/home/compat');
   assert((await wc.fs.readFile('/home/compat/compat.txt', 'utf8')) === 'ok');
   wc.teardown();

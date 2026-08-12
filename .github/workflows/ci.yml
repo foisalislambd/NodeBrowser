@@ -9,9 +9,12 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  EM_VERSION: '3.1.74'
+
 jobs:
-  api-demo:
-    name: API + demo
+  wasm-boot:
+    name: WASM boot + API
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,14 +31,39 @@ jobs:
       - name: Install
         run: npm install --no-fund --no-audit
 
-      - name: Build API
-        run: npm run build:api
+      - name: Install CMake / Ninja / g++
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
 
-      - name: API conformance (Phase 13)
+      - name: Setup Emscripten
+        uses: emscripten-core/setup-emsdk@v15
+        with:
+          version: ${{ env.EM_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Verify Emscripten
+        run: command -v emcc && command -v emcmake && emcc -v
+
+      - name: Build C++ → WASM + TypeScript API
+        run: bash scripts/ci-build-cpp-wasm.sh
+
+      - name: API conformance (WASM boot)
         run: npm run test:api
+
+      - name: Assert WASM kernel shipped
+        run: |
+          test -f packages/api/wasm/browsernode_kernel.wasm
+          test -f packages/api/wasm/browsernode_kernel.js
+          test -f packages/api/dist/index.js
+          test ! -f packages/api/src/kernel/js-runtime.ts
+          test ! -f packages/api/dist/kernel/js-runtime.js
 
       - name: Build demo
         run: npm run build:demo
+
+      - name: Assert demo ships C++ WASM
+        run: |
+          test -f demo/dist/packages/api/wasm/browsernode_kernel.wasm
+          test -f demo/dist/packages/api/dist/index.js
 
   native:
     name: Native kernel tests

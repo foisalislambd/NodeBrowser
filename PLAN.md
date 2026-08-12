@@ -57,8 +57,8 @@ Done means these work on the **WASM kernel** (native `bn_*_test` + browser demo)
 | `WebContainer` name shim (same kernel) | ✅ |
 | ZIP import → detect → in-tab preview | ✅ |
 | In-tab Vite/Next **subset** (esbuild-wasm + shims, not upstream CLIs) | ✅ subset |
-| `SECURITY.md` + frozen `js-runtime.ts` | ✅ |
-| WASM-only guest (delete JS Node) | Phase 13b — remaining |
+| `SECURITY.md` + WASM-only guest | ✅ |
+| WASM-only guest (no `js-runtime.ts`) | ✅ Phase 13b |
 | Real `node node_modules/vite/bin/vite.js` in QuickJS | remaining (hard) |
 | xterm / SAB stdio / WC-speed install | Phases 32, 37 — remaining |
 
@@ -78,12 +78,7 @@ Bit-identical Node, native `.node` addons, full Turbopack, compiling Node+V8, mu
 
 ---
 
-**JS fallback (`js-runtime.ts`) — freeze then delete**
-
-- Historical MVP for Pages without WASM / Node CI without a wasm loader.
-- **Frozen:** no new guest modules, no new shell, no new fs APIs.
-- **Target:** remove as default; CI loads WASM (or skips). Keep a stub that errors clearly: “WASM kernel required”.
-- Until deleted, it may lag. Never block C++ work on JS parity.
+**JS guest deleted (Phase 13b)** — `js-runtime.ts` is gone. `boot({ useWasm: false })` throws `WASM kernel required`. CI builds C++ → WASM (Emscripten) and runs conformance on that binary.
 
 ---
 
@@ -143,7 +138,7 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 | Vite in-tab | ✅ | **Subset** esbuild-wasm + C++ `vite` | Real CLI in QuickJS later |
 | Next in-tab | subset | **Subset** App Router client bundle | Phase 31 |
 | Keep-alive HTTP | ✅ | ✅ retained QuickJS in WASM | Drop JS HttpBridge-as-server |
-| Guest modules | ✅ | **Only** C++ embed | Shrink/delete `js-runtime.ts` |
+| Guest modules | ✅ | **Only** C++ embed | — |
 | Multi-port UX | ✅ | Status bar ports + iframe | Phase 34 polish |
 | COOP/COEP / SAB | Used | Demo local | Phase 37 kernel stdio |
 | Install cache | Optimized | Host memory/Cache API + egress policy | Kernel-visible cache index |
@@ -166,7 +161,7 @@ NodeBrowser matches that **shape** only if the guest is C++/WASM. A JS-in-page N
 - [x] Shell subset — **C++ `cmd_sh`** (Phase 25)
 - [x] stdin / tty stubs / `wait` — kernel (Phase 16)
 - [x] Process kill tree — **C++** `parent_pid` + `kill_tree` (Phase 16)
-- [x] Delete JS guest as **default** — WASM required unless `useWasm:"auto"` / `BN_ALLOW_JS_KERNEL` (Phase 13b MVP)
+- [x] Delete JS guest — WASM-only `boot`; CI Emscripten job (Phase 13b)
 
 #### C. Network (kernel)
 
@@ -225,7 +220,7 @@ Do **not** “catch up” by writing more Node in `js-runtime.ts`.
 | 10 Next.js APIs | ✅ | createRequire / stubs in **guest embed** |
 | 11 Vite/Next demos | ✅ | Templates (UI); run target = WASM `node` |
 | 12 File manager DX | ✅ | Host UI |
-| 13 WASM default | ✅ | `useWasm: true` default; conformance still has JS leftover — **remove** |
+| 13 WASM default | ✅ | `useWasm: true`; JS guest deleted |
 
 Historical note: some checkboxes were first proven on a JS fallback. That does **not** make JS the product. Re-verify every guest feature on `bn_node_test` + WASM boot.
 
@@ -239,14 +234,13 @@ Estimate bands: S ≤ 1–2 weeks, M ≈ month, L multi-month (small team).
 
 ### Pillar 0 — Kill the JS guest (do this while shipping)
 
-#### Phase 13b — WASM-only guest `M` ✅ (MVP)
+#### Phase 13b — WASM-only guest `M` ✅
 
-- [x] `js-runtime.ts`: **frozen** (no new guest features)
-- [x] Default `useWasm: true` throws if WASM missing (unless `BN_ALLOW_JS_KERNEL` / `useWasm:"auto"`)
-- [x] `useWasm: false` requires `BN_ALLOW_JS_KERNEL=1`
-- [x] Conformance tries WASM first, then auto
-- [ ] Delete `js-runtime.ts` file entirely
-- [ ] GitHub Actions boots WASM (needs Emscripten job)
+- [x] `js-runtime.ts` **deleted** (stub `createJsFallbackKernel()` throws)
+- [x] Default `useWasm: true` throws if WASM missing
+- [x] `useWasm: false` throws (`WASM kernel required`)
+- [x] Conformance requires `runtime === 'wasm'`
+- [x] GitHub Actions: Emscripten C++ → WASM, then API conformance + demo
 
 **Exit:** demo and tests never need a guest Node written in TypeScript.
 
@@ -263,7 +257,7 @@ Estimate bands: S ≤ 1–2 weeks, M ≈ month, L multi-month (small team).
 - [x] `bn.runtime` `'wasm' | 'js'` — `'js'` is legacy
 - [x] `bn_http_dispatch` + retained QuickJS handlers
 
-**Still open:** Phase 13b (delete JS guest).
+**Done:** Phase 13b (JS guest deleted).
 
 #### Phase 14 — Persistent VFS `M` ✅
 
@@ -525,7 +519,7 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 
 If capacity is limited:
 
-1. **13b** WASM-only guest; delete `js-runtime.ts` (frozen now)
+1. ~~**13b** WASM-only guest~~ ✅ (`js-runtime.ts` deleted; CI WASM boot)
 2. **18 harden** HTTP keep-alive only on WASM
 3. ~~**16 harden** non-blocking `node` (Worker)~~ ✅ — kill tree + browser Worker; Asyncify/interrupt still later
 4. **Real Vite/tsc in QuickJS** when the graph fits; esbuild remains the fast path
@@ -533,7 +527,7 @@ If capacity is limited:
 6. **32** xterm UI
 7. **31** Next route handlers subset
 
-Do **not** spend a milestone “catching up JS fallback.”
+Do **not** reintroduce a TypeScript guest Node.
 
 ---
 

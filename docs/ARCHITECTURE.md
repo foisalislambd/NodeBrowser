@@ -35,14 +35,14 @@
 - Browser bridges: Service Worker HttpBridge, OPFS, **allowlisted** fetch to npm registry
 - Load WASM + call C ABI
 
-**There is no product guest Node in TypeScript.** `packages/api/src/kernel/js-runtime.ts` is a frozen legacy fallback to delete (PLAN Phase 13b).
+**There is no guest Node in TypeScript.** `packages/api/src/kernel/` loads `browsernode_kernel.wasm` and calls `bn_*`.
 
 ### Host package layout (`packages/api/src`)
 
 | Folder | Owns |
 | ------ | ---- |
 | `host/` | `NodeBrowser`, types, WebContainer class |
-| `kernel/` | WASM loader + frozen JS fallback |
+| `kernel/` | WASM loader + Worker proxy |
 | `fs/` | VFS tree flatten, OPFS, zip/tar |
 | `net/` | HttpBridge, npm egress allowlist |
 | `npm/` | install, bin shims, lockfile detect |

@@ -1,6 +1,6 @@
 {
   "name": "@foisal/nodebrowser",
-  "version": "1.1.5",
+  "version": "1.1.4",
   "description": "Node.js in the browser (NodeBrowser) — WebContainers-style runtime (VFS, spawn, npm, HTTP preview)",
   "license": "MIT",
   "type": "module",
@@ -21,7 +21,7 @@
     "wasm"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
+    "build": "rm -rf dist && tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
     "clean": "rm -rf dist",
     "test": "npm run build && node ./test/conformance.mjs",
     "docs": "npx --yes typedoc --options typedoc.json"

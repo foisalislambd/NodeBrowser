@@ -11,6 +11,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 ### Added
 
 - Browser: C++/WASM kernel on a **Worker** (`bn.worker`) so long `node` does not freeze the tab; Node/tests stay same-thread
+- **Phase 13b:** deleted `js-runtime.ts`; `boot()` is WASM-only; PR CI builds C++ → WASM (Emscripten) then runs conformance
 - Automated release on `main`: npm Trusted Publisher (OIDC), GitHub Packages, GitHub Release
 - Version scheme `1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`
 - GitHub Pages demo deploy (self-contained `demo/dist`, base path `/NodeBrowser/`)
@@ -21,7 +22,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 ### Changed
 
 - Public package renamed to **`@foisal/nodebrowser`**
-- **Primary runtime is C++/WASM** — `boot({ useWasm: true })` is the default; JS is fallback only
+- **Primary runtime is C++/WASM** — `boot()` throws if WASM is missing; no JS guest
 - Mount/npm extract keep binary files as `Uint8Array` end-to-end
 
 ## [1.0.0] — TBD

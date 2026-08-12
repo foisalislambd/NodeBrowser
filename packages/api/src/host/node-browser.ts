@@ -67,8 +67,6 @@ export class NodeBrowser {
     options?: {
       wasmUrl?: string;
       previewBase?: string;
-      /** Prefer C++/WASM kernel (`true` default). `false` forces JS. `'auto'` tries WASM then JS quietly. */
-      useWasm?: boolean | 'auto';
       /** Persist `/home` to Origin Private File System (browser). Default false. */
       persist?: boolean;
     } & LoadKernelOptions,

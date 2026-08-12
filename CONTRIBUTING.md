@@ -42,7 +42,7 @@ See [`README.md`](./README.md) and [`scripts/setup-toolchain.sh`](./scripts/setu
 2. Create a branch: `feat/…`, `fix/…`, or `docs/…`.
 3. Keep PRs focused — one concern per PR when possible.
 4. Fill out the PR template; link related issues.
-5. Ensure CI passes (`build:api`, `build:demo`, and native tests when touched).
+5. Ensure CI passes (WASM boot + API conformance, demo build, native tests when kernel touched).
 
 ### Commit messages
 
@@ -65,7 +65,7 @@ Prefer short, imperative subjects:
 
 | Area | Command / check |
 |------|------------------|
-| API build | `npm run build:api` |
+| API + WASM boot | `npm run test:api` (needs `packages/api/wasm/`) |
 | Demo build | `npm run build:demo` |
 | Native kernel | `npm run build:native` / `npm test` |
 | Manual | `npm run dev` — Run / Install / HTTP / Files pane |
