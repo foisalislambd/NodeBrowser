@@ -4,43 +4,46 @@ export type { HttpRegistrar };
 
 export type KernelHandle = number;
 
+/** Sync JS fallback or Promise when the WASM kernel runs on a Worker. */
+export type Awaitable<T> = T | Promise<T>;
+
 export interface KernelModule {
-  create(): KernelHandle;
-  destroy(k: KernelHandle): void;
-  registerBuiltins(k: KernelHandle): void;
-  mkdir(k: KernelHandle, path: string, recursive: boolean): boolean;
-  writeText(k: KernelHandle, path: string, text: string): boolean;
-  writeBytes(k: KernelHandle, path: string, data: Uint8Array): boolean;
-  readText(k: KernelHandle, path: string): string | null;
+  create(): Awaitable<KernelHandle>;
+  destroy(k: KernelHandle): Awaitable<void>;
+  registerBuiltins(k: KernelHandle): Awaitable<void>;
+  mkdir(k: KernelHandle, path: string, recursive: boolean): Awaitable<boolean>;
+  writeText(k: KernelHandle, path: string, text: string): Awaitable<boolean>;
+  writeBytes(k: KernelHandle, path: string, data: Uint8Array): Awaitable<boolean>;
+  readText(k: KernelHandle, path: string): Awaitable<string | null>;
   /** Optional — binary read; host falls back to TextEncoder on readText */
-  readBytes?(k: KernelHandle, path: string): Uint8Array | null;
-  unlink(k: KernelHandle, path: string): boolean;
+  readBytes?(k: KernelHandle, path: string): Awaitable<Uint8Array | null>;
+  unlink(k: KernelHandle, path: string): Awaitable<boolean>;
   /** Optional — host implements portable fallback if missing */
-  rename?(k: KernelHandle, from: string, to: string): boolean;
-  readdir(k: KernelHandle, path: string): string[];
-  exists(k: KernelHandle, path: string): boolean;
+  rename?(k: KernelHandle, from: string, to: string): Awaitable<boolean>;
+  readdir(k: KernelHandle, path: string): Awaitable<string[]>;
+  exists(k: KernelHandle, path: string): Awaitable<boolean>;
   /** Optional — JS fallback; WASM may use readText heuristic via NodeBrowser.fs */
-  isDir?(k: KernelHandle, path: string): boolean;
+  isDir?(k: KernelHandle, path: string): Awaitable<boolean>;
   /** Optional — C++ VFS symlink ABI (WASM) / JS kernel */
-  symlink?(k: KernelHandle, target: string, linkpath: string): boolean;
-  readlink?(k: KernelHandle, path: string): string | null;
+  symlink?(k: KernelHandle, target: string, linkpath: string): Awaitable<boolean>;
+  readlink?(k: KernelHandle, path: string): Awaitable<string | null>;
   /** Returns "file" | "directory" | "symlink" (WASM lstat JSON) or JS kind */
-  lstatKind?(k: KernelHandle, path: string): string | null;
+  lstatKind?(k: KernelHandle, path: string): Awaitable<string | null>;
   spawn(
     k: KernelHandle,
     cmd: string,
     argv: string[],
     cwd: string,
     env?: Record<string, string>,
-  ): number;
-  wait(k: KernelHandle, pid: number): number;
-  kill(k: KernelHandle, pid: number): boolean;
-  pump?(k: KernelHandle, nowMs?: number): number;
-  extractTar?(k: KernelHandle, data: Uint8Array, destDir: string): number;
-  usageBytes?(k: KernelHandle): number;
-  readStdout(k: KernelHandle, pid: number): string;
-  readStderr(k: KernelHandle, pid: number): string;
-  writeStdin(k: KernelHandle, pid: number, data: string): number;
+  ): Awaitable<number>;
+  wait(k: KernelHandle, pid: number): Awaitable<number>;
+  kill(k: KernelHandle, pid: number): Awaitable<boolean>;
+  pump?(k: KernelHandle, nowMs?: number): Awaitable<number>;
+  extractTar?(k: KernelHandle, data: Uint8Array, destDir: string): Awaitable<number>;
+  usageBytes?(k: KernelHandle): Awaitable<number>;
+  readStdout(k: KernelHandle, pid: number): Awaitable<string>;
+  readStderr(k: KernelHandle, pid: number): Awaitable<string>;
+  writeStdin(k: KernelHandle, pid: number, data: string): Awaitable<number>;
   /** Optional: JS fallback exposes this for HttpBridge wiring. */
   setHttpRegistrar?: (fn: HttpRegistrar | null) => void;
   /** Optional: host FS mutation bus (JS kernel). */
@@ -53,9 +56,11 @@ export interface KernelModule {
     path: string,
     headersJson: string,
     body: string,
-  ) => string | null;
+  ) => Awaitable<string | null>;
   /** Set by loadKernel */
   runtime?: 'js' | 'wasm';
+  /** True when C++/WASM runs off the UI thread. */
+  worker?: boolean;
 }
 
 type EmscriptenModule = {
@@ -160,7 +165,9 @@ function wrap(mod: EmscriptenModule): KernelModule {
 
   return {
     create: () => mod._bn_kernel_create(),
-    destroy: (k) => mod._bn_kernel_destroy(k),
+    destroy: (k) => {
+      mod._bn_kernel_destroy(k);
+    },
     registerBuiltins: (k) => mod._bn_register_builtins(k),
     mkdir: (k, path, recursive) => {
       const p = allocStr(path);
@@ -373,18 +380,28 @@ export type LoadKernelOptions = {
 /** Clear kernel caches (tests). */
 export function resetKernelCache(): void {
   cachedWasmFactory = null;
+  void import('./kernel-proxy.js')
+    .then((m) => m.terminateKernelWorker())
+    .catch(() => undefined);
 }
 
-async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
-  const url = wasmUrl ?? new URL('../../../wasm/browsernode_kernel.js', import.meta.url).href;
+export function defaultWasmJsUrl(): string {
+  return new URL('../../wasm/browsernode_kernel.js', import.meta.url).href;
+}
+
+/** Load C++/WASM on this thread (Worker body, Node, or Worker-unavailable browsers). */
+export async function loadWasmOnThisThread(wasmUrl?: string): Promise<KernelModule | null> {
+  const url = wasmUrl ?? defaultWasmJsUrl();
+  const locate = (path: string) => new URL(path, url).href;
   try {
     const factory = await import(/* @vite-ignore */ url).catch(() => null);
     if (factory && typeof (factory as { default?: unknown }).default === 'function') {
       const mod = (await (factory as { default: (o?: object) => Promise<EmscriptenModule> }).default({
-        locateFile: (path: string) => new URL(`../../../wasm/${path}`, import.meta.url).href,
+        locateFile: locate,
       })) as EmscriptenModule;
       const wrapped = wrap(mod);
       wrapped.runtime = 'wasm';
+      wrapped.worker = false;
       return wrapped;
     }
 
@@ -399,10 +416,11 @@ async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
 
       if (typeof window !== 'undefined' && window.createBrowserNodeKernel) {
         const mod = await window.createBrowserNodeKernel({
-          locateFile: (path: string) => url.replace(/browsernode_kernel\.js.*/, path),
+          locateFile: locate,
         });
         const wrapped = wrap(mod);
         wrapped.runtime = 'wasm';
+        wrapped.worker = false;
         return wrapped;
       }
     }
@@ -410,6 +428,20 @@ async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
     return null;
   }
   return null;
+}
+
+async function tryLoadWasm(wasmUrl?: string): Promise<KernelModule | null> {
+  const url = wasmUrl ?? defaultWasmJsUrl();
+  const inKernelWorker = !!(globalThis as unknown as { __BN_KERNEL_THREAD__?: boolean }).__BN_KERNEL_THREAD__;
+  if (!inKernelWorker && typeof Worker === 'function' && typeof document !== 'undefined') {
+    try {
+      const { createWorkerKernel } = await import('./kernel-proxy.js');
+      return await createWorkerKernel(url);
+    } catch {
+      /* same-thread WASM — tab may freeze on long node */
+    }
+  }
+  return loadWasmOnThisThread(url);
 }
 
 export async function loadKernel(wasmUrl?: string, opts?: LoadKernelOptions): Promise<KernelModule> {

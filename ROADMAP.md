@@ -12,6 +12,7 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 
 - C++ → WASM kernel + VFS + spawn + `sh` subset + **kill tree**
 - QuickJS `node` + guest modules baked into the kernel
+- Browser: WASM kernel on a **Worker** (UI thread stays responsive)
 - Kernel **event loop** (`setTimeout`/`setInterval` + `bn_pump`); guest `fetch` deny + localhost virtual HTTP
 - Cooperative `worker_threads.Worker`; `vm` extra JSContext; C++ tar extract; VFS 512 MiB cap
 - Service Worker preview; demo **ports** status
@@ -22,7 +23,7 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 ## Must add (still C++/WASM)
 
 1. Delete `js-runtime.ts` entirely; WASM job on GitHub Actions  
-2. Asyncify / worker so long `node` does not freeze the tab  
+2. ~~Asyncify / worker so long `node` does not freeze the tab~~ **Worker in browser** (same-thread fallback)  
 3. Real installed `vite`/`tsc` in QuickJS when the graph fits  
 4. Optional `@xterm/xterm`; SAB stdio  
 5. External bake-off vs WebContainers  

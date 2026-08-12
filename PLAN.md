@@ -291,7 +291,7 @@ Host OPFS is a **cache of C++ VFS**, not a second filesystem.
 - [x] Process groups / kill tree in **C++** (`parent_pid`, `kill_tree`; `bn_kill` is tree)
 - [x] `sh -c '… &'` / `wait` MVP
 - [x] Max procs limit
-- [ ] Asyncify or worker so long `node` does not block the tab
+- [x] WASM **Worker** so long `node` does not block the tab (browser; same-thread fallback)
 
 **Exit:** parent `node` spawns child `node` inside WASM; `wait` is `-1` while HTTP keep-alive.
 

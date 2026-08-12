@@ -22,6 +22,10 @@ import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './j
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
+function asy<T>(v: T | Promise<T>): Promise<T> {
+  return Promise.resolve(v);
+}
+
 export class NodeBrowser {
   #mod: KernelModule;
   #k: KernelHandle;
@@ -69,8 +73,8 @@ export class NodeBrowser {
     const useWasm = options?.useWasm === undefined ? true : options.useWasm;
     const persist = !!options?.persist;
     const mod = await loadKernel(options?.wasmUrl, { useWasm });
-    const k = mod.create();
-    mod.registerBuiltins(k);
+    const k = await asy(mod.create());
+    await asy(mod.registerBuiltins(k));
     const previewBase =
       options?.previewBase ??
       (typeof location !== 'undefined'
@@ -94,52 +98,52 @@ export class NodeBrowser {
     const mod = this.#mod;
     const k = this.#k;
     const self = this;
-    const isDir = (path: string): boolean => {
+    const isDir = async (path: string): Promise<boolean> => {
       if (path === '/' || path === '') return true;
-      if (mod.isDir) return mod.isDir(k, path);
-      if (!mod.exists(k, path)) return false;
-      return mod.readText(k, path) === null;
+      if (mod.isDir) return asy(mod.isDir(k, path));
+      if (!(await asy(mod.exists(k, path)))) return false;
+      return (await asy(mod.readText(k, path))) === null;
     };
     const joinFs = (dir: string, name: string) => {
       if (dir === '/') return `/${name}`;
       return `${dir.replace(/\/+$/, '')}/${name}`;
     };
-    const readBytes = (path: string): Uint8Array => {
+    const readBytes = async (path: string): Promise<Uint8Array> => {
       if (mod.readBytes) {
-        const b = mod.readBytes(k, path);
+        const b = await asy(mod.readBytes(k, path));
         if (b == null) throw new Error(`ENOENT: ${path}`);
         return b;
       }
-      const t = mod.readText(k, path);
+      const t = await asy(mod.readText(k, path));
       if (t == null) throw new Error(`ENOENT: ${path}`);
       return new TextEncoder().encode(t);
     };
     const rmTree = async (path: string): Promise<void> => {
-      if (!mod.exists(k, path)) return;
-      if (isDir(path)) {
-        for (const name of mod.readdir(k, path)) {
+      if (!(await asy(mod.exists(k, path)))) return;
+      if (await isDir(path)) {
+        for (const name of await asy(mod.readdir(k, path))) {
           await rmTree(joinFs(path, name));
         }
       }
-      if (!mod.unlink(k, path) && mod.exists(k, path)) {
+      if (!(await asy(mod.unlink(k, path))) && (await asy(mod.exists(k, path)))) {
         throw new Error(`EPERM: cannot remove ${path}`);
       }
     };
     const copyTree = async (from: string, to: string): Promise<void> => {
-      if (isDir(from)) {
-        mod.mkdir(k, to, true);
-        for (const name of mod.readdir(k, from)) {
+      if (await isDir(from)) {
+        await asy(mod.mkdir(k, to, true));
+        for (const name of await asy(mod.readdir(k, from))) {
           await copyTree(joinFs(from, name), joinFs(to, name));
         }
         return;
       }
-      const bytes = readBytes(from);
-      mod.writeBytes(k, to, bytes);
+      const bytes = await readBytes(from);
+      await asy(mod.writeBytes(k, to, bytes));
     };
     return {
       writeFile: async (path: string, data: string | Uint8Array) => {
-        if (typeof data === 'string') mod.writeText(k, path, data);
-        else mod.writeBytes(k, path, data);
+        if (typeof data === 'string') await asy(mod.writeText(k, path, data));
+        else await asy(mod.writeBytes(k, path, data));
         // JS kernel emits via setFsChangeListener; WASM needs host emit.
         if (!mod.setFsChangeListener) {
           self.#emit('fs-change', { type: 'change', path });
@@ -148,7 +152,7 @@ export class NodeBrowser {
       },
       readFile: (async (path: string, encoding?: 'utf8' | 'buffer') => {
         if (encoding === 'buffer') return readBytes(path);
-        const t = mod.readText(k, path);
+        const t = await asy(mod.readText(k, path));
         if (t == null) throw new Error(`ENOENT: ${path}`);
         return t;
       }) as {
@@ -157,27 +161,27 @@ export class NodeBrowser {
         (path: string): Promise<string>;
       },
       readdir: async (path: string) => {
-        if (path !== '/' && !mod.exists(k, path)) throw new Error(`ENOENT: ${path}`);
-        return mod.readdir(k, path);
+        if (path !== '/' && !(await asy(mod.exists(k, path)))) throw new Error(`ENOENT: ${path}`);
+        return asy(mod.readdir(k, path));
       },
       mkdir: async (path: string, opts?: { recursive?: boolean }) => {
-        mod.mkdir(k, path, opts?.recursive ?? true);
+        await asy(mod.mkdir(k, path, opts?.recursive ?? true));
         if (!mod.setFsChangeListener) {
           self.#emit('fs-change', { type: 'rename', path });
           self.#opfsFlusher?.mark(path, 'write');
         }
       },
-      exists: async (path: string) => path === '/' || mod.exists(k, path),
+      exists: async (path: string) => path === '/' || asy(mod.exists(k, path)),
       stat: async (path: string) => {
-        if (path !== '/' && !mod.exists(k, path)) throw new Error(`ENOENT: ${path}`);
-        const dir = isDir(path);
+        if (path !== '/' && !(await asy(mod.exists(k, path)))) throw new Error(`ENOENT: ${path}`);
+        const dir = await isDir(path);
         return {
           isFile: () => !dir,
           isDirectory: () => dir,
         };
       },
       rm: async (path: string, opts?: { recursive?: boolean }) => {
-        if (!mod.exists(k, path) && path !== '/') throw new Error(`ENOENT: ${path}`);
+        if (!(await asy(mod.exists(k, path))) && path !== '/') throw new Error(`ENOENT: ${path}`);
         if (opts?.recursive) {
           await rmTree(path);
           if (!mod.setFsChangeListener) {
@@ -186,17 +190,17 @@ export class NodeBrowser {
           }
           return;
         }
-        if (isDir(path)) throw new Error(`EISDIR: ${path} (use { recursive: true })`);
-        if (!mod.unlink(k, path)) throw new Error(`ENOENT: ${path}`);
+        if (await isDir(path)) throw new Error(`EISDIR: ${path} (use { recursive: true })`);
+        if (!(await asy(mod.unlink(k, path)))) throw new Error(`ENOENT: ${path}`);
         if (!mod.setFsChangeListener) {
           self.#emit('fs-change', { type: 'rename', path });
           self.#opfsFlusher?.mark(path, 'delete');
         }
       },
       rename: async (from: string, to: string) => {
-        if (!mod.exists(k, from)) throw new Error(`ENOENT: ${from}`);
+        if (!(await asy(mod.exists(k, from)))) throw new Error(`ENOENT: ${from}`);
         if (mod.rename) {
-          if (!mod.rename(k, from, to)) throw new Error(`EPERM: rename ${from} → ${to}`);
+          if (!(await asy(mod.rename(k, from, to)))) throw new Error(`EPERM: rename ${from} → ${to}`);
         } else {
           await copyTree(from, to);
           await rmTree(from);
@@ -244,8 +248,8 @@ export class NodeBrowser {
   async mount(tree: FileSystemTree, mountPoint = '/'): Promise<void> {
     const files = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
     for (const [path, contents] of Object.entries(files)) {
-      if (typeof contents === 'string') this.#mod.writeText(this.#k, path, contents);
-      else this.#mod.writeBytes(this.#k, path, contents);
+      if (typeof contents === 'string') await asy(this.#mod.writeText(this.#k, path, contents));
+      else await asy(this.#mod.writeBytes(this.#k, path, contents));
       if (!this.#mod.setFsChangeListener) {
         this.#emit('fs-change', { type: 'change', path });
         this.#opfsFlusher?.mark(path, 'write');
@@ -349,7 +353,9 @@ export class NodeBrowser {
       __bn_on_npm?: (cwd: string, action: string, payload: string, pid: number) => void;
       __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
     }).__bn_on_npm = (cwd, action, payload, pid) => {
-      const finish = () => this.#killWithChildren(pid);
+      const finish = () => {
+        void this.#killWithChildren(pid);
+      };
       void (async () => {
         if (action === 'run') {
           const child = await self.runScript(payload, cwd);
@@ -366,7 +372,9 @@ export class NodeBrowser {
     (globalThis as unknown as {
       __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
     }).__bn_on_npx = (pkg, rest, cwd, pid) => {
-      const finish = () => this.#killWithChildren(pid);
+      const finish = () => {
+        void this.#killWithChildren(pid);
+      };
       const args = rest ? rest.split('\x1f').filter(Boolean) : [];
       void (async () => {
         const child = await self.npx(pkg, args, cwd);
@@ -377,7 +385,7 @@ export class NodeBrowser {
         .finally(finish);
     };
 
-    const pid = this.#mod.spawn(this.#k, cmd, args, cwd, opts.env);
+    const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, opts.env));
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
 
     let exitResolve!: (code: number) => void;
@@ -387,25 +395,24 @@ export class NodeBrowser {
 
     const output = new ReadableStream<string>({
       start: (controller) => {
-        const poll = () => {
-          const out = this.#mod.readStdout(this.#k, pid);
-          const err = this.#mod.readStderr(this.#k, pid);
+        const poll = async () => {
+          const out = await asy(this.#mod.readStdout(this.#k, pid));
+          const err = await asy(this.#mod.readStderr(this.#k, pid));
           if (out) controller.enqueue(out);
           if (err) controller.enqueue(err);
-          const code = this.#mod.wait(this.#k, pid);
+          const code = await asy(this.#mod.wait(this.#k, pid));
           if (code === -1) {
-            // Yield to the event loop so HTTP / timers can run while keep-alive
-            setTimeout(poll, 16);
+            setTimeout(() => void poll(), 16);
             return;
           }
-          const out2 = this.#mod.readStdout(this.#k, pid);
-          const err2 = this.#mod.readStderr(this.#k, pid);
+          const out2 = await asy(this.#mod.readStdout(this.#k, pid));
+          const err2 = await asy(this.#mod.readStderr(this.#k, pid));
           if (out2) controller.enqueue(out2);
           if (err2) controller.enqueue(err2);
           controller.close();
           exitResolve(code);
         };
-        queueMicrotask(poll);
+        queueMicrotask(() => void poll());
       },
     });
 
@@ -413,8 +420,12 @@ export class NodeBrowser {
       pid,
       exit,
       output,
-      kill: () => this.#killWithChildren(pid),
-      write: (data: string) => this.#mod.writeStdin(this.#k, pid, data),
+      kill: () => {
+        void this.#killWithChildren(pid);
+      },
+      write: (data: string) => {
+        void asy(this.#mod.writeStdin(this.#k, pid, data));
+      },
     };
   }
 
@@ -628,11 +639,11 @@ export class NodeBrowser {
   #wireFsChange(): void {
     this.#mod.setFsChangeListener?.((ev) => {
       this.#emit('fs-change', ev);
-      // mkdir/symlink/unlink use type "rename"; only treat explicit deletes as delete.
-      // Paths that still exist after the event should be flushed as writes.
-      const kind =
-        ev.type === 'rename' && !this.#mod.exists(this.#k, ev.path) ? 'delete' : 'write';
-      this.#opfsFlusher?.mark(ev.path, kind);
+      void (async () => {
+        const exists = await asy(this.#mod.exists(this.#k, ev.path));
+        const kind = ev.type === 'rename' && !exists ? 'delete' : 'write';
+        this.#opfsFlusher?.mark(ev.path, kind);
+      })();
     });
   }
 
@@ -653,7 +664,7 @@ export class NodeBrowser {
     };
     if (!g.__bn_wasm_http_handlers) g.__bn_wasm_http_handlers = new Map();
 
-    this.#http.listen(port, (req, res) => {
+    this.#http.listen(port, async (req, res) => {
       const handler = g.__bn_wasm_http_handlers?.get(port);
       if (handler) {
         try {
@@ -677,13 +688,15 @@ export class NodeBrowser {
         res.end('WASM HTTP dispatch unavailable');
         return;
       }
-      const raw = dispatch(
-        this.#k,
-        port,
-        req.method,
-        req.url,
-        JSON.stringify(req.headers || {}),
-        req.body || '',
+      const raw = await asy(
+        dispatch(
+          this.#k,
+          port,
+          req.method,
+          req.url,
+          JSON.stringify(req.headers || {}),
+          req.body || '',
+        ),
       );
       if (!raw) {
         res.writeHead(502, { 'Content-Type': 'text/plain' });
@@ -708,7 +721,7 @@ export class NodeBrowser {
   teardown(): void {
     this.#detachSw?.();
     this.#detachSw = null;
-    this.#mod.destroy(this.#k);
+    void asy(this.#mod.destroy(this.#k));
     this.#booted = false;
   }
 
@@ -719,7 +732,8 @@ export class NodeBrowser {
 
   /** Kill pid and descendants (C++ process tree + host-spawned npm/npx children). */
   killTree(pid: number): boolean {
-    return this.#killWithChildren(pid);
+    void this.#killWithChildren(pid);
+    return true;
   }
 
   #attachSpawnChild(parent: number, child: number): void {
@@ -731,15 +745,15 @@ export class NodeBrowser {
     set.add(child);
   }
 
-  #killWithChildren(pid: number): boolean {
+  async #killWithChildren(pid: number): Promise<boolean> {
     for (const c of [...(this.#spawnChildren.get(pid) ?? [])]) {
-      this.#killWithChildren(c);
+      await this.#killWithChildren(c);
     }
     this.#spawnChildren.delete(pid);
     for (const port of this.#portsByPid.get(pid) ?? []) this.#http.close(port);
     this.#portsByPid.delete(pid);
     try {
-      return this.#mod.kill(this.#k, pid);
+      return await asy(this.#mod.kill(this.#k, pid));
     } catch {
       return false;
     }
