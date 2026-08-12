@@ -71,6 +71,7 @@
             <span class="twistie">▾</span>
             <span class="section-label">NODEBROWSER</span>
             <div class="section-actions">
+              <button type="button" id="btn-fs-import" class="icon-btn" title="Upload ZIP / tar.gz">↑</button>
               <button type="button" id="btn-fs-export" class="icon-btn" title="Export snapshot">↓</button>
               <button type="button" id="btn-fs-clear" class="icon-btn danger" title="Clear workspace">✕</button>
             </div>
@@ -109,7 +110,9 @@
               <button type="button" id="btn-vite-load" class="btn ghost">Load Vite</button>
               <button type="button" id="btn-vite-preview" class="btn ghost">Vite preview</button>
               <button type="button" id="btn-next-load" class="btn ghost">Load Next</button>
-              <button type="button" id="btn-next-preview" class="btn ghost">Next preview</button>
+              <button type="button" id="btn-zip-upload" class="btn ghost">Upload ZIP</button>
+              <button type="button" id="btn-zip-run" class="btn ghost">Run project</button>
+              <input type="file" id="zip-file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" hidden />
             </div>
             <textarea id="editor" spellcheck="false" aria-label="Source editor"></textarea>
           </section>
@@ -170,7 +173,7 @@
             <div class="sb-empty" id="preview-empty">
               <div class="sb-empty-icon" aria-hidden="true"></div>
               <p>Simple Browser</p>
-              <span>Preview opens here when a server is ready<br />(HTTP · Vite · Next)</span>
+      <span>Drop a .zip here or use Upload ZIP<br />(Vite / Next / static HTML preview)</span>
             </div>
           </div>
         </aside>

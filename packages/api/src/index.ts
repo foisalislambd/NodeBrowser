@@ -16,6 +16,8 @@ import {
   opfsAvailable,
 } from './opfs.js';
 import { zlibPureSync } from './zlib-pure.js';
+import { extractArchive, stripSingleRoot, joinArchivePath } from './zip.js';
+import { previewProject, type PreviewResult } from './project-preview.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -263,6 +265,30 @@ export class NodeBrowser {
     );
     if (this.#persist) await this.#opfsFlusher?.flush();
     return n;
+  }
+
+  /**
+   * Unpack a .zip or .tar.gz into dest (default `/home/project`).
+   * Strips a single top-level folder. Returns dest + file count.
+   */
+  async importZip(bytes: Uint8Array, dest = '/home/project'): Promise<{ dest: string; files: number }> {
+    const extracted = stripSingleRoot(await extractArchive(bytes));
+    const names = Object.keys(extracted);
+    if (!names.length) throw new Error('archive is empty');
+    await this.fs.mkdir(dest, { recursive: true });
+    for (const rel of names) {
+      const path = joinArchivePath(dest, rel);
+      const dir = path.slice(0, path.lastIndexOf('/'));
+      if (dir && dir !== '/') await this.fs.mkdir(dir, { recursive: true });
+      await this.fs.writeFile(path, extracted[rel]!);
+    }
+    if (this.#persist) await this.#opfsFlusher?.flush();
+    return { dest, files: names.length };
+  }
+
+  /** Detect Vite/Next/static/node at cwd and start in-tab preview when possible. */
+  previewProject(cwd: string): Promise<PreviewResult> {
+    return previewProject(this, cwd);
   }
 
   /** Clear `/home` workspace (VFS + OPFS when persist). */
@@ -651,7 +677,9 @@ function joinFsPath(...parts: string[]): string {
 
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
 export type { BundleOptions } from './esbuild-bundle.js';
-export type { InstallProgress } from './npm-install.js';
+export type { PreviewResult, ProjectKind } from './project-preview.js';
+export { detectProjectKind } from './project-preview.js';
+export { extractArchive, isZip, isGzip } from './zip.js';
 export { HttpBridge } from './http-bridge.js';
 export { resetKernelCache, type UseWasmOption } from './kernel.js';
 /** @deprecated Use `NodeBrowser` — kept for older snippets */

@@ -378,6 +378,7 @@ async function boot() {
   await refreshTree();
   $('status').textContent = bn.runtime === 'wasm' ? 'ready · wasm' : 'ready · js';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
+  appendTerm('Upload ZIP / drop a .zip to unpack and preview (Vite, Next, or static HTML).\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
   const termInput = $('term-input');
   if (termInput) {
@@ -576,6 +577,67 @@ async function nextPreview() {
   await refreshTree();
 }
 
+function sanitizeStem(name) {
+  const base = String(name || 'upload').replace(/\.(zip|tgz|tar\.gz)$/i, '');
+  const stem = base.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
+  return stem.slice(0, 64);
+}
+
+async function ingestArchiveBytes(bytes, label) {
+  if (!bn) return;
+  const dest = `/home/uploads/${sanitizeStem(label)}`;
+  appendTerm(`unpack ${label} → ${dest} …\n`);
+  const { files } = await bn.importZip(bytes, dest);
+  appendTerm(`unpacked ${files} files\n`);
+  setCwd(dest);
+  expanded.add('/home');
+  expanded.add('/home/uploads');
+  expanded.add(dest);
+  selectedPath = dest;
+  try {
+    const pkg = await bn.fs.readFile(dest + '/package.json', 'utf8');
+    editor.value = pkg;
+    setEditorPath(dest + '/package.json');
+    setDirty(false);
+  } catch {
+    try {
+      const html = await bn.fs.readFile(dest + '/index.html', 'utf8');
+      editor.value = html;
+      setEditorPath(dest + '/index.html');
+      setDirty(false);
+    } catch {
+      /* tree only */
+    }
+  }
+  await refreshTree();
+  appendTerm('starting in-tab preview …\n');
+  const result = await bn.previewProject(dest);
+  appendTerm(`[${result.kind}] ${result.message}${result.url ? ' → ' + result.url : ''}\n`);
+  if (result.port != null && result.url) {
+    await showPreview(result.port, result.url, { preferUrl: true });
+  }
+}
+
+async function ingestArchiveFile(file) {
+  const ab = new Uint8Array(await file.arrayBuffer());
+  await ingestArchiveBytes(ab, file.name);
+}
+
+function openZipPicker() {
+  $('zip-file')?.click();
+}
+
+async function runCurrentProject() {
+  if (!bn) return;
+  const cwd = projectCwd || '/home/project';
+  appendTerm(`previewProject ${cwd} …\n`);
+  const result = await bn.previewProject(cwd);
+  appendTerm(`[${result.kind}] ${result.message}${result.url ? ' → ' + result.url : ''}\n`);
+  if (result.port != null && result.url) {
+    await showPreview(result.port, result.url, { preferUrl: true });
+  }
+}
+
 $('btn-save')?.addEventListener('click', () => saveFile().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-run').addEventListener('click', () => runNode().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-install').addEventListener('click', () => installPkg().catch((e) => appendTerm(String(e) + '\n')));
@@ -615,6 +677,37 @@ $('btn-vite-load')?.addEventListener('click', () => viteLoad().catch((e) => appe
 $('btn-vite-preview')?.addEventListener('click', () => vitePreview().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-load')?.addEventListener('click', () => nextLoad().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-next-preview')?.addEventListener('click', () => nextPreview().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-zip-upload')?.addEventListener('click', () => openZipPicker());
+$('btn-fs-import')?.addEventListener('click', () => openZipPicker());
+$('btn-zip-run')?.addEventListener('click', () => runCurrentProject().catch((e) => appendTerm(String(e) + '\n')));
+$('zip-file')?.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  ingestArchiveFile(file).catch((err) => appendTerm(String(err) + '\n'));
+});
+
+{
+  const wb = $('workbench');
+  const onDrag = (e) => {
+    if (![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    wb.classList.add('drop-target');
+  };
+  wb?.addEventListener('dragenter', onDrag);
+  wb?.addEventListener('dragover', onDrag);
+  wb?.addEventListener('dragleave', (e) => {
+    if (e.target === wb) wb.classList.remove('drop-target');
+  });
+  wb?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    wb.classList.remove('drop-target');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    ingestArchiveFile(file).catch((err) => appendTerm(String(err) + '\n'));
+  });
+}
 
 function setMobilePane(name) {
   const wb = $('workbench');

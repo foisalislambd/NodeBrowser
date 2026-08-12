@@ -70,6 +70,22 @@ body {
   height: 100dvh;
   width: 100%;
   background: var(--bg);
+  position: relative;
+}
+
+.workbench.drop-target::after {
+  content: "Drop .zip / .tar.gz to unpack into VFS";
+  position: absolute;
+  inset: var(--title-h, 35px) 0 var(--status-h, 22px) 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 122, 204, 0.18);
+  border: 2px dashed var(--accent);
+  color: #fff;
+  font: 600 16px var(--font-ui);
+  pointer-events: none;
 }
 
 /* —— Title bar —— */

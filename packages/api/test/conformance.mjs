@@ -380,7 +380,18 @@ async function main() {
   const hjs = await bn.fs.readFile(nb2.outDir + '/hello/bundle.js', 'utf8');
   assert(hjs.length > 20, 'hello route bundle');
 
-  console.log('Phases 13–30 conformance: OK (runtime=%s)', bn.runtime);
+  const { makeStoredZip } = await import('../dist/zip.js');
+  const zip = makeStoredZip({
+    'site/index.html': '<!doctype html><h1>zip-ok</h1>',
+    'site/app.js': 'console.log(1)',
+  });
+  const imp = await bn.importZip(zip, '/home/uploads/sitezip');
+  assert(imp.files === 2, 'zip file count');
+  assert((await bn.fs.readFile('/home/uploads/sitezip/index.html', 'utf8')).includes('zip-ok'));
+  const kind = (await import('../dist/project-preview.js')).detectProjectKind;
+  assert((await kind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
+
+  console.log('Phases 13–30 + zip upload: OK (runtime=%s)', bn.runtime);
 }
 
 main().catch((e) => {
