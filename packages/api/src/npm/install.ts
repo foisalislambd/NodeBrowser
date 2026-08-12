@@ -272,15 +272,8 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
         memoryCache.set(cacheKey, ab);
         return ab;
       }
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
-      await cache.put(url, res.clone());
-      const ab = new Uint8Array(await res.arrayBuffer());
-      npmCacheMisses++;
-      memoryCache.set(cacheKey, ab);
-      return ab;
     } catch {
-      // fall through
+      /* Cache API unavailable — network fetch below */
     }
   }
 
@@ -289,6 +282,14 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
   if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
   const ab = new Uint8Array(await res.arrayBuffer());
   memoryCache.set(cacheKey, ab);
+  if (typeof caches !== 'undefined') {
+    try {
+      const cache = await caches.open('browsernode-npm-v1');
+      await cache.put(url, new Response(ab, { headers: { 'Content-Type': 'application/octet-stream' } }));
+    } catch {
+      /* ignore persist failure */
+    }
+  }
   return ab;
 }
 

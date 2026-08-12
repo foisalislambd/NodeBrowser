@@ -45,6 +45,7 @@ function $(id) {
 function appendTerm(text, which) {
   const id = which || window.__bn_active_term || 'term';
   const term = $(id) || $('term');
+  if (!term) return;
   term.textContent += text;
   term.scrollTop = term.scrollHeight;
 }
@@ -755,9 +756,12 @@ async function searchFiles(q) {
 
 function setTermTab(which) {
   window.__bn_active_term = which === 2 ? 'term-2' : 'term';
-  $('term-wrap-1').hidden = which === 2;
-  $('term-wrap-2').hidden = which !== 2;
-  $('net-log').hidden = true;
+  const w1 = $('term-wrap-1');
+  const w2 = $('term-wrap-2');
+  const log = $('net-log');
+  if (w1) w1.hidden = which === 2;
+  if (w2) w2.hidden = which !== 2;
+  if (log) log.hidden = true;
   $('tab-term-1')?.classList.toggle('active', which === 1);
   $('tab-term-2')?.classList.toggle('active', which === 2);
   $('tab-output')?.classList.remove('active');
@@ -766,9 +770,12 @@ function setTermTab(which) {
 $('tab-term-1')?.addEventListener('click', () => setTermTab(1));
 $('tab-term-2')?.addEventListener('click', () => setTermTab(2));
 $('tab-output')?.addEventListener('click', () => {
-  $('term-wrap-1').hidden = true;
-  $('term-wrap-2').hidden = true;
-  $('net-log').hidden = false;
+  const w1 = $('term-wrap-1');
+  const w2 = $('term-wrap-2');
+  const log = $('net-log');
+  if (w1) w1.hidden = true;
+  if (w2) w2.hidden = true;
+  if (log) log.hidden = false;
   $('tab-term-1')?.classList.remove('active');
   $('tab-term-2')?.classList.remove('active');
   $('tab-output')?.classList.add('active');

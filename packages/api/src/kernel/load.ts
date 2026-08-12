@@ -342,9 +342,9 @@ export type UseWasmOption = boolean | 'auto';
 
 export type LoadKernelOptions = {
   /**
-   * - `true` (default) — prefer C++/WASM; fall back to JS with a warning
-   * - `false` — JS runtime only
-   * - `'auto'` — try WASM, else JS (no warning)
+   * - `true` (default) — C++/WASM only; throws if WASM missing unless `BN_ALLOW_JS_KERNEL=1`
+   * - `false` — JS fallback only; requires `BN_ALLOW_JS_KERNEL=1` or throws
+   * - `'auto'` — try WASM, else frozen JS fallback
    */
   useWasm?: UseWasmOption;
 };

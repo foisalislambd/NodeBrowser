@@ -98,11 +98,12 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
 
   const apiRoutes = await listApiRoutes(bn, join(cwd, 'app/api'));
   for (const rel of apiRoutes) {
-    const destDir = join(outDir, 'api', rel);
+    const destDir = rel ? join(outDir, 'api', rel) : join(outDir, 'api');
     await bn.fs.mkdir(destDir, { recursive: true });
+    const routeFile = rel ? `app/api/${rel}/route.js` : 'app/api/route.js';
     await bn.fs.writeFile(
       join(destDir, 'index.json'),
-      JSON.stringify({ ok: true, subset: 'GET', route: 'app/api/' + rel + '/route.js' }) + '\n',
+      JSON.stringify({ ok: true, subset: 'GET', route: routeFile }) + '\n',
     );
   }
 
@@ -131,7 +132,7 @@ async function listApiRoutes(bn: NodeBrowser, dir: string, prefix = ''): Promise
       out.push(prefix);
     }
   }
-  return out.filter(Boolean);
+  return out;
 }
 
 export async function nextDev(bn: NodeBrowser, cwd: string, opts?: { port?: number }): Promise<NextResult> {

@@ -72,6 +72,7 @@ export class HttpBridge {
   async dispatch(req: IncomingHttpRequest): Promise<OutgoingHttpResponse> {
     const handler = this.#servers.get(req.port | 0);
     if (!handler) {
+      this.#noteAccess(req.port | 0, req.method || 'GET', req.path || '/', 502);
       return {
         id: req.id,
         status: 502,
