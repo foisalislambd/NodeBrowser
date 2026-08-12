@@ -142,6 +142,13 @@ bool Kernel::kill(Pid pid, int /*signal*/) {
       it->second->stdout_buf.closed = true;
       it->second->stderr_buf.closed = true;
     }
+    for (auto lit = listeners_.begin(); lit != listeners_.end();) {
+      if (lit->second == pid) lit = listeners_.erase(lit);
+      else ++lit;
+    }
+    for (auto& t : timers_) {
+      if (t.pid == pid) t.cancelled = true;
+    }
     ok = true;
   }
   release_retained_http_for_pid(pid);
@@ -242,32 +249,48 @@ void Kernel::complete(Pid pid, int exit_code) {
   for (auto& t : timers_) {
     if (t.pid == pid) t.cancelled = true;
   }
+  for (auto lit = listeners_.begin(); lit != listeners_.end();) {
+    if (lit->second == pid) lit = listeners_.erase(lit);
+    else ++lit;
+  }
 }
 
 int Kernel::pump(int64_t now_ms) {
+  if (pumping_) return 0;
+  pumping_ = true;
+  struct PumpGuard {
+    bool* flag;
+    ~PumpGuard() { *flag = false; }
+  } guard{&pumping_};
+
   if (now_ms <= 0) {
     now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                  std::chrono::steady_clock::now().time_since_epoch())
                  .count();
   }
-  std::vector<std::pair<Pid, int>> due;
+  struct Due {
+    Pid pid;
+    int id;
+    bool interval;
+  };
+  std::vector<Due> due;
   {
     std::lock_guard lock(mu_);
     for (auto& t : timers_) {
       if (t.cancelled) continue;
       if (t.due_ms > now_ms) continue;
-      due.emplace_back(t.pid, t.id);
-      if (t.interval && t.interval_ms > 0) t.due_ms = now_ms + t.interval_ms;
+      due.push_back({t.pid, t.id, t.interval});
+      if (t.interval) t.due_ms = now_ms + (t.interval_ms > 0 ? t.interval_ms : 0);
       else t.cancelled = true;
     }
   }
   int n = 0;
-  for (auto [pid, id] : due) {
-    if (timer_fire_) timer_fire_(pid, id);
-    auto p = get(pid);
+  for (const auto& d : due) {
+    if (timer_fire_) timer_fire_(d.pid, d.id, d.interval);
+    auto p = get(d.pid);
     if (p && p->state != ProcessState::Running) {
-      release_retained_http_for_pid(pid);
-      release_retained_js_for_pid(pid);
+      release_retained_http_for_pid(d.pid);
+      release_retained_js_for_pid(d.pid);
     }
     ++n;
   }

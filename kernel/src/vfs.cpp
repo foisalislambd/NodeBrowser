@@ -269,7 +269,10 @@ bool Vfs::write_file(std::string_view path, std::vector<uint8_t> data, bool crea
   if (r.node && r.node->kind() == NodeKind::File) {
     old = static_cast<VfsFile*>(r.node.get())->data().size();
   }
-  uint64_t next = bytes_ - old + data.size();
+  uint64_t next = bytes_;
+  if (next >= old) next -= old;
+  else next = 0;
+  next += data.size();
   if (next > max_bytes_) return false;
   bytes_ = next;
   if (r.node && r.node->kind() == NodeKind::File) {

@@ -1995,7 +1995,9 @@ globalThis.fetch = function(input, init) {
     var body = init.body == null ? '' : String(init.body);
     var raw = __bn.httpDispatch(port, method, path, headers, body);
     var parsed = { status: 502, headers: {}, body: 'no listener' };
-    try { parsed = JSON.parse(raw || '{}'); } catch (e) {}
+    if (raw) {
+      try { parsed = JSON.parse(raw); } catch (e) {}
+    }
     var bodyStr = parsed.body || '';
     var status = parsed.status | 0;
     return Promise.resolve({

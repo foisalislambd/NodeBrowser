@@ -78,7 +78,7 @@ public:
   /** Fire due timers + reap keep-alive shells/nodes with an empty event loop. */
   int pump(int64_t now_ms);
 
-  using TimerFireCb = std::function<void(Pid, int /*timer_id*/)>;
+  using TimerFireCb = std::function<void(Pid, int /*timer_id*/, bool /*interval*/)>;
   void on_timer_fire(TimerFireCb cb) { timer_fire_ = std::move(cb); }
 
   void complete(Pid pid, int exit_code);
@@ -117,6 +117,7 @@ private:
   };
   int next_timer_{1};
   std::vector<Timer> timers_;
+  bool pumping_{false};
 };
 
 }  // namespace bn

@@ -52,15 +52,15 @@ static std::unordered_map<Pid, RetainedJs>& proc_js() {
   return m;
 }
 
-void invoke_guest_timer(Pid pid, int timer_id) {
+void invoke_guest_timer(Pid pid, int timer_id, bool interval) {
   auto it = proc_js().find(pid);
   if (it == proc_js().end() || !it->second.ctx) return;
   JSContext* ctx = it->second.ctx;
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue fn = JS_GetPropertyStr(ctx, global, "__bn_fire_timer");
-  JSValue arg = JS_NewInt32(ctx, timer_id);
+  JSValue args[2] = {JS_NewInt32(ctx, timer_id), JS_NewBool(ctx, interval)};
   if (JS_IsFunction(ctx, fn)) {
-    JSValue ret = JS_Call(ctx, fn, JS_UNDEFINED, 1, &arg);
+    JSValue ret = JS_Call(ctx, fn, JS_UNDEFINED, 2, args);
     if (JS_IsException(ret)) {
       JSValue ex = JS_GetException(ctx);
       const char* msg = JS_ToCString(ctx, ex);
@@ -74,7 +74,8 @@ void invoke_guest_timer(Pid pid, int timer_id) {
     }
     JS_FreeValue(ctx, ret);
   }
-  JS_FreeValue(ctx, arg);
+  JS_FreeValue(ctx, args[0]);
+  JS_FreeValue(ctx, args[1]);
   JS_FreeValue(ctx, fn);
   JS_FreeValue(ctx, global);
   JSRuntime* rt = JS_GetRuntime(ctx);
@@ -251,7 +252,7 @@ std::string http_dispatch_json(int, const char*, const char*, const char*, const
 void release_retained_http_port(int) {}
 void release_retained_http_for_pid(Pid) {}
 void release_all_retained_http() {}
-void invoke_guest_timer(Pid, int) {}
+void invoke_guest_timer(Pid, int, bool) {}
 void release_retained_js_for_pid(Pid) {}
 #endif
 
@@ -1984,9 +1985,10 @@ globalThis.clearTimeout = function(id) {
   delete __bn_timer_cbs[id];
 };
 globalThis.clearInterval = globalThis.clearTimeout;
-globalThis.__bn_fire_timer = function(id) {
+globalThis.__bn_fire_timer = function(id, interval) {
   var fn = __bn_timer_cbs[id];
   if (!fn) return;
+  if (!interval) delete __bn_timer_cbs[id];
   try {
     fn();
     __bn_drain_ticks();
@@ -1995,7 +1997,7 @@ globalThis.__bn_fire_timer = function(id) {
       __bn.complete(e.__bn_exit|0);
       return;
     }
-    __bn.eprint(String(e && e.stack ? e.stack : e) + '\\n');
+    __bn.eprint(String(e && e.stack ? e.stack : e) + '\n');
     __bn.complete(1);
   }
 };
@@ -2399,7 +2401,7 @@ void register_core_commands(Kernel& kernel) {
 void register_node_command(Kernel& kernel) {
   register_core_commands(kernel);
   kernel.register_command("node", cmd_node);
-  kernel.on_timer_fire([](Pid pid, int id) { invoke_guest_timer(pid, id); });
+  kernel.on_timer_fire([](Pid pid, int id, bool interval) { invoke_guest_timer(pid, id, interval); });
 }
 
 }  // namespace bn

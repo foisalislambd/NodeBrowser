@@ -16,7 +16,7 @@ std::string http_dispatch_json(int port, const char* method, const char* path,
 void release_retained_http_port(int port);
 void release_retained_http_for_pid(Pid pid);
 void release_all_retained_http();
-void invoke_guest_timer(Pid pid, int timer_id);
+void invoke_guest_timer(Pid pid, int timer_id, bool interval);
 void release_retained_js_for_pid(Pid pid);
 
 }  // namespace bn
