@@ -35,6 +35,9 @@ export interface KernelModule {
   ): number;
   wait(k: KernelHandle, pid: number): number;
   kill(k: KernelHandle, pid: number): boolean;
+  pump?(k: KernelHandle, nowMs?: number): number;
+  extractTar?(k: KernelHandle, data: Uint8Array, destDir: string): number;
+  usageBytes?(k: KernelHandle): number;
   readStdout(k: KernelHandle, pid: number): string;
   readStderr(k: KernelHandle, pid: number): string;
   writeStdin(k: KernelHandle, pid: number, data: string): number;
@@ -82,6 +85,9 @@ type EmscriptenModule = {
   _bn_spawn: (k: number, cmd: number, argvJson: number, cwd: number, envJson: number) => number;
   _bn_wait: (k: number, pid: number) => number;
   _bn_kill: (k: number, pid: number) => number;
+  _bn_pump?: (k: number, now_ms: number) => number;
+  _bn_vfs_extract_tar?: (k: number, data: number, len: number, dest: number) => number;
+  _bn_vfs_usage?: (k: number) => number;
   _bn_read_stdout: (k: number, pid: number, buf: number, len: number) => number;
   _bn_read_stderr: (k: number, pid: number, buf: number, len: number) => number;
   _bn_write_stdin: (k: number, pid: number, buf: number, len: number) => number;
@@ -298,6 +304,21 @@ function wrap(mod: EmscriptenModule): KernelModule {
     },
     wait: (k, pid) => mod._bn_wait(k, pid),
     kill: (k, pid) => !!mod._bn_kill(k, pid),
+    pump: mod._bn_pump ? (k, nowMs) => mod._bn_pump!(k, nowMs ?? 0) : undefined,
+    extractTar: mod._bn_vfs_extract_tar
+      ? (k, data, destDir) => {
+          const dest = allocStr(destDir);
+          const buf = mod._malloc(data.byteLength || 1);
+          try {
+            if (data.byteLength) mod.HEAPU8.set(data, buf);
+            return mod._bn_vfs_extract_tar!(k, buf, data.byteLength, dest);
+          } finally {
+            mod._free(buf);
+            mod._free(dest);
+          }
+        }
+      : undefined,
+    usageBytes: mod._bn_vfs_usage ? (k) => mod._bn_vfs_usage!(k) : undefined,
     readStdout: (k, pid) => readPipe(mod._bn_read_stdout, k, pid),
     readStderr: (k, pid) => readPipe(mod._bn_read_stderr, k, pid),
     writeStdin: (k, pid, data) => {

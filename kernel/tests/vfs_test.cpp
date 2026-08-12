@@ -1,8 +1,10 @@
 #include "bn/vfs.hpp"
 
 #include <cassert>
+#include <cstdio>
 #include <iostream>
 #include <string>
+#include <vector>
 
 using namespace bn;
 
@@ -53,6 +55,38 @@ int main() {
     auto t2 = vfs.read_text("/fuzz/a/b/c.txt");
     CHECK(t2.has_value() && *t2 == "ok");
     CHECK(vfs.unlink("/fuzz/a/b/c.txt"));
+  }
+
+  {
+    vfs.set_max_bytes(8);
+    CHECK(!vfs.write_text("/cap.txt", "0123456789"));
+    vfs.set_max_bytes(512ull * 1024ull * 1024ull);
+    CHECK(vfs.write_text("/cap.txt", "ok"));
+    CHECK(vfs.usage_bytes() >= 2);
+  }
+
+  {
+    std::vector<uint8_t> tar(512 + 512, 0);
+    const char* name = "hello.txt";
+    for (int i = 0; name[i]; ++i) tar[static_cast<size_t>(i)] = static_cast<uint8_t>(name[i]);
+    const char* sz = "00000000005";
+    for (int i = 0; i < 11; ++i) tar[124 + i] = static_cast<uint8_t>(sz[i]);
+    tar[156] = '0';
+    unsigned sum = 0;
+    for (int i = 0; i < 512; ++i) sum += (i >= 148 && i < 156) ? 32 : tar[static_cast<size_t>(i)];
+    char chk[8];
+    std::snprintf(chk, sizeof(chk), "%06o", sum);
+    for (int i = 0; i < 6; ++i) tar[148 + i] = static_cast<uint8_t>(chk[i]);
+    tar[154] = '\0';
+    tar[155] = ' ';
+    tar[512] = 'h';
+    tar[513] = 'e';
+    tar[514] = 'l';
+    tar[515] = 'l';
+    tar[516] = 'o';
+    CHECK(vfs.extract_tar(tar.data(), tar.size(), "/untar") >= 1);
+    auto ht = vfs.read_text("/untar/hello.txt");
+    CHECK(ht.has_value() && *ht == "hello");
   }
 
   if (fails) {

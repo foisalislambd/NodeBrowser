@@ -35,6 +35,11 @@ int bn_vfs_utimes(BNKernel* k, const char* path, double atime_ms, double mtime_m
 int bn_spawn(BNKernel* k, const char* cmd, const char* argv_json, const char* cwd, const char* env_json);
 int bn_wait(BNKernel* k, int pid);           // -1 if running, else exit code
 int bn_kill(BNKernel* k, int pid);
+/** Fire due timers / reap idle keep-alive. now_ms <= 0 uses wall clock. */
+int bn_pump(BNKernel* k, double now_ms);
+int bn_vfs_extract_tar(BNKernel* k, const uint8_t* data, size_t len, const char* dest_dir);
+/** Current VFS file-byte usage (not a malloc'd string). */
+double bn_vfs_usage(BNKernel* k);
 int bn_read_stdout(BNKernel* k, int pid, uint8_t* buf, int buflen);
 int bn_read_stderr(BNKernel* k, int pid, uint8_t* buf, int buflen);
 int bn_write_stdin(BNKernel* k, int pid, const uint8_t* buf, int buflen);

@@ -38,7 +38,8 @@ struct Process {
   std::string cwd{"/"};
   ProcessState state{ProcessState::Starting};
   int exit_code{-1};
-  bool keep_alive{false};  // set by http.listen / long-running servers
+  bool keep_alive{false};  // set by http.listen / timers / child wait
+  int complete_code{0};    // JS/shell exit to apply when event loop drains
   PipeBuffer stdin_buf;
   PipeBuffer stdout_buf;
   PipeBuffer stderr_buf;
@@ -70,6 +71,18 @@ public:
   std::shared_ptr<Process> get(Pid pid);
   std::optional<int> wait(Pid pid);  // non-blocking: nullopt if still running
 
+  int timer_start(Pid pid, int32_t delay_ms, bool interval);
+  void timer_clear(int id);
+  bool has_timers(Pid pid) const;
+  bool has_running_children(Pid pid) const;
+  /** Fire due timers + reap keep-alive shells/nodes with an empty event loop. */
+  int pump(int64_t now_ms);
+
+  using TimerFireCb = std::function<void(Pid, int /*timer_id*/)>;
+  void on_timer_fire(TimerFireCb cb) { timer_fire_ = std::move(cb); }
+
+  void complete(Pid pid, int exit_code);
+
   // stdio helpers for host
   size_t write_stdin(Pid pid, const uint8_t* data, size_t n);
   size_t read_stdout(Pid pid, uint8_t* data, size_t n);
@@ -93,6 +106,17 @@ private:
   std::unordered_map<std::string, CommandHandler> commands_;
   std::unordered_map<int, Pid> listeners_;  // port -> pid
   ServerReadyCb server_ready_;
+  TimerFireCb timer_fire_;
+  struct Timer {
+    int id{};
+    Pid pid{};
+    int64_t due_ms{};
+    int32_t interval_ms{};
+    bool interval{false};
+    bool cancelled{false};
+  };
+  int next_timer_{1};
+  std::vector<Timer> timers_;
 };
 
 }  // namespace bn

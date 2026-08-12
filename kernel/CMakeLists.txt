@@ -39,7 +39,7 @@ if(BN_BUILD_WASM)
     "SHELL:-s EXPORT_NAME=createBrowserNodeKernel"
     "SHELL:-s EXPORT_ES6=1"
     "SHELL:-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','stringToUTF8','lengthBytesUTF8','HEAPU8','getValue','setValue']"
-    "SHELL:-s EXPORTED_FUNCTIONS=['_main','_bn_kernel_create','_bn_kernel_destroy','_bn_vfs_mkdir','_bn_vfs_write_text','_bn_vfs_write_bytes','_bn_vfs_read_text','_bn_vfs_read_bytes','_bn_vfs_unlink','_bn_vfs_readdir_json','_bn_vfs_exists','_bn_vfs_stat_json','_bn_vfs_lstat_json','_bn_vfs_symlink','_bn_vfs_readlink','_bn_spawn','_bn_wait','_bn_kill','_bn_read_stdout','_bn_read_stderr','_bn_write_stdin','_bn_http_dispatch','_bn_register_builtins','_bn_free','_malloc','_free']"
+    "SHELL:-s EXPORTED_FUNCTIONS=['_main','_bn_kernel_create','_bn_kernel_destroy','_bn_vfs_mkdir','_bn_vfs_write_text','_bn_vfs_write_bytes','_bn_vfs_read_text','_bn_vfs_read_bytes','_bn_vfs_unlink','_bn_vfs_readdir_json','_bn_vfs_exists','_bn_vfs_stat_json','_bn_vfs_lstat_json','_bn_vfs_symlink','_bn_vfs_readlink','_bn_spawn','_bn_wait','_bn_kill','_bn_pump','_bn_vfs_extract_tar','_bn_vfs_usage','_bn_read_stdout','_bn_read_stderr','_bn_write_stdin','_bn_http_dispatch','_bn_register_builtins','_bn_free','_malloc','_free']"
     "SHELL:-s ALLOW_MEMORY_GROWTH=1"
     "SHELL:-s INITIAL_MEMORY=67108864"
     "SHELL:-s STACK_SIZE=4194304"

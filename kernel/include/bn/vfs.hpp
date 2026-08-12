@@ -110,6 +110,15 @@ public:
   /** Set mtime (atime accepted for API parity; stored as mtime when distinct). */
   bool utimes(std::string_view path, int64_t atime_ms, int64_t mtime_ms);
 
+  /** Bytes currently stored in file nodes (not directory metadata). */
+  uint64_t usage_bytes() const;
+  /** Default 512 MiB. Writes that would exceed this fail. */
+  void set_max_bytes(uint64_t n);
+  uint64_t max_bytes() const;
+
+  /** Unpack ustar/POSIX tar into dest_dir (creates parents). Returns files written. */
+  int extract_tar(const uint8_t* data, size_t len, std::string_view dest_dir);
+
   // Mount a JSON-like tree from host: path -> file contents
   void mount_tree(const std::unordered_map<std::string, std::string>& files);
 
@@ -125,6 +134,8 @@ private:
   ResolveResult resolve(std::string_view path, bool follow_symlinks, int depth = 0) const;
   std::shared_ptr<VfsDir> root_;
   mutable std::mutex mu_;
+  uint64_t bytes_{0};
+  uint64_t max_bytes_{512ull * 1024ull * 1024ull};
 };
 
 }  // namespace bn

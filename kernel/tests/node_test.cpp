@@ -284,7 +284,42 @@ int main() {
     CHECK(code.has_value() && *code == 0);
     CHECK(k.get(pid)->stdout_buf.read_all_string().find("ncache=function") != std::string::npos);
   }
+  {
+    k.vfs().write_text(
+        "/timer.js",
+        "setTimeout(function(){ console.log('later'); }, 0);\n");
+    auto pid = k.spawn("node", {"/timer.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("later") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/adv.js",
+        "console.log('uname-skip');\n"
+        "console.log('vm='+require('vm').runInNewContext('1+2'));\n"
+        "console.log('wt='+typeof require('worker_threads').Worker);\n"
+        "fetch('https://example.com').then(function(){}, function(e){ console.log('fetch=deny'); });\n");
+    auto pid = k.spawn("node", {"/adv.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("vm=3") != std::string::npos);
+    CHECK(out.find("wt=function") != std::string::npos);
+  }
 #endif
+
+  {
+    auto pid = k.spawn("uname", {});
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("browsernode") != std::string::npos);
+  }
+  {
+    auto pid = k.spawn("printf", {"hi"});
+    CHECK(k.wait(pid).value_or(1) == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string() == "hi");
+  }
 
   {
     auto parent = k.spawn("true", {});

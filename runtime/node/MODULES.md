@@ -29,9 +29,9 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `perf_hooks` | ok (subset) | performance.now + no-op PerformanceObserver |
 | `async_hooks` | stub | AsyncLocalStorage + createHook no-op |
 | `diagnostics_channel` | stub | channel subscribe/publish |
-| `worker_threads` | stub | `isMainThread`; `Worker` throws until SAB/Web Worker bridge |
+| `worker_threads` | ok (subset) | Cooperative `Worker` (same thread); not OS threads / SAB |
 | `next/cache` / `next/headers` | stub | revalidate/cookies no-ops when package not installed |
-| `vm` | stub | `runInThisContext` / `runInNewContext` (same realm) |
+| `vm` | ok (subset) | `runInThisContext`; `runInNewContext` = extra QuickJS `JSContext` |
 | `cluster` | stub | `fork` throws |
 | `dns` / `dgram` | stub | lookup → 127.0.0.1 |
 | `inspector` / `v8` / `wasi` | stub | |

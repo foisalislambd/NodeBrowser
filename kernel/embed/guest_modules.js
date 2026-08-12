@@ -1760,18 +1760,51 @@ function loadCore(name) {
     };
   }
   if (name === 'worker_threads') {
+    var EEW = loadCore('events').EventEmitter;
+    function BnWorker(filename, options) {
+      EEW.call(this);
+      var self = this;
+      BnWorker._id = (BnWorker._id || 0) + 1;
+      this.threadId = BnWorker._id;
+      this.stdin = null;
+      this.stdout = null;
+      this.stderr = null;
+      this.postMessage = function() {};
+      this.terminate = function() { self.emit('exit', 0); };
+      try {
+        var file = String(filename);
+        var code = __bn.readFile(file);
+        if (code == null) throw new Error('ENOENT: ' + file);
+        var wd = options && options.workerData;
+        var parentPort = {
+          postMessage: function(msg) {
+            setTimeout(function() { self.emit('message', msg); }, 0);
+          },
+          on: function() { return parentPort; }
+        };
+        var fn = new Function('workerData', 'parentPort', 'require', 'exports', 'module', String(code));
+        fn(wd, parentPort, createRequire(file), {}, { exports: {} });
+        setTimeout(function() { self.emit('online'); }, 0);
+      } catch (e) {
+        setTimeout(function() { self.emit('error', e); }, 0);
+      }
+    }
+    try { Object.setPrototypeOf(BnWorker.prototype, EEW.prototype); } catch (e2) {}
     return {
       isMainThread: true,
       parentPort: null,
       workerData: undefined,
       threadId: 0,
-      Worker: function() { throw new Error('worker_threads.Worker: not available (no SAB / Web Worker bridge yet)'); }
+      Worker: BnWorker
     };
   }
   if (name === 'vm') {
     return {
       runInThisContext: function(code) { return (0, eval)(String(code)); },
       runInNewContext: function(code, sandbox) {
+        if (typeof __bn.evalNewContext === 'function') {
+          return __bn.evalNewContext(String(code));
+        }
         sandbox = sandbox || {};
         var keys = Object.keys(sandbox);
         var vals = keys.map(function(k) { return sandbox[k]; });
@@ -1782,6 +1815,9 @@ function loadCore(name) {
       Script: function(code) {
         this.code = String(code);
         this.runInThisContext = function() { return (0, eval)(this.code); };
+        this.runInNewContext = function(sandbox) {
+          return loadCore('vm').runInNewContext(this.code, sandbox);
+        };
       }
     };
   }
@@ -1947,8 +1983,30 @@ globalThis.__bn_dynamic_import = __bn_dynamic_import;
 globalThis.__bn_runMain = __bn_runMain;
 globalThis.__bn_rewrite_esm = __bn_rewrite_esm;
 globalThis.isEsmFile = isEsmFile;
-if (typeof globalThis.fetch !== 'function') {
-  globalThis.fetch = function() {
-    return Promise.reject(new Error('fetch: guest has no raw internet; use virtual http.Server or host npm allowlist'));
-  };
-}
+globalThis.fetch = function(input, init) {
+  init = init || {};
+  var url = typeof input === 'string' ? input : (input && input.url) || String(input);
+  var m = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::(\d+))?(\/[^?]*)?(\?.*)?$/i.exec(String(url));
+  if (m && typeof __bn.httpDispatch === 'function') {
+    var port = m[1] ? (m[1] | 0) : 80;
+    var path = (m[2] || '/') + (m[3] || '');
+    var method = String(init.method || 'GET');
+    var headers = JSON.stringify(init.headers || {});
+    var body = init.body == null ? '' : String(init.body);
+    var raw = __bn.httpDispatch(port, method, path, headers, body);
+    var parsed = { status: 502, headers: {}, body: 'no listener' };
+    try { parsed = JSON.parse(raw || '{}'); } catch (e) {}
+    var bodyStr = parsed.body || '';
+    var status = parsed.status | 0;
+    return Promise.resolve({
+      ok: status >= 200 && status < 300,
+      status: status,
+      statusText: String(status),
+      headers: { get: function(k) { var h = parsed.headers || {}; return h[k] || h[String(k).toLowerCase()] || null; } },
+      text: function() { return Promise.resolve(bodyStr); },
+      json: function() { return Promise.resolve(JSON.parse(bodyStr || 'null')); },
+      arrayBuffer: function() { return Promise.resolve(new ArrayBuffer(0)); }
+    });
+  }
+  return Promise.reject(new Error('fetch: guest has no raw internet; use virtual http.Server or host npm allowlist'));
+};

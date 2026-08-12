@@ -12,6 +12,8 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 
 - C++ → WASM kernel + VFS + spawn + `sh` subset + **kill tree**
 - QuickJS `node` + guest modules baked into the kernel
+- Kernel **event loop** (`setTimeout`/`setInterval` + `bn_pump`); guest `fetch` deny + localhost virtual HTTP
+- Cooperative `worker_threads.Worker`; `vm` extra JSContext; C++ tar extract; VFS 512 MiB cap
 - Service Worker preview; demo **ports** status
 - npm install = host **allowlisted** fetch into **kernel VFS**; C++ `npm`/`npx`
 - `WebContainer` name shim; ZIP → preview

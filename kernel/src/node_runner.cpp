@@ -1,8 +1,11 @@
 #include "bn/node_runner.hpp"
 
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -22,6 +25,7 @@ struct NodeCtx {
   Kernel* kernel{};
   Process* proc{};
   JSContext* ctx{};
+  int interrupt_ticks{0};
 };
 
 struct RetainedHttp {
@@ -35,6 +39,57 @@ struct RetainedHttp {
 static std::unordered_map<int, RetainedHttp>& http_retain() {
   static std::unordered_map<int, RetainedHttp> m;
   return m;
+}
+
+struct RetainedJs {
+  JSRuntime* rt{};
+  JSContext* ctx{};
+  NodeCtx* nc{};
+};
+
+static std::unordered_map<Pid, RetainedJs>& proc_js() {
+  static std::unordered_map<Pid, RetainedJs> m;
+  return m;
+}
+
+void invoke_guest_timer(Pid pid, int timer_id) {
+  auto it = proc_js().find(pid);
+  if (it == proc_js().end() || !it->second.ctx) return;
+  JSContext* ctx = it->second.ctx;
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue fn = JS_GetPropertyStr(ctx, global, "__bn_fire_timer");
+  JSValue arg = JS_NewInt32(ctx, timer_id);
+  if (JS_IsFunction(ctx, fn)) {
+    JSValue ret = JS_Call(ctx, fn, JS_UNDEFINED, 1, &arg);
+    if (JS_IsException(ret)) {
+      JSValue ex = JS_GetException(ctx);
+      const char* msg = JS_ToCString(ctx, ex);
+      if (it->second.nc && it->second.nc->proc) {
+        auto& p = *it->second.nc->proc;
+        std::string line = std::string(msg ? msg : "timer") + "\n";
+        p.stderr_buf.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
+      }
+      if (msg) JS_FreeCString(ctx, msg);
+      JS_FreeValue(ctx, ex);
+    }
+    JS_FreeValue(ctx, ret);
+  }
+  JS_FreeValue(ctx, arg);
+  JS_FreeValue(ctx, fn);
+  JS_FreeValue(ctx, global);
+  JSRuntime* rt = JS_GetRuntime(ctx);
+  JSContext* jctx = nullptr;
+  while (JS_IsJobPending(rt)) JS_ExecutePendingJob(rt, &jctx);
+}
+
+void release_retained_js_for_pid(Pid pid) {
+  auto it = proc_js().find(pid);
+  if (it == proc_js().end()) return;
+  RetainedJs slot = it->second;
+  proc_js().erase(it);
+  if (slot.ctx) JS_FreeContext(slot.ctx);
+  if (slot.rt) JS_FreeRuntime(slot.rt);
+  delete slot.nc;
 }
 
 /** Free handler only; free shared rt/ctx/nc once no ports reference them. */
@@ -57,9 +112,7 @@ static void free_retained_slot(int port) {
     }
   }
   if (!shared && slot.ctx) {
-    JS_FreeContext(slot.ctx);
-    if (slot.rt) JS_FreeRuntime(slot.rt);
-    delete slot.nc;
+    // Context lifetime is owned by proc_js (release_retained_js_for_pid).
   }
 }
 
@@ -81,6 +134,9 @@ void release_all_retained_http() {
   std::vector<int> ports;
   for (auto& kv : m) ports.push_back(kv.first);
   for (int p : ports) free_retained_slot(p);
+  std::vector<Pid> pids;
+  for (auto& kv : proc_js()) pids.push_back(kv.first);
+  for (Pid id : pids) release_retained_js_for_pid(id);
 }
 
 std::string http_dispatch_json(int port, const char* method, const char* path,
@@ -195,6 +251,8 @@ std::string http_dispatch_json(int, const char*, const char*, const char*, const
 void release_retained_http_port(int) {}
 void release_retained_http_for_pid(Pid) {}
 void release_all_retained_http() {}
+void invoke_guest_timer(Pid, int) {}
+void release_retained_js_for_pid(Pid) {}
 #endif
 
 namespace {
@@ -267,12 +325,18 @@ std::vector<std::string> expand_argv_globs(Kernel& k, const std::string& cwd, co
 }
 
 int cmd_echo(Kernel&, Process& proc) {
+  bool nonew = false;
+  size_t start = 0;
+  if (!proc.argv.empty() && proc.argv[0] == "-n") {
+    nonew = true;
+    start = 1;
+  }
   std::ostringstream oss;
-  for (size_t i = 0; i < proc.argv.size(); ++i) {
-    if (i) oss << ' ';
+  for (size_t i = start; i < proc.argv.size(); ++i) {
+    if (i > start) oss << ' ';
     oss << proc.argv[i];
   }
-  oss << '\n';
+  if (!nonew) oss << '\n';
   write_out(proc, oss.str());
   return 0;
 }
@@ -456,6 +520,42 @@ int cmd_env(Kernel&, Process& proc) {
     write_out(proc, kv.first + "=" + kv.second + "\n");
   }
   return 0;
+}
+
+int cmd_printf(Kernel&, Process& proc) {
+  if (proc.argv.empty()) return 1;
+  write_out(proc, proc.argv[0]);
+  for (size_t i = 1; i < proc.argv.size(); ++i) {
+    write_out(proc, proc.argv[i]);
+  }
+  return 0;
+}
+
+int cmd_uname(Kernel&, Process& proc) {
+  write_out(proc, "Linux browsernode 1.0 wasm\n");
+  return 0;
+}
+
+int cmd_hostname(Kernel&, Process& proc) {
+  write_out(proc, "browsernode\n");
+  return 0;
+}
+
+int cmd_sleep(Kernel& k, Process& proc) {
+  double sec = 0;
+  if (!proc.argv.empty()) sec = std::atof(proc.argv[0].c_str());
+  if (sec < 0) sec = 0;
+  int ms = static_cast<int>(sec * 1000.0);
+#ifdef __EMSCRIPTEN__
+  proc.keep_alive = true;
+  proc.complete_code = 0;
+  k.timer_start(proc.pid, ms, false);
+  return -1;
+#else
+  (void)k;
+  std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+  return 0;
+#endif
 }
 
 thread_local int g_sh_depth = 0;
@@ -716,6 +816,11 @@ int cmd_sh(Kernel& k, Process& proc) {
     write_err(proc, run.err);
     rc = run.code;
   }
+  if (k.has_running_children(proc.pid)) {
+    proc.keep_alive = true;
+    proc.complete_code = rc;
+    return -1;
+  }
   return rc;
 }
 
@@ -937,6 +1042,83 @@ static JSValue js_bn_wait_pid(JSContext* ctx, JSValueConst, int argc, JSValueCon
   auto code = nc->kernel->wait(pid);
   if (!code) return JS_NewInt32(ctx, -1);  // still running
   return JS_NewInt32(ctx, *code);
+}
+
+static JSValue js_bn_timer_start(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  int32_t ms = 0;
+  JS_ToInt32(ctx, &ms, argv[0]);
+  int32_t interval = 0;
+  if (argc >= 2) JS_ToInt32(ctx, &interval, argv[1]);
+  nc->proc->keep_alive = true;
+  return JS_NewInt32(ctx, nc->kernel->timer_start(nc->proc->pid, ms, interval != 0));
+}
+
+static JSValue js_bn_timer_clear(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  int32_t id = 0;
+  JS_ToInt32(ctx, &id, argv[0]);
+  nc->kernel->timer_clear(id);
+  return JS_UNDEFINED;
+}
+
+static JSValue js_bn_complete(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc) return JS_EXCEPTION;
+  int32_t code = 0;
+  if (argc >= 1) JS_ToInt32(ctx, &code, argv[0]);
+  nc->kernel->complete(nc->proc->pid, code);
+  return JS_UNDEFINED;
+}
+
+static JSValue js_bn_http_dispatch(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  if (argc < 3) return JS_EXCEPTION;
+  int32_t port = 0;
+  JS_ToInt32(ctx, &port, argv[0]);
+  const char* method = JS_ToCString(ctx, argv[1]);
+  const char* path = JS_ToCString(ctx, argv[2]);
+  const char* headers = argc >= 4 ? JS_ToCString(ctx, argv[3]) : nullptr;
+  const char* body = argc >= 5 ? JS_ToCString(ctx, argv[4]) : nullptr;
+  auto json = http_dispatch_json(port, method, path, headers ? headers : "{}", body ? body : "");
+  if (method) JS_FreeCString(ctx, method);
+  if (path) JS_FreeCString(ctx, path);
+  if (headers) JS_FreeCString(ctx, headers);
+  if (body) JS_FreeCString(ctx, body);
+  return JS_NewString(ctx, json.c_str());
+}
+
+static JSValue js_bn_eval_new_ctx(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  if (argc < 1) return JS_EXCEPTION;
+  size_t len = 0;
+  const char* code = JS_ToCStringLen(ctx, &len, argv[0]);
+  if (!code) return JS_EXCEPTION;
+  JSRuntime* rt = JS_GetRuntime(ctx);
+  JSContext* sub = JS_NewContext(rt);
+  if (!sub) {
+    JS_FreeCString(ctx, code);
+    return JS_EXCEPTION;
+  }
+  JSValue result = JS_Eval(sub, code, len, "<vm>", JS_EVAL_TYPE_GLOBAL);
+  JS_FreeCString(ctx, code);
+  if (JS_IsException(result)) {
+    JSValue ex = JS_GetException(sub);
+    const char* msg = JS_ToCString(sub, ex);
+    JSValue err = JS_NewError(ctx);
+    JS_SetPropertyStr(ctx, err, "message", JS_NewString(ctx, msg ? msg : "vm error"));
+    if (msg) JS_FreeCString(sub, msg);
+    JS_FreeValue(sub, ex);
+    JS_FreeValue(sub, result);
+    JS_FreeContext(sub);
+    return JS_Throw(ctx, err);
+  }
+  const char* out = JS_ToCString(sub, result);
+  JSValue ret = JS_NewString(ctx, out ? out : "");
+  if (out) JS_FreeCString(sub, out);
+  JS_FreeValue(sub, result);
+  JS_FreeContext(sub);
+  return ret;
 }
 
 static JSValue js_bn_write_stdin_pid(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -1783,13 +1965,40 @@ globalThis.console = {
   info: function() { __bn.print.apply(null, arguments); },
 };
 
-// QuickJS has no browser timers by default — provide sync stubs.
-if (typeof globalThis.setTimeout !== 'function') {
-  globalThis.setTimeout = function(fn) { if (typeof fn === 'function') fn(); return 0; };
-  globalThis.clearTimeout = function() {};
-  globalThis.setInterval = function(fn) { if (typeof fn === 'function') fn(); return 0; };
-  globalThis.clearInterval = function() {};
-}
+// Kernel event loop — timers keep the process alive until they fire (host bn_pump).
+var __bn_timer_cbs = Object.create(null);
+globalThis.setTimeout = function(fn, ms) {
+  if (typeof fn !== 'function') return 0;
+  var id = __bn.timerStart(ms|0, 0);
+  __bn_timer_cbs[id] = fn;
+  return id;
+};
+globalThis.setInterval = function(fn, ms) {
+  if (typeof fn !== 'function') return 0;
+  var id = __bn.timerStart(ms|0, 1);
+  __bn_timer_cbs[id] = fn;
+  return id;
+};
+globalThis.clearTimeout = function(id) {
+  __bn.timerClear(id|0);
+  delete __bn_timer_cbs[id];
+};
+globalThis.clearInterval = globalThis.clearTimeout;
+globalThis.__bn_fire_timer = function(id) {
+  var fn = __bn_timer_cbs[id];
+  if (!fn) return;
+  try {
+    fn();
+    __bn_drain_ticks();
+  } catch (e) {
+    if (e && typeof e === 'object' && '__bn_exit' in e) {
+      __bn.complete(e.__bn_exit|0);
+      return;
+    }
+    __bn.eprint(String(e && e.stack ? e.stack : e) + '\\n');
+    __bn.complete(1);
+  }
+};
 
 function __bn_runMain(filename) {
   process.argv = ['node', filename];
@@ -1829,7 +2038,7 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
     write_err(proc, "node: failed to create JS runtime\n");
     return 1;
   }
-  JS_SetMemoryLimit(rt, 64 * 1024 * 1024);
+  JS_SetMemoryLimit(rt, 128 * 1024 * 1024);
   JSContext* ctx = JS_NewContext(rt);
   if (!ctx) {
     JS_FreeRuntime(rt);
@@ -1839,6 +2048,14 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
 
   NodeCtx nc{&kernel, &proc, ctx};
   JS_SetContextOpaque(ctx, &nc);
+  JS_SetInterruptHandler(
+      rt,
+      [](JSRuntime*, void* opaque) -> int {
+        auto* n = static_cast<NodeCtx*>(opaque);
+        if (n) n->interrupt_ticks++;
+        return 0;
+      },
+      &nc);
 
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue bn = JS_NewObject(ctx);
@@ -1866,6 +2083,11 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "spawnNode", JS_NewCFunction(ctx, js_bn_spawn_node, "spawnNode", 3));
   JS_SetPropertyStr(ctx, bn, "killPid", JS_NewCFunction(ctx, js_bn_kill_pid, "killPid", 1));
   JS_SetPropertyStr(ctx, bn, "waitPid", JS_NewCFunction(ctx, js_bn_wait_pid, "waitPid", 1));
+  JS_SetPropertyStr(ctx, bn, "timerStart", JS_NewCFunction(ctx, js_bn_timer_start, "timerStart", 2));
+  JS_SetPropertyStr(ctx, bn, "timerClear", JS_NewCFunction(ctx, js_bn_timer_clear, "timerClear", 1));
+  JS_SetPropertyStr(ctx, bn, "complete", JS_NewCFunction(ctx, js_bn_complete, "complete", 1));
+  JS_SetPropertyStr(ctx, bn, "httpDispatch", JS_NewCFunction(ctx, js_bn_http_dispatch, "httpDispatch", 5));
+  JS_SetPropertyStr(ctx, bn, "evalNewContext", JS_NewCFunction(ctx, js_bn_eval_new_ctx, "evalNewContext", 1));
   JS_SetPropertyStr(ctx, bn, "writeStdin", JS_NewCFunction(ctx, js_bn_write_stdin_pid, "writeStdin", 2));
   JS_SetPropertyStr(ctx, bn, "chmod", JS_NewCFunction(ctx, js_bn_chmod, "chmod", 2));
   JS_SetPropertyStr(ctx, bn, "utimes", JS_NewCFunction(ctx, js_bn_utimes, "utimes", 3));
@@ -1959,10 +2181,26 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
     }
     JS_FreeValue(ctx, result);
     JS_FreeValue(ctx, global);
+    {
+      JSContext* jctx = nullptr;
+      while (JS_IsJobPending(rt)) {
+        JS_ExecutePendingJob(rt, &jctx);
+      }
+    }
+    proc.complete_code = code;
     if (proc.keep_alive) {
-      // Retain QuickJS runtime so bn_http_dispatch can invoke listen handlers.
       auto* heap_nc = new NodeCtx{&kernel, &proc, ctx};
+      heap_nc->interrupt_ticks = nc.interrupt_ticks;
       JS_SetContextOpaque(ctx, heap_nc);
+      JS_SetInterruptHandler(
+          rt,
+          [](JSRuntime*, void* opaque) -> int {
+            auto* n = static_cast<NodeCtx*>(opaque);
+            if (n) n->interrupt_ticks++;
+            return 0;
+          },
+          heap_nc);
+      proc_js()[proc.pid] = RetainedJs{rt, ctx, heap_nc};
       for (auto& kv : http_retain()) {
         if (kv.second.pid == proc.pid) {
           kv.second.rt = rt;
@@ -2144,6 +2382,10 @@ void register_core_commands(Kernel& kernel) {
   kernel.register_command("mv", cmd_mv);
   kernel.register_command("which", cmd_which);
   kernel.register_command("env", cmd_env);
+  kernel.register_command("printf", cmd_printf);
+  kernel.register_command("uname", cmd_uname);
+  kernel.register_command("hostname", cmd_hostname);
+  kernel.register_command("sleep", cmd_sleep);
   kernel.register_command("sh", cmd_sh);
   kernel.register_command("bash", cmd_sh);
   kernel.register_command("test", cmd_test);
@@ -2157,6 +2399,7 @@ void register_core_commands(Kernel& kernel) {
 void register_node_command(Kernel& kernel) {
   register_core_commands(kernel);
   kernel.register_command("node", cmd_node);
+  kernel.on_timer_fire([](Pid pid, int id) { invoke_guest_timer(pid, id); });
 }
 
 }  // namespace bn

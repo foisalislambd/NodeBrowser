@@ -1,6 +1,7 @@
 #include "bn/process.hpp"
 #include "bn/node_runner.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -144,6 +145,7 @@ bool Kernel::kill(Pid pid, int /*signal*/) {
     ok = true;
   }
   release_retained_http_for_pid(pid);
+  release_retained_js_for_pid(pid);
   return ok;
 }
 
@@ -180,10 +182,134 @@ std::shared_ptr<Process> Kernel::get(Pid pid) {
 }
 
 std::optional<int> Kernel::wait(Pid pid) {
+  pump(0);
   auto p = get(pid);
   if (!p) return 127;
   if (p->state == ProcessState::Running) return std::nullopt;
   return p->exit_code;
+}
+
+int Kernel::timer_start(Pid pid, int32_t delay_ms, bool interval) {
+  if (delay_ms < 0) delay_ms = 0;
+  int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
+  std::lock_guard lock(mu_);
+  Timer t;
+  t.id = next_timer_++;
+  t.pid = pid;
+  t.due_ms = now + delay_ms;
+  t.interval_ms = delay_ms;
+  t.interval = interval;
+  timers_.push_back(t);
+  return t.id;
+}
+
+void Kernel::timer_clear(int id) {
+  std::lock_guard lock(mu_);
+  for (auto& t : timers_) {
+    if (t.id == id) t.cancelled = true;
+  }
+}
+
+bool Kernel::has_timers(Pid pid) const {
+  std::lock_guard lock(mu_);
+  for (const auto& t : timers_) {
+    if (!t.cancelled && t.pid == pid) return true;
+  }
+  return false;
+}
+
+bool Kernel::has_running_children(Pid pid) const {
+  std::lock_guard lock(mu_);
+  for (const auto& kv : procs_) {
+    if (kv.second && kv.second->parent_pid == pid && kv.second->state == ProcessState::Running) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void Kernel::complete(Pid pid, int exit_code) {
+  std::lock_guard lock(mu_);
+  auto it = procs_.find(pid);
+  if (it == procs_.end() || !it->second) return;
+  it->second->keep_alive = false;
+  it->second->state = ProcessState::Exited;
+  it->second->exit_code = exit_code;
+  it->second->stdout_buf.closed = true;
+  it->second->stderr_buf.closed = true;
+  for (auto& t : timers_) {
+    if (t.pid == pid) t.cancelled = true;
+  }
+}
+
+int Kernel::pump(int64_t now_ms) {
+  if (now_ms <= 0) {
+    now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+                 .count();
+  }
+  std::vector<std::pair<Pid, int>> due;
+  {
+    std::lock_guard lock(mu_);
+    for (auto& t : timers_) {
+      if (t.cancelled) continue;
+      if (t.due_ms > now_ms) continue;
+      due.emplace_back(t.pid, t.id);
+      if (t.interval && t.interval_ms > 0) t.due_ms = now_ms + t.interval_ms;
+      else t.cancelled = true;
+    }
+  }
+  int n = 0;
+  for (auto [pid, id] : due) {
+    if (timer_fire_) timer_fire_(pid, id);
+    auto p = get(pid);
+    if (p && p->state != ProcessState::Running) {
+      release_retained_http_for_pid(pid);
+      release_retained_js_for_pid(pid);
+    }
+    ++n;
+  }
+  std::vector<Pid> idle;
+  {
+    std::lock_guard lock(mu_);
+    for (const auto& kv : procs_) {
+      auto& p = kv.second;
+      if (!p || p->state != ProcessState::Running || !p->keep_alive) continue;
+      if (p->cmd != "sh" && p->cmd != "bash" && p->cmd != "node" && p->cmd != "sleep") continue;
+      bool http = false;
+      for (const auto& l : listeners_) {
+        if (l.second == p->pid) {
+          http = true;
+          break;
+        }
+      }
+      bool timers = false;
+      for (const auto& t : timers_) {
+        if (!t.cancelled && t.pid == p->pid) {
+          timers = true;
+          break;
+        }
+      }
+      bool kids = false;
+      for (const auto& c : procs_) {
+        if (c.second && c.second->parent_pid == p->pid && c.second->state == ProcessState::Running) {
+          kids = true;
+          break;
+        }
+      }
+      if (!http && !timers && !kids) idle.push_back(p->pid);
+    }
+  }
+  for (Pid pid : idle) {
+    auto p = get(pid);
+    if (!p) continue;
+    complete(pid, p->complete_code);
+    release_retained_http_for_pid(pid);
+    release_retained_js_for_pid(pid);
+  }
+  return n;
 }
 
 size_t Kernel::write_stdin(Pid pid, const uint8_t* data, size_t n) {

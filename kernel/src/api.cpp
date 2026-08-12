@@ -3,6 +3,7 @@
 #include "bn/node_runner.hpp"
 #include "bn/process.hpp"
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
@@ -269,6 +270,21 @@ int bn_wait(BNKernel* k, int pid) {
   auto code = k->kernel.wait(pid);
   if (!code) return -1;
   return *code;
+}
+
+int bn_pump(BNKernel* k, double now_ms) {
+  if (!k) return 0;
+  return k->kernel.pump(static_cast<int64_t>(now_ms));
+}
+
+int bn_vfs_extract_tar(BNKernel* k, const uint8_t* data, size_t len, const char* dest_dir) {
+  if (!k || !data) return 0;
+  return k->kernel.vfs().extract_tar(data, len, dest_dir ? dest_dir : "/");
+}
+
+double bn_vfs_usage(BNKernel* k) {
+  if (!k) return 0;
+  return static_cast<double>(k->kernel.vfs().usage_bytes());
 }
 
 int bn_kill(BNKernel* k, int pid) {

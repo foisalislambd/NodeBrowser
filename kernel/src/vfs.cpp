@@ -1,6 +1,7 @@
 #include "bn/vfs.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 
@@ -264,6 +265,13 @@ bool Vfs::write_file(std::string_view path, std::vector<uint8_t> data, bool crea
   auto r = resolve(path, false);
   if (!r.parent) return false;
   if (r.node && r.node->kind() == NodeKind::Directory) return false;
+  size_t old = 0;
+  if (r.node && r.node->kind() == NodeKind::File) {
+    old = static_cast<VfsFile*>(r.node.get())->data().size();
+  }
+  uint64_t next = bytes_ - old + data.size();
+  if (next > max_bytes_) return false;
+  bytes_ = next;
   if (r.node && r.node->kind() == NodeKind::File) {
     static_cast<VfsFile*>(r.node.get())->set_data(std::move(data));
     return true;
@@ -295,6 +303,11 @@ bool Vfs::unlink(std::string_view path) {
   auto r = resolve(path, false);
   if (!r.parent || !r.node) return false;
   if (r.node->kind() == NodeKind::Directory) return false;
+  if (r.node->kind() == NodeKind::File) {
+    auto sz = static_cast<VfsFile*>(r.node.get())->data().size();
+    if (bytes_ >= sz) bytes_ -= sz;
+    else bytes_ = 0;
+  }
   return r.parent->erase(r.name);
 }
 
@@ -422,6 +435,76 @@ void Vfs::mount_tree(const std::unordered_map<std::string, std::string>& files) 
 void Vfs::clear() {
   std::lock_guard lock(mu_);
   root_ = std::make_shared<VfsDir>();
+  bytes_ = 0;
+}
+
+uint64_t Vfs::usage_bytes() const {
+  std::lock_guard lock(mu_);
+  return bytes_;
+}
+
+void Vfs::set_max_bytes(uint64_t n) {
+  std::lock_guard lock(mu_);
+  max_bytes_ = n ? n : 1;
+}
+
+uint64_t Vfs::max_bytes() const {
+  std::lock_guard lock(mu_);
+  return max_bytes_;
+}
+
+int Vfs::extract_tar(const uint8_t* data, size_t len, std::string_view dest_dir) {
+  if (!data || !len) return 0;
+  auto tar_str = [](const uint8_t* p, size_t n) {
+    size_t end = 0;
+    while (end < n && p[end]) ++end;
+    return std::string(reinterpret_cast<const char*>(p), end);
+  };
+  auto tar_octal = [&](const uint8_t* p, size_t n) -> size_t {
+    auto s = tar_str(p, n);
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\0')) s.erase(s.begin());
+    if (s.empty()) return 0;
+    return static_cast<size_t>(std::strtoull(s.c_str(), nullptr, 8));
+  };
+  std::string dest = dest_dir.empty() ? "/" : Vfs::normalize(dest_dir);
+  int written = 0;
+  size_t offset = 0;
+  while (offset + 512 <= len) {
+    const uint8_t* hdr = data + offset;
+    bool zero = true;
+    for (int i = 0; i < 512; ++i) {
+      if (hdr[i]) {
+        zero = false;
+        break;
+      }
+    }
+    if (zero) break;
+    std::string name = tar_str(hdr, 100);
+    std::string prefix = tar_str(hdr + 345, 155);
+    if (!prefix.empty()) name = prefix + "/" + name;
+    size_t size = tar_octal(hdr + 124, 12);
+    char type = static_cast<char>(hdr[156] ? hdr[156] : '0');
+    offset += 512;
+    if (offset + size > len) break;
+    std::string full = dest;
+    if (!name.empty() && name.front() == '/') name.erase(name.begin());
+    if (full.back() == '/') full += name;
+    else full += "/" + name;
+    if (type == '5') {
+      mkdir(full, true);
+    } else if (type == '2') {
+      auto target = tar_str(hdr + 157, 100);
+      symlink(target, full);
+      ++written;
+    } else if (type == '0' || type == '\0') {
+      if (!name.empty() && name.back() != '/') {
+        std::vector<uint8_t> body(data + offset, data + offset + size);
+        if (write_file(full, std::move(body), true)) ++written;
+      }
+    }
+    offset += ((size + 511) / 512) * 512;
+  }
+  return written;
 }
 
 }  // namespace bn

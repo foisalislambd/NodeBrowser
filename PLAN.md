@@ -328,9 +328,9 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 #### Phase 21 — Workers & VM `L` (C++ / WASM Workers — stubs today)
 
 - [x] Stubs in embed (`worker_threads.Worker` throws; `vm` same-realm)
-- [ ] Real `worker_threads`: extra QuickJS runtime or WASM worker + SAB (COOP/COEP)
+- [x] Cooperative `worker_threads.Worker` (same-thread QuickJS; not SAB)
 - [ ] MessagePort for HMR — kernel or host bridge, not a JS Node
-- [ ] `vm`: additional QuickJS `JSContext` in C++
+- [x] `vm`: additional QuickJS `JSContext` in C++ (`__bn.evalNewContext`)
 
 #### Phase 22 — Builtins matrix `M` (ongoing, embed)
 
@@ -354,7 +354,7 @@ All module work: `kernel/embed/guest_modules.js` + `scripts/gen-guest-modules.sh
 - [x] Lifecycle scripts `kernel.spawn("sh")` with host allowlist
 - [x] Registry Cache API + memory cache metrics (host)
 - [x] Scoped registry URLs (`%2F`)
-- [ ] Optional: C++ tar/gzip extract (today host `DecompressionStream` + write VFS)
+- [x] Optional: C++ tar extract (`Vfs::extract_tar` / `bn_vfs_extract_tar`); gzip still host `DecompressionStream`
 
 #### Phase 24 — npx / runners `M` ✅ (MVP)
 
@@ -473,7 +473,7 @@ UI must not grow a JS Node. Every Run/Install/Terminal action is `bn.spawn` / `b
 - [x] Incremental OPFS dirty flush
 - [ ] SAB + Atomics stdio in **C++**
 - [ ] Benchmarks vs WebContainers (external bake-off)
-- [ ] `node_modules` memory policy in VFS
+- [x] `node_modules` / VFS memory cap (`Vfs::set_max_bytes`, default 512 MiB)
 
 #### Phase 38 — Reliability `M` ✅ (MVP)
 
