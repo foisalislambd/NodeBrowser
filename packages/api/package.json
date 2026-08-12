@@ -27,7 +27,7 @@
     "docs": "npx --yes typedoc --options typedoc.json"
   },
   "dependencies": {
-    "esbuild-wasm": "0.25.0"
+    "esbuild-wasm": "0.28.2"
   },
   "devDependencies": {
     "typescript": "^5.8.2"
