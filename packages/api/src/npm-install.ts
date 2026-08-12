@@ -1,5 +1,6 @@
 import type { NodeBrowser } from './index.js';
 import { binRelTarget, makeBinShim, parseBinField } from './npm-bin.js';
+import { assertAllowedFetchUrl } from './egress.js';
 
 export type InstallProgress = {
   phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done';
@@ -237,12 +238,14 @@ function joinPath(...parts: string[]): string {
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
+  assertAllowedFetchUrl(url);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`npm meta failed ${url}: ${res.status}`);
   return (await res.json()) as T;
 }
 
 async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> {
+  assertAllowedFetchUrl(url);
   if (memoryCache.has(cacheKey)) return memoryCache.get(cacheKey)!;
 
   if (typeof caches !== 'undefined') {

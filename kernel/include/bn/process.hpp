@@ -31,6 +31,7 @@ enum class ProcessState : uint8_t { Starting, Running, Exited, Killed };
 
 struct Process {
   Pid pid{};
+  Pid parent_pid{0};
   std::string cmd;
   std::vector<std::string> argv;
   std::unordered_map<std::string, std::string> env;
@@ -60,9 +61,12 @@ public:
   Pid spawn(std::string cmd,
             std::vector<std::string> argv,
             std::unordered_map<std::string, std::string> env = {},
-            std::string cwd = "/");
+            std::string cwd = "/",
+            Pid parent_pid = 0);
 
   bool kill(Pid pid, int signal = 15);
+  /** Kill pid and every descendant (parent_pid chain). */
+  int kill_tree(Pid pid, int signal = 15);
   std::shared_ptr<Process> get(Pid pid);
   std::optional<int> wait(Pid pid);  // non-blocking: nullopt if still running
 

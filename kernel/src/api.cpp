@@ -273,7 +273,7 @@ int bn_wait(BNKernel* k, int pid) {
 
 int bn_kill(BNKernel* k, int pid) {
   if (!k) return 0;
-  return k->kernel.kill(pid) ? 1 : 0;
+  return k->kernel.kill_tree(pid) > 0 ? 1 : 0;
 }
 
 int bn_read_stdout(BNKernel* k, int pid, uint8_t* buf, int buflen) {

@@ -23,7 +23,7 @@
 ## Kernel responsibilities (C++)
 
 - Own all file bytes (RAM VFS; optional OPFS sync later)
-- Process IDs, argv, env, cwd, exit codes
+- Process IDs, parent/child trees, argv, env, cwd, exit codes (`kill` = kill tree)
 - stdio ring buffers shared with host
 - Virtual listen ports → host `server-ready` events
 - Export a stable C ABI for the TS host (`bn_*` functions)
@@ -31,8 +31,8 @@
 
 ## Host API responsibilities (TypeScript only)
 
-- `NodeBrowser.boot` / `mount` / `spawn` / events
-- Browser bridges: Service Worker HttpBridge, OPFS, fetch to npm registry
+- `NodeBrowser.boot` / `mount` / `spawn` / events; `WebContainer` name shim
+- Browser bridges: Service Worker HttpBridge, OPFS, **allowlisted** fetch to npm registry
 - Load WASM + call C ABI
 
 **There is no product guest Node in TypeScript.** `js-runtime.ts` is a frozen legacy fallback to delete (PLAN Phase 13b).

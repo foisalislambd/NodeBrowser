@@ -25,6 +25,12 @@ Include:
 
 We aim to acknowledge within **7 days** and share a remediation plan when feasible.
 
+## Network egress
+
+Host `fetch` used for npm metadata and tarballs is **allowlisted** (`registry.npmjs.org` / `registry.npmjs.com`, HTTPS only). Guest JS cannot open arbitrary internet sockets; `http.get` / `https.request` throw and tell the caller to use virtual servers.
+
+Do not point the installer at untrusted registries without reviewing `packages/api/src/egress.ts`.
+
 ## Scope examples
 
 In scope:

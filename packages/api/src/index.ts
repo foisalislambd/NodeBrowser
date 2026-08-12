@@ -342,6 +342,46 @@ export class NodeBrowser {
       };
       void run().catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))));
     };
+    (globalThis as unknown as {
+      __bn_on_npm?: (cwd: string, action: string, payload: string, pid: number) => void;
+      __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
+    }).__bn_on_npm = (cwd, action, payload, pid) => {
+      const finish = () => {
+        try {
+          self.#mod.kill(self.#k, pid);
+        } catch {
+          /* already gone */
+        }
+      };
+      void (async () => {
+        if (action === 'run') {
+          const child = await self.runScript(payload, cwd);
+          await child.exit;
+          return;
+        }
+        const specs = payload.trim() ? payload.trim().split(/\s+/) : [];
+        await self.install(specs, cwd);
+      })()
+        .catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))))
+        .finally(finish);
+    };
+    (globalThis as unknown as {
+      __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
+    }).__bn_on_npx = (pkg, rest, cwd, pid) => {
+      const finish = () => {
+        try {
+          self.#mod.kill(self.#k, pid);
+        } catch {
+          /* already gone */
+        }
+      };
+      const args = rest ? rest.split('\x1f').filter(Boolean) : [];
+      void self
+        .npx(pkg, args, cwd)
+        .then((p) => p.exit)
+        .catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))))
+        .finally(finish);
+    };
 
     const pid = this.#mod.spawn(this.#k, cmd, args, cwd, opts.env);
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
@@ -388,7 +428,7 @@ export class NodeBrowser {
     };
   }
 
-  /** Install npm packages into cwd/node_modules (deps + cache). */
+  /** Install npm packages into cwd/node_modules (deps + cache). Empty list = package.json deps. */
   async install(packages: string[], cwd = '/'): Promise<void> {
     const foreign = await detectForeignLockfile(this.fs, cwd);
     if (foreign) {
@@ -398,11 +438,28 @@ export class NodeBrowser {
         message: `${foreign} lockfile found — NodeBrowser installs with npm (corepack/yarn/pnpm not executed)`,
       });
     }
-    for (const pkg of packages) {
+    let list = packages;
+    if (!list.length) {
+      list = await this.#manifestDeps(cwd);
+    }
+    for (const pkg of list) {
       await installPackage(this, pkg, cwd, {
         withDeps: true,
         onProgress: (p) => this.#emit('install-progress', p),
       });
+    }
+  }
+
+  async #manifestDeps(cwd: string): Promise<string[]> {
+    try {
+      const raw = await this.fs.readFile(joinFsPath(cwd, 'package.json'), 'utf8');
+      const pkg = JSON.parse(raw) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      return [...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.devDependencies || {})];
+    } catch {
+      return [];
     }
   }
 
@@ -655,6 +712,18 @@ export class NodeBrowser {
     this.#mod.destroy(this.#k);
     this.#booted = false;
   }
+
+  /** Virtual listen ports currently registered on the host HttpBridge. */
+  ports(): number[] {
+    return this.#http.ports();
+  }
+
+  /** Kill pid and descendants (C++ process tree; JS fallback kills one pid). */
+  killTree(pid: number): boolean {
+    for (const port of this.#portsByPid.get(pid) ?? []) this.#http.close(port);
+    this.#portsByPid.delete(pid);
+    return this.#mod.kill(this.#k, pid);
+  }
 }
 
 function contentTypeFor(filePath: string): string {
@@ -682,5 +751,54 @@ export { detectProjectKind } from './project-preview.js';
 export { extractArchive, isZip, isGzip } from './zip.js';
 export { HttpBridge } from './http-bridge.js';
 export { resetKernelCache, type UseWasmOption } from './kernel.js';
+export { assertAllowedFetchUrl } from './egress.js';
 /** @deprecated Use `NodeBrowser` — kept for older snippets */
 export const BrowserNode = NodeBrowser;
+
+/**
+ * WebContainer-shaped names over the same C++/WASM kernel.
+ * Not StackBlitz WebContainers — method names only (PLAN Phase 41).
+ */
+export class WebContainer {
+  readonly #bn: NodeBrowser;
+
+  private constructor(bn: NodeBrowser) {
+    this.#bn = bn;
+  }
+
+  static async boot(
+    options?: Parameters<typeof NodeBrowser.boot>[0],
+  ): Promise<WebContainer> {
+    const bn = await NodeBrowser.boot(options);
+    return new WebContainer(bn);
+  }
+
+  get fs() {
+    return this.#bn.fs;
+  }
+
+  get runtime() {
+    return this.#bn.runtime;
+  }
+
+  mount(tree: FileSystemTree, mountPoint?: string) {
+    return this.#bn.mount(tree, mountPoint);
+  }
+
+  spawn(cmd: string, args?: string[], opts?: SpawnOptions) {
+    return this.#bn.spawn(cmd, args ?? [], opts);
+  }
+
+  on(...args: Parameters<NodeBrowser['on']>) {
+    this.#bn.on(...args);
+  }
+
+  teardown() {
+    this.#bn.teardown();
+  }
+
+  /** Underlying NodeBrowser (install, viteDev, importZip, …). */
+  get instance() {
+    return this.#bn;
+  }
+}

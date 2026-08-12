@@ -539,7 +539,7 @@ struct ShRun {
 };
 
 ShRun sh_run_simple(Kernel& k, std::string line, std::string& cwd,
-                    std::unordered_map<std::string, std::string>& env) {
+                    std::unordered_map<std::string, std::string>& env, Pid parent) {
   ShRun r;
   while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.erase(line.begin());
   while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) line.pop_back();
@@ -607,7 +607,7 @@ ShRun sh_run_simple(Kernel& k, std::string line, std::string& cwd,
     r.err = "sh: nested shell not supported\n";
     return r;
   }
-  int pid = k.spawn(cmd, argv, env, cwd);
+  int pid = k.spawn(cmd, argv, env, cwd, parent);
   auto child = k.get(pid);
   auto code = k.wait(pid);
   r.code = code.value_or(1);
@@ -629,7 +629,7 @@ ShRun sh_run_simple(Kernel& k, std::string line, std::string& cwd,
 }
 
 ShRun sh_run_pipeline(Kernel& k, const std::string& seg, std::string& cwd,
-                      std::unordered_map<std::string, std::string>& env) {
+                      std::unordered_map<std::string, std::string>& env, Pid parent) {
   std::vector<std::string> stages;
   std::string buf;
   bool inq = false;
@@ -655,11 +655,11 @@ ShRun sh_run_pipeline(Kernel& k, const std::string& seg, std::string& cwd,
     buf.push_back(c);
   }
   stages.push_back(buf);
-  if (stages.size() == 1) return sh_run_simple(k, stages[0], cwd, env);
+  if (stages.size() == 1) return sh_run_simple(k, stages[0], cwd, env, parent);
   ShRun last;
   for (size_t i = 0; i < stages.size(); ++i) {
     if (i == 0) {
-      last = sh_run_simple(k, stages[i], cwd, env);
+      last = sh_run_simple(k, stages[i], cwd, env, parent);
       continue;
     }
     std::string tmp = "/tmp/.bn_pipe_" + std::to_string(i);
@@ -668,9 +668,9 @@ ShRun sh_run_pipeline(Kernel& k, const std::string& seg, std::string& cwd,
     auto line = stages[i];
     while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.erase(line.begin());
     if (line == "cat" || line.rfind("cat ", 0) == 0) {
-      last = sh_run_simple(k, "cat " + tmp, cwd, env);
+      last = sh_run_simple(k, "cat " + tmp, cwd, env, parent);
     } else {
-      last = sh_run_simple(k, line, cwd, env);
+      last = sh_run_simple(k, line, cwd, env, parent);
     }
   }
   return last;
@@ -710,7 +710,7 @@ int cmd_sh(Kernel& k, Process& proc) {
       if (ch.op == "&&" && rc != 0) continue;
       if (ch.op == "||" && rc == 0) continue;
     }
-    auto run = sh_run_pipeline(k, ch.text, cwd, env);
+    auto run = sh_run_pipeline(k, ch.text, cwd, env, proc.pid);
     write_out(proc, run.out);
     write_err(proc, run.err);
     rc = run.code;
@@ -883,7 +883,7 @@ static JSValue js_bn_spawn_cmd(JSContext* ctx, JSValueConst, int argc, JSValueCo
     }
   }
   std::unordered_map<std::string, std::string> env = nc->proc->env;
-  int pid = nc->kernel->spawn(cmd, args, env, cwd);
+  int pid = nc->kernel->spawn(cmd, args, env, cwd, nc->proc->pid);
   JS_FreeCString(ctx, cmd);
   auto proc = nc->kernel->get(pid);
   JSValue out = JS_NewObject(ctx);
@@ -925,7 +925,7 @@ static JSValue js_bn_kill_pid(JSContext* ctx, JSValueConst, int argc, JSValueCon
   if (!nc || argc < 1) return JS_EXCEPTION;
   int32_t pid = 0;
   JS_ToInt32(ctx, &pid, argv[0]);
-  return JS_NewBool(ctx, nc->kernel->kill(pid));
+  return JS_NewBool(ctx, nc->kernel->kill_tree(pid) > 0);
 }
 
 static JSValue js_bn_wait_pid(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -1998,6 +1998,84 @@ int cmd_test(Kernel& k, Process& proc) {
   return ok ? 0 : 1;
 }
 
+int cmd_npm(Kernel& k, Process& proc) {
+  std::string action = "install";
+  std::string payload;
+  if (!proc.argv.empty() && proc.argv[0] == "run") {
+    action = "run";
+    if (proc.argv.size() < 2) {
+      write_err(proc, "npm run: missing script name\n");
+      return 1;
+    }
+    payload = proc.argv[1];
+  } else {
+    bool is_install = proc.argv.empty();
+    for (const auto& a : proc.argv) {
+      if (a == "install" || a == "i" || a == "add" || a == "ci") is_install = true;
+      else if (!a.empty() && a[0] != '-') {
+        if (!payload.empty()) payload.push_back(' ');
+        payload += a;
+      }
+    }
+    if (!is_install) {
+      write_err(proc, "npm: in-tab supports install/i/add/ci and run only\n");
+      return 1;
+    }
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM(
+      {
+        var cwd = UTF8ToString($0);
+        var action = UTF8ToString($1);
+        var payload = UTF8ToString($2);
+        var pid = $3;
+        if (typeof globalThis.__bn_on_npm === 'function') {
+          globalThis.__bn_on_npm(cwd, action, payload, pid);
+        }
+      },
+      proc.cwd.c_str(), action.c_str(), payload.c_str(), proc.pid);
+  write_out(proc, std::string("npm ") + action + " (host registry fetch → kernel VFS)\n");
+  proc.keep_alive = true;
+  return -1;
+#else
+  (void)k;
+  write_err(proc, "npm: registry fetch is a host/browser API (WASM build)\n");
+  return 1;
+#endif
+}
+
+int cmd_npx(Kernel&, Process& proc) {
+  if (proc.argv.empty()) {
+    write_err(proc, "npx: missing package\n");
+    return 1;
+  }
+  std::string pkg = proc.argv[0];
+  std::string rest;
+  for (size_t i = 1; i < proc.argv.size(); ++i) {
+    if (!rest.empty()) rest.push_back('\x1f');
+    rest += proc.argv[i];
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM(
+      {
+        var pkg = UTF8ToString($0);
+        var rest = UTF8ToString($1);
+        var cwd = UTF8ToString($2);
+        var pid = $3;
+        if (typeof globalThis.__bn_on_npx === 'function') {
+          globalThis.__bn_on_npx(pkg, rest, cwd, pid);
+        }
+      },
+      pkg.c_str(), rest.c_str(), proc.cwd.c_str(), proc.pid);
+  write_out(proc, "npx " + pkg + " (host → kernel spawn)\n");
+  proc.keep_alive = true;
+  return -1;
+#else
+  write_err(proc, "npx: host wrapper (WASM build)\n");
+  return 1;
+#endif
+}
+
 int cmd_vite_or_next(Kernel&, Process& proc) {
   std::string tool = proc.cmd;
   std::string mode = "dev";
@@ -2071,6 +2149,8 @@ void register_core_commands(Kernel& kernel) {
   kernel.register_command("[", cmd_test);
   kernel.register_command("vite", cmd_vite_or_next);
   kernel.register_command("next", cmd_vite_or_next);
+  kernel.register_command("npm", cmd_npm);
+  kernel.register_command("npx", cmd_npx);
 }
 
 void register_node_command(Kernel& kernel) {

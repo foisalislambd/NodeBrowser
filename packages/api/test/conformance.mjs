@@ -391,7 +391,24 @@ async function main() {
   const kind = (await import('../dist/project-preview.js')).detectProjectKind;
   assert((await kind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
 
-  console.log('Phases 13–30 + zip upload: OK (runtime=%s)', bn.runtime);
+  const { WebContainer } = await import('../dist/compat.js');
+  const wc = await WebContainer.boot({ useWasm: false });
+  assert(wc.runtime === 'js', 'compat runtime');
+  await wc.mount({ 'compat.txt': { file: { contents: 'ok' } } }, '/home/compat');
+  assert((await wc.fs.readFile('/home/compat/compat.txt', 'utf8')) === 'ok');
+  wc.teardown();
+
+  const { assertAllowedFetchUrl } = await import('../dist/egress.js');
+  let blocked = false;
+  try {
+    assertAllowedFetchUrl('https://evil.example/x');
+  } catch {
+    blocked = true;
+  }
+  assert(blocked, 'egress block');
+  assertAllowedFetchUrl('https://registry.npmjs.org/left-pad');
+
+  console.log('Phases 13–30 + zip upload + production v1: OK (runtime=%s)', bn.runtime);
 }
 
 main().catch((e) => {

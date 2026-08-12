@@ -275,6 +275,16 @@ int main() {
   }
 #endif
 
+  {
+    auto parent = k.spawn("true", {});
+    auto child = k.spawn("echo", {"tree"}, {}, "/", parent);
+    CHECK(k.get(child)->parent_pid == parent);
+    CHECK(k.kill_tree(parent) >= 1);
+    auto cp = k.get(child);
+    CHECK(cp);
+    CHECK(cp->state != ProcessState::Running);
+  }
+
   if (fails) {
     std::cerr << fails << " failure(s)\n";
     return 1;

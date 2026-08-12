@@ -17,7 +17,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `ws` | stub | Server/handleUpgrade no-op sockets |
 | `corepack` | stub | npm-only; yarn/pnpm not executed |
 | `net` | ok (subset) | Server/Socket on virtual ports via HttpBridge |
-| `child_process` | ok (subset) | spawn/execFile for `node` + shell stubs; max 32 procs |
+| `child_process` | ok (subset) | spawn/execFile; `parent_pid`; `kill` = kill tree; max 32 procs |
 | `module` / `require` | ok | CJS + **createRequire** + `exports` field + ESM rewrite |
 | `url` | stub | |
 | `util` | ok (subset) | promisify/callbackify/format/inherits |

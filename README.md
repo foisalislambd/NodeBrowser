@@ -33,16 +33,17 @@ for await (const chunk of proc.output) console.log(chunk);
 
 | Capability | State |
 |------------|--------|
-| In-memory VFS | ✅ |
-| Process spawn + stdio | ✅ |
-| QuickJS (native) + JS fallback (browser) | ✅ |
-| Node builtins (`fs`, `path`, `http`, `crypto`, …) | ✅ subset |
-| npm install → VFS | ✅ |
+| C++/WASM kernel (VFS, spawn, shell) | ✅ |
+| QuickJS guest Node (embed, not host JS) | ✅ subset |
+| JS fallback guest | ❄️ frozen / not the product |
+| npm install → VFS (HTTPS registry allowlist) | ✅ |
+| C++ `npm` / `npx` / kill-tree | ✅ |
 | Service Worker HTTP preview | ✅ |
-| esbuild-wasm bundle | ✅ |
-| Demo file manager (browse / save / run) | ✅ |
-| Vite / Next templates (host CLI) | ✅ demos |
-| Full Vite/Next CLI in-tab | 🔜 |
+| In-tab Vite / Next | ✅ **subset** (esbuild-wasm + shims) |
+| ZIP upload → unpack → preview | ✅ |
+| `WebContainer` name shim | ✅ |
+| Full Vite/Next CLI in QuickJS | 🔜 |
+| WASM-only (no JS guest) | 🔜 Phase 13b |
 
 Honest roadmap & architecture: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md).
 

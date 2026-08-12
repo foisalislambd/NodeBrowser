@@ -2,6 +2,8 @@
 #include "bn/node_runner.hpp"
 
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -49,7 +51,8 @@ static std::string spawn_join(const std::string& cwd, const std::string& rel) {
 Pid Kernel::spawn(std::string cmd,
                   std::vector<std::string> argv,
                   std::unordered_map<std::string, std::string> env,
-                  std::string cwd) {
+                  std::string cwd,
+                  Pid parent_pid) {
   CommandHandler handler;
   {
     std::lock_guard lock(mu_);
@@ -76,6 +79,7 @@ Pid Kernel::spawn(std::string cmd,
     std::lock_guard lock(mu_);
     auto proc = std::make_shared<Process>();
     proc->pid = next_pid_++;
+    proc->parent_pid = parent_pid;
     proc->cmd = cmd;
     proc->argv = std::move(argv);
     proc->env = std::move(env);
@@ -90,6 +94,7 @@ Pid Kernel::spawn(std::string cmd,
 
   auto proc = std::make_shared<Process>();
   proc->pid = next_pid_++;
+  proc->parent_pid = parent_pid;
   proc->cmd = std::move(cmd);
   proc->argv = std::move(argv);
   proc->env = std::move(env);
@@ -140,6 +145,30 @@ bool Kernel::kill(Pid pid, int /*signal*/) {
   }
   release_retained_http_for_pid(pid);
   return ok;
+}
+
+int Kernel::kill_tree(Pid root, int signal) {
+  std::vector<Pid> order;
+  {
+    std::lock_guard lock(mu_);
+    std::vector<Pid> stack{root};
+    std::unordered_map<Pid, bool> seen;
+    while (!stack.empty()) {
+      Pid p = stack.back();
+      stack.pop_back();
+      if (seen[p]) continue;
+      seen[p] = true;
+      for (const auto& kv : procs_) {
+        if (kv.second && kv.second->parent_pid == p) stack.push_back(kv.first);
+      }
+      order.push_back(p);
+    }
+  }
+  int n = 0;
+  for (auto it = order.rbegin(); it != order.rend(); ++it) {
+    if (kill(*it, signal)) ++n;
+  }
+  return n;
 }
 
 std::shared_ptr<Process> Kernel::get(Pid pid) {

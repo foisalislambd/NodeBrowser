@@ -368,6 +368,11 @@ async function boot() {
   });
   bn.on('server-ready', (port, url) => {
     appendTerm(`\n[server-ready] port=${port} url=${url}\n`);
+    const portsEl = $('status-ports');
+    if (portsEl && bn) {
+      const ports = bn.ports();
+      portsEl.textContent = ports.length ? 'ports ' + ports.join(',') : 'ports —';
+    }
     showPreview(port, url).catch((e) => appendTerm(String(e) + '\n'));
   });
   bn.on('install-progress', (p) => {

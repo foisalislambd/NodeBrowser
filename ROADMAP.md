@@ -10,22 +10,20 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 
 ## Already in C++/WASM (early)
 
-- C++ → WASM kernel + VFS + spawn + `sh` subset  
-- QuickJS `node` + guest modules baked into the kernel  
-- Service Worker preview  
-- npm install = host fetch into **kernel VFS**  
-- Host API over C ABI  
-- Demo file manager / terminal line → `sh -c`
+- C++ → WASM kernel + VFS + spawn + `sh` subset + **kill tree**
+- QuickJS `node` + guest modules baked into the kernel
+- Service Worker preview; demo **ports** status
+- npm install = host **allowlisted** fetch into **kernel VFS**; C++ `npm`/`npx`
+- `WebContainer` name shim; ZIP → preview
+- Host API over C ABI
 
 ## Must add (still C++/WASM)
 
-1. **Delete JS guest** (`js-runtime.ts` freeze → remove) — WASM is the only `node`  
-2. Harden WASM HTTP keep-alive and process model  
-3. Vite **in-tab** via WASM `node` + HMR  
-4. Next subset **in-tab** on WASM  
-5. xterm + multi-port preview (**UI only**)  
-6. WebContainer API name shim (same kernel)  
-7. Benchmarks vs WebContainers  
+1. **Delete JS guest** (`js-runtime.ts` is frozen → remove) — WASM is the only `node`
+2. Harden WASM HTTP; Asyncify/worker so long `node` does not freeze the tab
+3. Run real installed `vite`/`tsc` in QuickJS when possible (esbuild remains fast path)
+4. xterm + snapshot links (**UI only**)
+5. Benchmarks vs WebContainers  
 
 ## Non-goals
 

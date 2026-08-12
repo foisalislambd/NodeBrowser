@@ -1,3 +1,9 @@
+/**
+ * FROZEN legacy guest Node (PLAN Phase 13b).
+ * Do not add modules, shell, or fs APIs here. Product guest lives in
+ * kernel/embed/guest_modules.js + C++. This file exists only so Node CI
+ * can boot without a WASM loader; it will be replaced with a hard error.
+ */
 import type { KernelModule } from './kernel.js';
 import {
   BUFFER_POLYFILL,

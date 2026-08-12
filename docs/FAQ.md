@@ -10,11 +10,17 @@ Into the in-memory **VFS** (e.g. `/home/project/node_modules`), not your host di
 
 ## Can it run full Next.js / Vite today?
 
-Host templates yes (`npm run dev:vite` / `dev:next`). Full CLIs inside the tab are still on the roadmap — see `PLAN.md`.
+**In-tab subset:** `vite` / `next` kernel commands bundle with **esbuild-wasm** and shims (React/Next App Router client pages). That is not the upstream Vite 8 / `next start` CLIs.
+
+Host templates still exist (`npm run dev:vite` / `dev:next`) for comparison.
 
 ## WASM vs JS fallback?
 
-Primary kernel is **C++ → WASM**. `NodeBrowser.boot()` defaults to `{ useWasm: true }` (falls back to JS with a warning if WASM is missing). Pass `{ useWasm: false }` to force the JS runtime only.
+Primary kernel is **C++ → WASM**. `NodeBrowser.boot()` defaults to `{ useWasm: true }`. The JS guest (`js-runtime.ts`) is **frozen** and will be removed (PLAN Phase 13b). Do not treat JS-fallback tests as product completeness.
+
+## Is this a drop-in for StackBlitz WebContainers?
+
+No. `WebContainer` from `@foisal/nodebrowser` / `@foisal/nodebrowser/compat` is a **name shim** over the same C++ kernel (`boot` / `fs` / `mount` / `spawn` / `on` / `teardown`). Extra APIs live on `instance` (`install`, `viteDev`, `importZip`, …). See `PLAN.md` “How we beat WebContainers”.
 
 ## Is this a security sandbox?
 
