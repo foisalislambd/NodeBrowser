@@ -284,6 +284,14 @@ int main() {
     CHECK(cp);
     CHECK(cp->state != ProcessState::Running);
   }
+  {
+    auto alive = k.spawn("true", {});
+    CHECK(k.kill_tree(0) == 0);
+    CHECK(k.get(alive) != nullptr);
+    auto bare = k.spawn("npm", {});
+    auto bc = k.wait(bare);
+    CHECK(bc.has_value() && *bc == 1);
+  }
 
   if (fails) {
     std::cerr << fails << " failure(s)\n";

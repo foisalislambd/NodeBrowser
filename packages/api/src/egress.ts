@@ -19,6 +19,7 @@ export function assertAllowedFetchUrl(url: string, opts?: EgressOptions): URL {
   if (parsed.protocol !== 'https:') {
     throw new Error(`egress: https only (${parsed.protocol})`);
   }
+  // First-hop only: fetch() may follow redirects. npm tarballs stay on the registry host.
   const allow = new Set(DEFAULT_NPM_HOSTS);
   for (const h of opts?.extraHosts ?? []) allow.add(h);
   if (!allow.has(parsed.hostname)) {

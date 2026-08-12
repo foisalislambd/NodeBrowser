@@ -148,6 +148,7 @@ bool Kernel::kill(Pid pid, int /*signal*/) {
 }
 
 int Kernel::kill_tree(Pid root, int signal) {
+  if (root <= 0) return 0;
   std::vector<Pid> order;
   {
     std::lock_guard lock(mu_);

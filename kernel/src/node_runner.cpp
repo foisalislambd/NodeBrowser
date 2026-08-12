@@ -610,7 +610,8 @@ ShRun sh_run_simple(Kernel& k, std::string line, std::string& cwd,
   int pid = k.spawn(cmd, argv, env, cwd, parent);
   auto child = k.get(pid);
   auto code = k.wait(pid);
-  r.code = code.value_or(1);
+  // Keep-alive (npm/vite/http) is not a shell failure — value_or(1) was wrong.
+  r.code = code.value_or(0);
   if (child) {
     r.out = child->stdout_buf.read_all_string();
     r.err = child->stderr_buf.read_all_string();
@@ -2009,7 +2010,7 @@ int cmd_npm(Kernel& k, Process& proc) {
     }
     payload = proc.argv[1];
   } else {
-    bool is_install = proc.argv.empty();
+    bool is_install = false;
     for (const auto& a : proc.argv) {
       if (a == "install" || a == "i" || a == "add" || a == "ci") is_install = true;
       else if (!a.empty() && a[0] != '-') {

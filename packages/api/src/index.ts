@@ -30,6 +30,8 @@ export class NodeBrowser {
   #http = new HttpBridge();
   #detachSw: (() => void) | null = null;
   #portsByPid = new Map<number, Set<number>>();
+  /** Host-spawned children of C++ `npm`/`npx` (ABI spawn has no parent pid). */
+  #spawnChildren = new Map<number, Set<number>>();
   #persist = false;
   #opfsFlusher: ReturnType<typeof createOpfsFlusher> | null = null;
   /** Which kernel is driving this instance. */
@@ -346,16 +348,11 @@ export class NodeBrowser {
       __bn_on_npm?: (cwd: string, action: string, payload: string, pid: number) => void;
       __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
     }).__bn_on_npm = (cwd, action, payload, pid) => {
-      const finish = () => {
-        try {
-          self.#mod.kill(self.#k, pid);
-        } catch {
-          /* already gone */
-        }
-      };
+      const finish = () => this.#killWithChildren(pid);
       void (async () => {
         if (action === 'run') {
           const child = await self.runScript(payload, cwd);
+          this.#attachSpawnChild(pid, child.pid);
           await child.exit;
           return;
         }
@@ -368,17 +365,13 @@ export class NodeBrowser {
     (globalThis as unknown as {
       __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
     }).__bn_on_npx = (pkg, rest, cwd, pid) => {
-      const finish = () => {
-        try {
-          self.#mod.kill(self.#k, pid);
-        } catch {
-          /* already gone */
-        }
-      };
+      const finish = () => this.#killWithChildren(pid);
       const args = rest ? rest.split('\x1f').filter(Boolean) : [];
-      void self
-        .npx(pkg, args, cwd)
-        .then((p) => p.exit)
+      void (async () => {
+        const child = await self.npx(pkg, args, cwd);
+        this.#attachSpawnChild(pid, child.pid);
+        await child.exit;
+      })()
         .catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))))
         .finally(finish);
     };
@@ -419,11 +412,7 @@ export class NodeBrowser {
       pid,
       exit,
       output,
-      kill: () => {
-        for (const port of this.#portsByPid.get(pid) ?? []) this.#http.close(port);
-        this.#portsByPid.delete(pid);
-        this.#mod.kill(this.#k, pid);
-      },
+      kill: () => this.#killWithChildren(pid),
       write: (data: string) => this.#mod.writeStdin(this.#k, pid, data),
     };
   }
@@ -718,11 +707,32 @@ export class NodeBrowser {
     return this.#http.ports();
   }
 
-  /** Kill pid and descendants (C++ process tree; JS fallback kills one pid). */
+  /** Kill pid and descendants (C++ process tree + host-spawned npm/npx children). */
   killTree(pid: number): boolean {
+    return this.#killWithChildren(pid);
+  }
+
+  #attachSpawnChild(parent: number, child: number): void {
+    let set = this.#spawnChildren.get(parent);
+    if (!set) {
+      set = new Set();
+      this.#spawnChildren.set(parent, set);
+    }
+    set.add(child);
+  }
+
+  #killWithChildren(pid: number): boolean {
+    for (const c of [...(this.#spawnChildren.get(pid) ?? [])]) {
+      this.#killWithChildren(c);
+    }
+    this.#spawnChildren.delete(pid);
     for (const port of this.#portsByPid.get(pid) ?? []) this.#http.close(port);
     this.#portsByPid.delete(pid);
-    return this.#mod.kill(this.#k, pid);
+    try {
+      return this.#mod.kill(this.#k, pid);
+    } catch {
+      return false;
+    }
   }
 }
 
