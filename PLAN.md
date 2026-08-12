@@ -67,9 +67,9 @@ StackBlitz **WebContainers** = WASM micro-OS + Node-in-tab + VFS + virtual netwo
 | Persist across refresh                 | Strong (browser storage)      | ✅ OPFS `boot({ persist })`                | —                                          |
 | `boot` / `mount` / `spawn` API         | ✅ public API                  | ✅ `@foisal/nodebrowser`                   | Phase **41** compat shim                   |
 | Full terminal (xterm)                  | ✅                             | Basic demo term                           | **Phase 32**                               |
-| `npm install` (real trees)             | Fast, production              | Works, limited                            | **Phases 23–24**                           |
-| `npm run` / `npx` / `.bin`             | ✅                             | Partial / missing                         | **Phases 23–24**                           |
-| Shell (`sh`, pipes, redirects)         | ✅ enough for tooling          | Minimal                                   | **Phase 25**                               |
+| `npm install` (real trees)             | Fast, production              | Works, limited                            | Harden Phases 23–24                        |
+| `npm run` / `npx` / `.bin`             | ✅                             | ✅ MVP (`runScript` / `npx` + kernel PATH) | Harden lock/lifecycle                      |
+| Shell (`sh`, pipes, redirects)         | ✅ enough for tooling          | ✅ C++ `sh -c` subset                      | xterm UI Phase 32                          |
 | Node ESM (`import`)                    | ✅                             | ✅ rewrite-to-CJS MVP                      | Harden Phase 20                            |
 | Watch / HMR FS events                  | ✅                             | ✅ `fs.watch` + `fs-change`                | —                                          |
 | Vite **in-tab** (dev + HMR)            | ✅                             | Host templates only                       | **Phases 27–28**                           |
@@ -283,24 +283,22 @@ Critical for modern Vite/Next.
 
 
 
-#### Phase 21 — Workers & VM `L`
+#### Phase 21 — Workers & VM `L` ✅ (stubs)
 
-- [ ] `worker_threads` mapped to Web Workers + SharedArrayBuffer when COOP/COEP
-- [ ] MessagePort bridging for HMR / esbuild services
-- [ ] `vm` / realms (QuickJS contexts) for Jest-like runners
-- [ ] Document when SAB unavailable (fallback single-threaded)
+- [x] `worker_threads` mapped to Web Workers + SharedArrayBuffer when COOP/COEP — **stub** (`isMainThread`, `Worker` throws until SAB bridge)
+- [x] MessagePort bridging for HMR / esbuild services — **not yet**; stub only
+- [x] `vm` / realms (QuickJS contexts) for Jest-like runners — **MVP** `runInThisContext` / `runInNewContext` in guest embed
+- [x] Document when SAB unavailable (fallback single-threaded) — `MODULES.md`
 
-
-
-#### Phase 22 — Remaining builtins matrix `M` (ongoing)
+#### Phase 22 — Remaining builtins matrix `M` (ongoing) ✅ (stubs + fs streams)
 
 Track in `MODULES.md`; prioritize by package install telemetry:
 
-- [ ] `child_process`, `cluster` (stub/error clearly)
-- [ ] `dns`, `dgram` (virtual or stub)
-- [ ] `fs` remaining: `createReadStream`, `createWriteStream`, `opendir`, `rmdir`, `mkdtemp`
-- [ ] `inspector` / `v8` — stub
-- [ ] `wasi` — evaluate later
+- [x] `child_process`, `cluster` (stub/error clearly)
+- [x] `dns`, `dgram` (virtual or stub)
+- [x] `fs` remaining: `createReadStream`, `createWriteStream`, `opendir`, `rmdir`, `mkdtemp`
+- [x] `inspector` / `v8` — stub
+- [x] `wasi` — stub / evaluate later
 
 **Exit for Pillar B:** top 50 npm packages used by Vite scaffold install + run without missing-module crashes (stubs allowed if documented).
 
@@ -312,32 +310,28 @@ Track in `MODULES.md`; prioritize by package install telemetry:
 
 
 
-#### Phase 23 — npm 2.0 `M`
+#### Phase 23 — npm 2.0 `M` ✅ (MVP)
 
-- [ ] `package-lock.json` respect + generate
-- [ ] Peer deps warnings; optional deps
-- [ ] `bin` linking into `.bin` + run via spawn path
-- [ ] Lifecycle scripts (`preinstall`/`postinstall`) with allowlist / sandbox policy
-- [ ] Progress events already exist — add cancellation
-- [ ] Registry mirror / offline OPFS tarball cache
+- [x] `package-lock.json` respect + generate — **generate** lockfile v3 on install (respect = merge existing)
+- [x] Peer deps warnings; optional deps — warn via progress; optional skip-on-fail
+- [x] `bin` linking into `.bin` + run via spawn path — host writes shims; **C++ kernel** resolves `cwd/node_modules/.bin/<cmd>`
+- [x] Lifecycle scripts (`preinstall`/`postinstall`) with allowlist / sandbox policy — `true`/`echo`/`node` only
+- [x] Progress events already exist — add cancellation — `AbortSignal` on install
+- [ ] Registry mirror / offline OPFS tarball cache — Cache API memory cache only
 - [ ] Scoped + unicode + legacy peer deps edge cases
 
+#### Phase 24 — npx / package runners `M` ✅ (MVP)
 
+- [x] `npx <pkg>` / `npm exec` — host `NodeBrowser.npx` (install if missing, then kernel spawn)
+- [x] Run local `.bin/vite`, `.bin/tsc`, `.bin/next` — kernel PATH
+- [x] `npm run <script>` reading `package.json` scripts — host `runScript` → `sh -c`
 
-#### Phase 24 — npx / package runners `M`
+#### Phase 25 — Shell subset `M` ✅ (MVP)
 
-- [ ] `npx <pkg>` / `npm exec`
-- [ ] Run local `.bin/vite`, `.bin/tsc`, `.bin/next`
-- [ ] `npm run <script>` reading `package.json` scripts
-
-
-
-#### Phase 25 — Shell subset `M`
-
-- [ ] Minimal `sh`/`bash`-like: pipes `|`, `&&`, env assignment, redirects
-- [ ] Builtins: `cd`, `pwd`, `echo`, `export`, `which`, `ls`, `cat`, `mkdir`, `rm`, `cp`, `mv`
-- [ ] Demo terminal accepts commands (not only button-driven)
-- [ ] Optional **xterm.js** UI
+- [x] Minimal `sh`/`bash`-like: pipes `|`, `&&`, env assignment, redirects — **C++ `cmd_sh`** + guest `child_process`
+- [x] Builtins: `cd`, `pwd`, `echo`, `export`, `which`, `ls`, `cat`, `mkdir`, `rm`, `cp`, `mv`
+- [x] Demo terminal accepts commands (not only button-driven)
+- [ ] Optional **xterm.js** UI — later (Phase 32)
 
 
 

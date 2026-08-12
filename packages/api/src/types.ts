@@ -19,7 +19,7 @@ export interface BrowserNodeProcess {
 }
 
 export type InstallProgressEvent = {
-  phase: 'resolve' | 'fetch' | 'extract' | 'done';
+  phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done';
   name: string;
   version?: string;
   message?: string;

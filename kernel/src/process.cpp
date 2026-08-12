@@ -39,6 +39,13 @@ void Kernel::register_command(std::string name, CommandHandler handler) {
   commands_[std::move(name)] = std::move(handler);
 }
 
+static std::string spawn_join(const std::string& cwd, const std::string& rel) {
+  if (!rel.empty() && rel.front() == '/') return rel;
+  if (cwd.empty() || cwd == "/") return "/" + rel;
+  if (cwd.back() == '/') return cwd + rel;
+  return cwd + "/" + rel;
+}
+
 Pid Kernel::spawn(std::string cmd,
                   std::vector<std::string> argv,
                   std::unordered_map<std::string, std::string> env,
@@ -47,21 +54,38 @@ Pid Kernel::spawn(std::string cmd,
   {
     std::lock_guard lock(mu_);
     auto it = commands_.find(cmd);
-    if (it == commands_.end()) {
-      auto proc = std::make_shared<Process>();
-      proc->pid = next_pid_++;
-      proc->cmd = cmd;
-      proc->argv = std::move(argv);
-      proc->env = std::move(env);
-      proc->cwd = std::move(cwd);
-      proc->state = ProcessState::Exited;
-      proc->exit_code = 127;
-      std::string msg = "browsernode: command not found: " + cmd + "\n";
-      proc->stderr_buf.write(reinterpret_cast<const uint8_t*>(msg.data()), msg.size());
-      procs_[proc->pid] = proc;
-      return proc->pid;
+    if (it != commands_.end()) handler = it->second;
+  }
+  if (!handler) {
+    std::string candidate;
+    if (cmd.find('/') != std::string::npos) {
+      candidate = spawn_join(cwd, cmd);
+    } else {
+      candidate = spawn_join(cwd, "node_modules/.bin/" + cmd);
     }
-    handler = it->second;
+    auto st = vfs_.stat(candidate, true);
+    if (st && st->kind == NodeKind::File) {
+      argv.insert(argv.begin(), candidate);
+      cmd = "node";
+      std::lock_guard lock(mu_);
+      auto it = commands_.find("node");
+      if (it != commands_.end()) handler = it->second;
+    }
+  }
+  if (!handler) {
+    std::lock_guard lock(mu_);
+    auto proc = std::make_shared<Process>();
+    proc->pid = next_pid_++;
+    proc->cmd = cmd;
+    proc->argv = std::move(argv);
+    proc->env = std::move(env);
+    proc->cwd = std::move(cwd);
+    proc->state = ProcessState::Exited;
+    proc->exit_code = 127;
+    std::string msg = "browsernode: command not found: " + cmd + "\n";
+    proc->stderr_buf.write(reinterpret_cast<const uint8_t*>(msg.data()), msg.size());
+    procs_[proc->pid] = proc;
+    return proc->pid;
   }
 
   auto proc = std::make_shared<Process>();

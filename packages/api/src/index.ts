@@ -353,6 +353,32 @@ export class NodeBrowser {
     }
   }
 
+  /** Run `package.json` scripts via kernel `sh -c` (not a JS guest shell). */
+  async runScript(name: string, cwd = '/'): Promise<BrowserNodeProcess> {
+    const raw = await this.fs.readFile(joinFsPath(cwd, 'package.json'), 'utf8');
+    const pkg = JSON.parse(raw) as { scripts?: Record<string, string> };
+    const cmd = pkg.scripts?.[name];
+    if (!cmd) throw new Error(`npm run: missing script "${name}"`);
+    return this.spawn('sh', ['-c', cmd], { cwd });
+  }
+
+  /**
+   * Run a local `.bin` command, or install `pkg` then run its bin.
+   * Execution is kernel `spawn` (C++/WASM or thin JS fallback).
+   */
+  async npx(pkg: string, args: string[] = [], cwd = '/'): Promise<BrowserNodeProcess> {
+    const binName = pkg.includes('/') ? pkg.slice(pkg.lastIndexOf('/') + 1) : pkg.split('@')[0]!;
+    const binPath = joinFsPath(cwd, 'node_modules', '.bin', binName);
+    try {
+      await this.fs.readFile(binPath, 'utf8');
+      return this.spawn(binName, args, { cwd });
+    } catch {
+      /* install then retry */
+    }
+    await this.install([pkg], cwd);
+    return this.spawn(binName, args, { cwd });
+  }
+
   /**
    * Serve a VFS directory on a virtual HTTP port (Vite/Next preview & static hosting).
    * Returns the preview URL.
@@ -572,6 +598,10 @@ function contentTypeFor(filePath: string): string {
 function dirnamePath(p: string): string {
   const i = p.lastIndexOf('/');
   return i <= 0 ? '/' : p.slice(0, i);
+}
+
+function joinFsPath(...parts: string[]): string {
+  return parts.join('/').replace(/\/+/g, '/');
 }
 
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';

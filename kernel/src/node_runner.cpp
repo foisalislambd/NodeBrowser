@@ -260,6 +260,380 @@ int cmd_pwd(Kernel&, Process& proc) {
   return 0;
 }
 
+int cmd_true(Kernel&, Process&) { return 0; }
+int cmd_false(Kernel&, Process&) { return 1; }
+
+int cmd_mkdir(Kernel& k, Process& proc) {
+  bool recursive = false;
+  std::vector<std::string> paths;
+  for (const auto& a : proc.argv) {
+    if (a == "-p") recursive = true;
+    else paths.push_back(a);
+  }
+  if (paths.empty()) {
+    write_err(proc, "mkdir: missing operand\n");
+    return 1;
+  }
+  int rc = 0;
+  for (const auto& p : paths) {
+    if (!k.vfs().mkdir(join_path(proc.cwd, p), recursive)) {
+      write_err(proc, "mkdir: cannot create " + p + "\n");
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+bool rm_tree(Kernel& k, const std::string& path) {
+  auto st = k.vfs().stat(path, true);
+  if (!st) return false;
+  if (st->kind == NodeKind::Directory) {
+    auto ents = k.vfs().readdir(path);
+    if (ents) {
+      for (const auto& e : *ents) {
+        if (e == "." || e == "..") continue;
+        std::string child = path;
+        if (child.empty() || child.back() != '/') child += '/';
+        child += e;
+        if (!rm_tree(k, child)) return false;
+      }
+    }
+    return k.vfs().rmdir(path);
+  }
+  return k.vfs().unlink(path);
+}
+
+int cmd_rm(Kernel& k, Process& proc) {
+  bool recursive = false;
+  std::vector<std::string> paths;
+  for (const auto& a : proc.argv) {
+    if (a == "-r" || a == "-rf" || a == "-fr") recursive = true;
+    else if (a == "-f") continue;
+    else paths.push_back(a);
+  }
+  if (paths.empty()) {
+    write_err(proc, "rm: missing operand\n");
+    return 1;
+  }
+  int rc = 0;
+  for (const auto& p : paths) {
+    auto path = join_path(proc.cwd, p);
+    auto st = k.vfs().stat(path, true);
+    if (!st) {
+      write_err(proc, "rm: cannot remove " + p + "\n");
+      rc = 1;
+      continue;
+    }
+    if (st->kind == NodeKind::Directory) {
+      if (!recursive) {
+        write_err(proc, "rm: " + p + " is a directory\n");
+        rc = 1;
+        continue;
+      }
+      if (!rm_tree(k, path)) {
+        write_err(proc, "rm: cannot rmdir " + p + "\n");
+        rc = 1;
+      }
+    } else if (!k.vfs().unlink(path)) {
+      write_err(proc, "rm: cannot remove " + p + "\n");
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+int cmd_cp(Kernel& k, Process& proc) {
+  if (proc.argv.size() < 2) {
+    write_err(proc, "cp: missing operand\n");
+    return 1;
+  }
+  auto from = join_path(proc.cwd, proc.argv[0]);
+  auto to = join_path(proc.cwd, proc.argv[1]);
+  auto data = k.vfs().read_file(from);
+  if (!data) {
+    write_err(proc, "cp: cannot stat " + proc.argv[0] + "\n");
+    return 1;
+  }
+  return k.vfs().write_file(to, *data, true) ? 0 : 1;
+}
+
+int cmd_mv(Kernel& k, Process& proc) {
+  if (proc.argv.size() < 2) {
+    write_err(proc, "mv: missing operand\n");
+    return 1;
+  }
+  auto from = join_path(proc.cwd, proc.argv[0]);
+  auto to = join_path(proc.cwd, proc.argv[1]);
+  return k.vfs().rename(from, to) ? 0 : 1;
+}
+
+int cmd_which(Kernel& k, Process& proc) {
+  if (proc.argv.empty()) return 1;
+  const auto& name = proc.argv[0];
+  if (name == "node" || name == "echo" || name == "cat" || name == "ls" || name == "pwd" ||
+      name == "sh" || name == "true" || name == "false" || name == "mkdir" || name == "rm" ||
+      name == "cp" || name == "mv" || name == "which" || name == "npm" || name == "npx") {
+    write_out(proc, "/usr/bin/" + name + "\n");
+    return 0;
+  }
+  auto bin = join_path(proc.cwd, "node_modules/.bin/" + name);
+  if (k.vfs().exists(bin)) {
+    write_out(proc, bin + "\n");
+    return 0;
+  }
+  write_err(proc, "which: " + name + " not found\n");
+  return 1;
+}
+
+int cmd_env(Kernel&, Process& proc) {
+  for (const auto& kv : proc.env) {
+    write_out(proc, kv.first + "=" + kv.second + "\n");
+  }
+  return 0;
+}
+
+thread_local int g_sh_depth = 0;
+
+std::vector<std::string> sh_tokenize(const std::string& s) {
+  std::vector<std::string> parts;
+  std::string cur;
+  bool inq = false;
+  char q = 0;
+  for (char c : s) {
+    if (!inq && (c == '"' || c == '\'')) {
+      inq = true;
+      q = c;
+      continue;
+    }
+    if (inq && c == q) {
+      inq = false;
+      continue;
+    }
+    if (!inq && (c == ' ' || c == '\t')) {
+      if (!cur.empty()) {
+        parts.push_back(cur);
+        cur.clear();
+      }
+      continue;
+    }
+    cur.push_back(c);
+  }
+  if (!cur.empty()) parts.push_back(cur);
+  return parts;
+}
+
+struct ShChunk {
+  std::string text;
+  std::string op;
+};
+
+std::vector<ShChunk> sh_split_list(const std::string& script) {
+  std::vector<ShChunk> chunks;
+  std::string buf;
+  std::string op = "start";
+  bool inq = false;
+  char q = 0;
+  for (size_t i = 0; i < script.size(); ++i) {
+    char c = script[i];
+    if (!inq && (c == '"' || c == '\'')) {
+      inq = true;
+      q = c;
+      buf.push_back(c);
+      continue;
+    }
+    if (inq && c == q) {
+      inq = false;
+      buf.push_back(c);
+      continue;
+    }
+    if (!inq && c == ';' ) {
+      chunks.push_back({buf, op});
+      buf.clear();
+      op = ";";
+      continue;
+    }
+    if (!inq && i + 1 < script.size() &&
+        ((c == '&' && script[i + 1] == '&') || (c == '|' && script[i + 1] == '|'))) {
+      chunks.push_back({buf, op});
+      buf.clear();
+      op = script.substr(i, 2);
+      ++i;
+      continue;
+    }
+    buf.push_back(c);
+  }
+  chunks.push_back({buf, op});
+  return chunks;
+}
+
+struct ShRun {
+  int code{0};
+  std::string out;
+  std::string err;
+};
+
+ShRun sh_run_simple(Kernel& k, std::string line, std::string& cwd,
+                    std::unordered_map<std::string, std::string>& env) {
+  ShRun r;
+  while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.erase(line.begin());
+  while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) line.pop_back();
+  if (line.empty()) return r;
+  std::string redir;
+  bool append = false;
+  auto gt = line.find('>');
+  if (gt != std::string::npos) {
+    redir = line.substr(gt + 1);
+    if (!redir.empty() && redir.front() == '>') {
+      append = true;
+      redir.erase(redir.begin());
+    }
+    line = line.substr(0, gt);
+    while (!redir.empty() && (redir.front() == ' ' || redir.front() == '\t')) redir.erase(redir.begin());
+    while (!redir.empty() && (redir.back() == ' ' || redir.back() == '\t')) redir.pop_back();
+  }
+  auto parts = sh_tokenize(line);
+  if (parts.empty()) return r;
+  while (!parts.empty() && parts[0].find('=') != std::string::npos && parts[0].find('/') == std::string::npos) {
+    auto eq = parts[0].find('=');
+    env[parts[0].substr(0, eq)] = parts[0].substr(eq + 1);
+    parts.erase(parts.begin());
+  }
+  if (parts.empty()) return r;
+  std::string cmd = parts[0];
+  std::vector<std::string> argv(parts.begin() + 1, parts.end());
+  if (cmd == "cd") {
+    std::string dest = argv.empty() ? "/home" : join_path(cwd, argv[0]);
+    if (!k.vfs().exists(dest)) {
+      r.code = 1;
+      r.err = "cd: no such directory\n";
+      return r;
+    }
+    cwd = dest;
+    return r;
+  }
+  if (cmd == "export") {
+    for (const auto& a : argv) {
+      auto eq = a.find('=');
+      if (eq != std::string::npos) env[a.substr(0, eq)] = a.substr(eq + 1);
+    }
+    return r;
+  }
+  if (cmd == "sh" || cmd == "bash") {
+    r.code = 2;
+    r.err = "sh: nested shell not supported\n";
+    return r;
+  }
+  int pid = k.spawn(cmd, argv, env, cwd);
+  auto child = k.get(pid);
+  auto code = k.wait(pid);
+  r.code = code.value_or(1);
+  if (child) {
+    r.out = child->stdout_buf.read_all_string();
+    r.err = child->stderr_buf.read_all_string();
+  }
+  if (!redir.empty()) {
+    auto path = join_path(cwd, redir);
+    if (append) {
+      auto prev = k.vfs().read_text(path);
+      k.vfs().write_text(path, (prev ? *prev : "") + r.out, true);
+    } else {
+      k.vfs().write_text(path, r.out, true);
+    }
+    r.out.clear();
+  }
+  return r;
+}
+
+ShRun sh_run_pipeline(Kernel& k, const std::string& seg, std::string& cwd,
+                      std::unordered_map<std::string, std::string>& env) {
+  std::vector<std::string> stages;
+  std::string buf;
+  bool inq = false;
+  char q = 0;
+  for (size_t i = 0; i < seg.size(); ++i) {
+    char c = seg[i];
+    if (!inq && (c == '"' || c == '\'')) {
+      inq = true;
+      q = c;
+      buf.push_back(c);
+      continue;
+    }
+    if (inq && c == q) {
+      inq = false;
+      buf.push_back(c);
+      continue;
+    }
+    if (!inq && c == '|' && !(i + 1 < seg.size() && seg[i + 1] == '|')) {
+      stages.push_back(buf);
+      buf.clear();
+      continue;
+    }
+    buf.push_back(c);
+  }
+  stages.push_back(buf);
+  if (stages.size() == 1) return sh_run_simple(k, stages[0], cwd, env);
+  ShRun last;
+  for (size_t i = 0; i < stages.size(); ++i) {
+    if (i == 0) {
+      last = sh_run_simple(k, stages[i], cwd, env);
+      continue;
+    }
+    std::string tmp = "/tmp/.bn_pipe_" + std::to_string(i);
+    k.vfs().mkdir("/tmp", true);
+    k.vfs().write_text(tmp, last.out, true);
+    auto line = stages[i];
+    while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.erase(line.begin());
+    if (line == "cat" || line.rfind("cat ", 0) == 0) {
+      last = sh_run_simple(k, "cat " + tmp, cwd, env);
+    } else {
+      last = sh_run_simple(k, line, cwd, env);
+    }
+  }
+  return last;
+}
+
+int cmd_sh(Kernel& k, Process& proc) {
+  if (g_sh_depth > 8) {
+    write_err(proc, "sh: too much recursion\n");
+    return 2;
+  }
+  ++g_sh_depth;
+  struct DepthGuard {
+    ~DepthGuard() { --g_sh_depth; }
+  } guard;
+
+  std::string script;
+  for (size_t i = 0; i < proc.argv.size(); ++i) {
+    if (proc.argv[i] == "-c" && i + 1 < proc.argv.size()) {
+      script = proc.argv[i + 1];
+      break;
+    }
+  }
+  if (script.empty()) {
+    write_err(proc, "sh: interactive shell not supported; use sh -c\n");
+    return 2;
+  }
+  while (!script.empty() && (script.back() == ' ' || script.back() == '\t')) script.pop_back();
+  if (!script.empty() && script.back() == '&') script.pop_back();
+
+  auto env = proc.env;
+  auto cwd = proc.cwd;
+  int rc = 0;
+  auto chunks = sh_split_list(script);
+  for (size_t i = 0; i < chunks.size(); ++i) {
+    auto& ch = chunks[i];
+    if (i > 0) {
+      if (ch.op == "&&" && rc != 0) continue;
+      if (ch.op == "||" && rc == 0) continue;
+    }
+    auto run = sh_run_pipeline(k, ch.text, cwd, env);
+    write_out(proc, run.out);
+    write_err(proc, run.err);
+    rc = run.code;
+  }
+  return rc;
+}
+
 #if defined(BN_HAS_QUICKJS)
 
 static NodeCtx* get_opaque(JSContext* ctx) {
@@ -1547,6 +1921,16 @@ void register_core_commands(Kernel& kernel) {
   kernel.register_command("cat", cmd_cat);
   kernel.register_command("ls", cmd_ls);
   kernel.register_command("pwd", cmd_pwd);
+  kernel.register_command("true", cmd_true);
+  kernel.register_command("false", cmd_false);
+  kernel.register_command("mkdir", cmd_mkdir);
+  kernel.register_command("rm", cmd_rm);
+  kernel.register_command("cp", cmd_cp);
+  kernel.register_command("mv", cmd_mv);
+  kernel.register_command("which", cmd_which);
+  kernel.register_command("env", cmd_env);
+  kernel.register_command("sh", cmd_sh);
+  kernel.register_command("bash", cmd_sh);
 }
 
 void register_node_command(Kernel& kernel) {

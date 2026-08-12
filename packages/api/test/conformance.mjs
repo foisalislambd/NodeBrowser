@@ -317,7 +317,38 @@ async function main() {
     console.log('OPFS hydrate skipped (no navigator.storage)');
   }
 
-  console.log('Phases 13–20 conformance: OK (runtime=%s)', bn.runtime);
+  // --- Phases 23–25: .bin, npm run, shell ---
+  await bn.fs.mkdir('/home/project/node_modules/hello-cli', { recursive: true });
+  await bn.fs.mkdir('/home/project/node_modules/.bin', { recursive: true });
+  await bn.fs.writeFile(
+    '/home/project/node_modules/hello-cli/cli.js',
+    "console.log('frombin');\n",
+  );
+  await bn.fs.writeFile(
+    '/home/project/node_modules/.bin/hello',
+    "require('../hello-cli/cli.js');\n",
+  );
+  const binOut = await readOut(await bn.spawn('hello', [], { cwd: '/home/project' }));
+  assert(binOut.code === 0, 'bin exit ' + binOut.out);
+  assert(binOut.out.includes('frombin'), binOut.out);
+
+  await bn.fs.writeFile(
+    '/home/project/package.json',
+    JSON.stringify({ scripts: { greet: 'echo hi-run' } }),
+  );
+  const scriptOut = await readOut(await bn.runScript('greet', '/home/project'));
+  assert(scriptOut.code === 0, 'runScript exit ' + scriptOut.out);
+  assert(scriptOut.out.includes('hi-run'), scriptOut.out);
+
+  const andOut = await readOut(await bn.spawn('sh', ['-c', 'echo a && echo b'], { cwd: '/' }));
+  assert(andOut.code === 0, '&& exit ' + andOut.out);
+  assert(andOut.out.includes('a') && andOut.out.includes('b'), andOut.out);
+
+  const redirOut = await readOut(await bn.spawn('sh', ['-c', 'echo hi > /home/project/redir.txt'], { cwd: '/' }));
+  assert(redirOut.code === 0, 'redir exit ' + redirOut.out);
+  assert((await bn.fs.readFile('/home/project/redir.txt', 'utf8')).includes('hi'), 'redir file');
+
+  console.log('Phases 13–25 conformance: OK (runtime=%s)', bn.runtime);
 }
 
 main().catch((e) => {

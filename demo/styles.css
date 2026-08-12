@@ -638,6 +638,13 @@ body {
   }
 }
 
+.term-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .term {
   margin: 0;
   flex: 1;
@@ -648,6 +655,30 @@ body {
   font: 400 13px/1.45 var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.term-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.7rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sidebar, #1e1e1e);
+}
+
+.term-input-row .prompt {
+  color: #89d185;
+  font: 400 13px var(--font-mono);
+}
+
+#term-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: #cccccc;
+  font: 400 13px var(--font-mono);
+  outline: none;
 }
 
 /* —— Simple Browser (right) —— */

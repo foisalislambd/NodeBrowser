@@ -26,8 +26,11 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `perf_hooks` | ok (subset) | performance.now + no-op PerformanceObserver |
 | `async_hooks` | stub | AsyncLocalStorage + createHook no-op |
 | `diagnostics_channel` | stub | channel subscribe/publish |
-| `worker_threads` | todo | |
-| `vm` | todo | QuickJS realms |
+| `worker_threads` | stub | `isMainThread`; `Worker` throws until SAB/Web Worker bridge |
+| `vm` | stub | `runInThisContext` / `runInNewContext` (same realm) |
+| `cluster` | stub | `fork` throws |
+| `dns` / `dgram` | stub | lookup → 127.0.0.1 |
+| `inspector` / `v8` / `wasi` | stub | |
 | `assert` | stub | |
 | `querystring` | stub | |
 | `tty` | ok (stub) | `isatty` → false; ReadStream/WriteStream |

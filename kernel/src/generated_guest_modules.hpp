@@ -164,7 +164,7 @@ var __bn_CORE_MODULES = [
   'fs', 'path', 'http', 'https', 'net', 'url', 'events', 'util', 'stream', 'os',
   'module', 'buffer', 'assert', 'querystring', 'crypto', 'perf_hooks', 'async_hooks',
   'diagnostics_channel', 'zlib', 'string_decoder', 'timers', 'timers/promises', 'child_process',
-  'tty', 'readline'
+  'tty', 'readline', 'worker_threads', 'vm', 'cluster', 'dns', 'dgram', 'inspector', 'v8', 'wasi'
 ];
 
 function resolveFile(base) {
@@ -1076,6 +1076,53 @@ function loadCore(name) {
         return a;
       },
       unlinkSync: function(p) { if (!__bn.unlink(String(p))) throw new Error('ENOENT'); },
+      rmdirSync: function(p) { if (!__bn.unlink(String(p))) throw new Error('ENOENT rmdir: ' + p); },
+      mkdtempSync: function(prefix) {
+        prefix = String(prefix || '/tmp/tmp-');
+        var name = prefix + Math.floor(Math.random() * 1e9).toString(36);
+        __bn.mkdir(name, true);
+        return name;
+      },
+      opendirSync: function(p) {
+        var names = __bn.readdir(String(p));
+        if (names === null) throw new Error('ENOENT opendir: ' + p);
+        var i = 0;
+        return {
+          readSync: function() {
+            if (i >= names.length) return null;
+            var n = names[i++];
+            return { name: n };
+          },
+          closeSync: function() {},
+          close: function() { return Promise.resolve(); }
+        };
+      },
+      createReadStream: function(p) {
+        var R = loadCore('stream').Readable;
+        var s = new R({ read: function() {} });
+        try {
+          var t = __bn.readFile(String(p));
+          if (t === null) throw new Error('ENOENT: ' + p);
+          s.push(t); s.push(null);
+        } catch (e) {
+          setTimeout(function() { s.emit('error', e); }, 0);
+        }
+        return s;
+      },
+      createWriteStream: function(p) {
+        var W = loadCore('stream').Writable;
+        var chunks = [];
+        return new W({
+          write: function(c, enc, cb) {
+            chunks.push(Buffer.isBuffer && Buffer.isBuffer(c) ? c.toString() : String(c));
+            if (cb) cb();
+          },
+          final: function(cb) {
+            __bn.writeFile(String(p), chunks.join(''));
+            if (cb) cb();
+          }
+        });
+      },
       symlinkSync: function(target, path) {
         if (!__bn.symlink || !__bn.symlink(String(target), String(path))) throw new Error('EIO symlink');
       },
@@ -1394,10 +1441,80 @@ function loadCore(name) {
       var base = i >= 0 ? s.slice(i + 1) : s;
       return base === 'sh' || base === 'bash';
     }
+    function tokenize(s) {
+      var parts = s.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+      return parts.map(function(p) {
+        if ((p.charAt(0) === '"' && p.charAt(p.length - 1) === '"') ||
+            (p.charAt(0) === "'" && p.charAt(p.length - 1) === "'")) return p.slice(1, -1);
+        return p;
+      });
+    }
+    function runOneCommand(line, cwd, env) {
+      line = String(line || '').trim();
+      if (!line) return { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
+      var redir = null, append = false;
+      var m = line.match(/^(.*?)(>>|>)\s*(\S+)\s*$/);
+      if (m) {
+        line = m[1].trim();
+        append = m[2] === '>>';
+        redir = m[3];
+      }
+      var parts = tokenize(line);
+      var cmd0 = parts[0] || 'true';
+      var args0 = parts.slice(1);
+      if (cmd0.indexOf('=') > 0 && cmd0.indexOf('/') < 0) {
+        var eq = cmd0.indexOf('=');
+        env = Object.assign({}, env);
+        env[cmd0.slice(0, eq)] = cmd0.slice(eq + 1);
+        cmd0 = args0[0] || 'true';
+        args0 = args0.slice(1);
+      }
+      var result;
+      if (cmd0 === 'true') result = { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
+      else if (cmd0 === 'false') result = { pid: 0, stdout: '', stderr: '', running: false, code: 1 };
+      else if (cmd0 === 'cd') {
+        var dest = args0[0] ? (args0[0].charAt(0) === '/' ? args0[0] : join(cwd, args0[0])) : '/home';
+        if (__bn.isDir && !__bn.isDir(dest)) result = { pid: 0, stdout: '', stderr: 'cd: no such directory\n', running: false, code: 1 };
+        else result = { pid: 0, stdout: '', stderr: '', running: false, code: 0, cwd: dest };
+      } else if (cmd0 === 'export') {
+        result = { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
+      }       else if (isNodeCmd(cmd0)) result = __bn.spawnNode(args0[0] || '', cwd, env);
+      else {
+        var bin = join(cwd, 'node_modules/.bin/' + cmd0);
+        if (__bn.exists && __bn.exists(bin)) result = __bn.spawnNode(bin, cwd, env);
+        else result = __bn.spawnCmd(String(cmd0), args0.map(String), cwd);
+      }
+      if (redir && result) {
+        var body = result.stdout || '';
+        var path = redir.charAt(0) === '/' ? redir : join(cwd, redir);
+        if (append && __bn.readFile) {
+          var prev = __bn.readFile(path);
+          if (prev) body = prev + body;
+        }
+        if (__bn.writeFile) __bn.writeFile(path, body);
+        result.stdout = '';
+      }
+      return result;
+    }
+    function runPipeline(seg, cwd, env) {
+      var stages = String(seg).split('|');
+      if (stages.length === 1) return runOneCommand(stages[0], cwd, env);
+      var last = { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
+      for (var i = 0; i < stages.length; i++) {
+        var line = stages[i].trim();
+        if (i === 0) last = runOneCommand(line, cwd, env);
+        else {
+          var tmp = '/tmp/.bn_pipe_' + i;
+          if (__bn.writeFile) __bn.writeFile(tmp, last.stdout || '');
+          if (/^cat\b/.test(line) && tokenize(line).length === 1) last = runOneCommand('cat ' + tmp, cwd, env);
+          else last = runOneCommand(line, cwd, env);
+        }
+      }
+      return last;
+    }
     function runShellScript(script, cwd, env) {
       script = String(script || '').trim();
       if (!script) return { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
-      // wait [pid]
       if (script === 'wait' || /^wait(\s|$)/.test(script)) {
         var rest = script.slice(4).trim();
         if (rest && __bn.waitPid) {
@@ -1405,44 +1522,46 @@ function loadCore(name) {
           var code = __bn.waitPid(wpid);
           return { pid: wpid, stdout: '', stderr: '', running: false, code: code < 0 ? 0 : code };
         }
-        // wait all tracked background jobs
-        var last = 0;
+        var lastw = 0;
         for (var j = 0; j < __bn_bg_jobs.length; j++) {
-          if (__bn.waitPid) last = __bn.waitPid(__bn_bg_jobs[j]);
+          if (__bn.waitPid) lastw = __bn.waitPid(__bn_bg_jobs[j]);
         }
         __bn_bg_jobs.length = 0;
-        return { pid: 0, stdout: '', stderr: '', running: false, code: last < 0 ? 0 : last };
+        return { pid: 0, stdout: '', stderr: '', running: false, code: lastw < 0 ? 0 : lastw };
       }
       var bg = false;
       if (/&\s*$/.test(script)) {
         bg = true;
         script = script.replace(/&\s*$/, '').trim();
       }
-      // Simple command split (no pipes in this MVP slice — Phase 25)
-      var parts = script.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-      parts = parts.map(function(p) {
-        if ((p.charAt(0) === '"' && p.charAt(p.length - 1) === '"') ||
-            (p.charAt(0) === "'" && p.charAt(p.length - 1) === "'")) return p.slice(1, -1);
-        return p;
-      });
-      var cmd0 = parts[0] || 'true';
-      var args0 = parts.slice(1);
-      if (cmd0 === 'true') return { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
-      if (cmd0 === 'false') return { pid: 0, stdout: '', stderr: '', running: false, code: 1 };
-      if (cmd0 === 'echo') {
-        return { pid: 0, stdout: args0.join(' ') + '\n', stderr: '', running: false, code: 0 };
+      var chunks = [];
+      var buf = '', i, op;
+      for (i = 0; i < script.length; i++) {
+        if (script.slice(i, i + 2) === '&&' || script.slice(i, i + 2) === '||') {
+          chunks.push({ text: buf, op: op || 'start' });
+          op = script.slice(i, i + 2);
+          buf = '';
+          i++;
+        } else buf += script[i];
       }
-      var result;
-      if (isNodeCmd(cmd0)) result = __bn.spawnNode(args0[0] || '', cwd, env);
-      else result = __bn.spawnCmd(String(cmd0), args0.map(String), cwd);
-      if (bg && result && result.pid) {
-        __bn_bg_jobs.push(result.pid);
-        // Only keep "running" if the kernel still has a live process.
-        // Sync builtins (echo) finish immediately — do not fake running forever.
-        if (!result.running) {
-          /* already exited; wait() will still see the recorded exit code */
+      chunks.push({ text: buf, op: op || 'start' });
+      var result = { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
+      var outAll = '', errAll = '';
+      var curCwd = cwd;
+      for (i = 0; i < chunks.length; i++) {
+        var ch = chunks[i];
+        if (i > 0) {
+          if (ch.op === '&&' && result.code !== 0) continue;
+          if (ch.op === '||' && result.code === 0) continue;
         }
+        result = runPipeline(ch.text, curCwd, env);
+        if (result && result.cwd) curCwd = result.cwd;
+        outAll += (result && result.stdout) || '';
+        errAll += (result && result.stderr) || '';
       }
+      result.stdout = outAll;
+      result.stderr = errAll;
+      if (bg && result && result.pid) __bn_bg_jobs.push(result.pid);
       return result;
     }
     function spawn(cmd, args, opts) {
@@ -1456,7 +1575,11 @@ function loadCore(name) {
         if (isShellCmd(cmd) && args[0] === '-c') {
           result = runShellScript(args[1] || '', cwd, env);
         } else if (isNodeCmd(cmd)) result = __bn.spawnNode(args[0] || '', cwd, env);
-        else result = __bn.spawnCmd(String(cmd), args.map(String), cwd);
+        else {
+          var bin = join(cwd, 'node_modules/.bin/' + String(cmd));
+          if (__bn.exists && __bn.exists(bin)) result = __bn.spawnNode(bin, cwd, env);
+          else result = __bn.spawnCmd(String(cmd), args.map(String), cwd);
+        }
         child.pid = result.pid;
         child.exitCode = result.running ? -1 : result.code;
         child.stdout = makeStream(result.stdout || '');
@@ -1637,6 +1760,62 @@ function loadCore(name) {
       },
       wrap: function(s) { return s; }
     };
+  }
+  if (name === 'worker_threads') {
+    return {
+      isMainThread: true,
+      parentPort: null,
+      workerData: undefined,
+      threadId: 0,
+      Worker: function() { throw new Error('worker_threads.Worker: not available (no SAB / Web Worker bridge yet)'); }
+    };
+  }
+  if (name === 'vm') {
+    return {
+      runInThisContext: function(code) { return (0, eval)(String(code)); },
+      runInNewContext: function(code, sandbox) {
+        sandbox = sandbox || {};
+        var keys = Object.keys(sandbox);
+        var vals = keys.map(function(k) { return sandbox[k]; });
+        var fn = Function.apply(null, keys.concat([String(code)]));
+        return fn.apply(sandbox, vals);
+      },
+      createContext: function(o) { return o || {}; },
+      Script: function(code) {
+        this.code = String(code);
+        this.runInThisContext = function() { return (0, eval)(this.code); };
+      }
+    };
+  }
+  if (name === 'cluster') {
+    return {
+      isMaster: true, isPrimary: true, isWorker: false,
+      fork: function() { throw new Error('cluster.fork: unsupported in NodeBrowser'); },
+      workers: {}
+    };
+  }
+  if (name === 'dns') {
+    return {
+      lookup: function(host, opts, cb) {
+        if (typeof opts === 'function') cb = opts;
+        if (cb) setTimeout(function() { cb(null, '127.0.0.1', 4); }, 0);
+      },
+      resolve: function(host, cb) { if (cb) cb(null, ['127.0.0.1']); },
+      promises: { lookup: function() { return Promise.resolve({ address: '127.0.0.1', family: 4 }); } }
+    };
+  }
+  if (name === 'dgram') {
+    return {
+      createSocket: function() {
+        return { bind: function(p, cb) { if (cb) cb(); }, send: function() {}, close: function() {}, on: function() { return this; } };
+      }
+    };
+  }
+  if (name === 'inspector' || name === 'v8') {
+    return { open: function() {}, close: function() {}, url: function() { return undefined; }, serialize: function(x) { return x; } };
+  }
+  if (name === 'wasi') {
+    return { WASI: function() { throw new Error('wasi: not implemented'); } };
   }
   throw new Error('Unknown core ' + name);
 }

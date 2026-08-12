@@ -1,7 +1,8 @@
 import type { NodeBrowser } from './index.js';
+import { binRelTarget, makeBinShim, parseBinField } from './npm-bin.js';
 
 export type InstallProgress = {
-  phase: 'resolve' | 'fetch' | 'extract' | 'done';
+  phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done';
   name: string;
   version?: string;
   message?: string;
@@ -13,6 +14,10 @@ type PacoteVersion = {
   version: string;
   dist: { tarball: string; integrity?: string };
   dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  bin?: string | Record<string, string>;
+  scripts?: Record<string, string>;
 };
 
 type RegistryMeta = {
@@ -22,16 +27,93 @@ type RegistryMeta = {
 
 const memoryCache = new Map<string, Uint8Array>();
 const MAX_DEPTH = 8;
+const LIFECYCLE_ALLOW = new Set(['true', 'echo', 'node']);
 
 export async function installPackage(
   bn: NodeBrowser,
   spec: string,
   cwd = '/',
-  opts?: { onProgress?: OnProgress; withDeps?: boolean },
+  opts?: { onProgress?: OnProgress; withDeps?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   const withDeps = opts?.withDeps !== false;
   const seen = new Set<string>();
-  await installOne(bn, spec, cwd, 0, seen, withDeps, opts?.onProgress);
+  const lock: Record<string, { version: string; resolved?: string }> = {};
+  await installOne(bn, spec, cwd, 0, seen, withDeps, opts?.onProgress, opts?.signal, lock);
+  await writeLockfile(bn, cwd, lock);
+}
+
+async function writeLockfile(
+  bn: NodeBrowser,
+  cwd: string,
+  lock: Record<string, { version: string; resolved?: string }>,
+): Promise<void> {
+  const path = joinPath(cwd, 'package-lock.json');
+  let existing: { lockfileVersion?: number; packages?: Record<string, unknown> } = {
+    lockfileVersion: 3,
+    packages: {},
+  };
+  try {
+    existing = JSON.parse(await bn.fs.readFile(path, 'utf8'));
+  } catch {
+    /* new */
+  }
+  existing.lockfileVersion = 3;
+  existing.packages = existing.packages || {};
+  for (const [name, info] of Object.entries(lock)) {
+    (existing.packages as Record<string, unknown>)['node_modules/' + name] = {
+      version: info.version,
+      resolved: info.resolved,
+    };
+  }
+  await bn.fs.writeFile(path, JSON.stringify(existing, null, 2) + '\n');
+}
+
+async function linkBins(bn: NodeBrowser, cwd: string, pkgName: string, destRoot: string): Promise<void> {
+  let meta: { name?: string; bin?: unknown } = {};
+  try {
+    meta = JSON.parse(await bn.fs.readFile(joinPath(destRoot, 'package.json'), 'utf8'));
+  } catch {
+    return;
+  }
+  const bins = parseBinField(meta.name || pkgName, meta.bin);
+  const binDir = joinPath(cwd, 'node_modules', '.bin');
+  await bn.fs.mkdir(binDir, { recursive: true });
+  for (const [name, file] of Object.entries(bins)) {
+    const shim = makeBinShim(binRelTarget(pkgName, file));
+    await bn.fs.writeFile(joinPath(binDir, name), shim);
+  }
+}
+
+async function runLifecycle(
+  bn: NodeBrowser,
+  destRoot: string,
+  scriptName: string,
+  onProgress?: OnProgress,
+): Promise<void> {
+  let scripts: Record<string, string> = {};
+  try {
+    const meta = JSON.parse(await bn.fs.readFile(joinPath(destRoot, 'package.json'), 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    scripts = meta.scripts || {};
+  } catch {
+    return;
+  }
+  const cmd = scripts[scriptName];
+  if (!cmd) return;
+  const first = cmd.trim().split(/\s+/)[0] || '';
+  const base = first.split('/').pop() || first;
+  if (!LIFECYCLE_ALLOW.has(base) && base !== 'node') {
+    onProgress?.({
+      phase: 'lifecycle',
+      name: scriptName,
+      message: 'skipped (not in allowlist): ' + cmd,
+    });
+    return;
+  }
+  onProgress?.({ phase: 'lifecycle', name: scriptName, message: cmd });
+  const proc = await bn.spawn('sh', ['-c', cmd], { cwd: destRoot });
+  await proc.exit;
 }
 
 async function installOne(
@@ -42,7 +124,10 @@ async function installOne(
   seen: Set<string>,
   withDeps: boolean,
   onProgress?: OnProgress,
+  signal?: AbortSignal,
+  lock?: Record<string, { version: string; resolved?: string }>,
 ): Promise<void> {
+  if (signal?.aborted) throw new Error('install cancelled');
   if (depth > MAX_DEPTH) return;
   const { name, version: want } = parseSpec(spec);
   const key = `${name}@${want}`;
@@ -51,11 +136,22 @@ async function installOne(
 
   onProgress?.({ phase: 'resolve', name, message: `resolving ${name}@${want}` });
   const meta = await fetchJson<RegistryMeta>(registryUrl(name));
-  const ver = want === 'latest' || want.startsWith('^') || want.startsWith('~') || want === '*'
-    ? pickVersion(meta, want)
-    : want;
+  const ver =
+    want === 'latest' || want.startsWith('^') || want.startsWith('~') || want === '*'
+      ? pickVersion(meta, want)
+      : want;
   const verMeta = meta.versions[ver];
   if (!verMeta) throw new Error(`version not found: ${name}@${ver}`);
+  if (lock) lock[name] = { version: verMeta.version, resolved: verMeta.dist.tarball };
+
+  if (verMeta.peerDependencies) {
+    onProgress?.({
+      phase: 'resolve',
+      name,
+      version: verMeta.version,
+      message: 'peer deps: ' + Object.keys(verMeta.peerDependencies).join(', '),
+    });
+  }
 
   const cacheKey = verMeta.dist.integrity || `${name}@${verMeta.version}`;
   onProgress?.({ phase: 'fetch', name, version: verMeta.version });
@@ -70,18 +166,34 @@ async function installOne(
     await bn.fs.writeFile(joinPath(destRoot, rel), content);
   }
 
+  onProgress?.({ phase: 'bin', name, version: verMeta.version });
+  await linkBins(bn, cwd, name, destRoot);
+  await runLifecycle(bn, destRoot, 'preinstall', onProgress);
+  await runLifecycle(bn, destRoot, 'postinstall', onProgress);
+
   if (withDeps && verMeta.dependencies) {
     for (const [dep, range] of Object.entries(verMeta.dependencies)) {
-      // Install nested under this package's node_modules for isolation (npm-like)
-      await installOne(bn, `${dep}@${range}`, destRoot, depth + 1, seen, true, onProgress);
-      // Also hoist to project root if missing (readdir returns [] for missing dirs — check package.json)
+      await installOne(bn, `${dep}@${range}`, destRoot, depth + 1, seen, true, onProgress, signal, lock);
       const hoistPkg = joinPath(cwd, 'node_modules', dep, 'package.json');
       try {
         await bn.fs.readFile(hoistPkg, 'utf8');
       } catch {
-        // Allow hoist even if nested install already marked this spec in `seen`
         const hoistSeen = new Set<string>();
-        await installOne(bn, `${dep}@${range}`, cwd, depth + 1, hoistSeen, false, onProgress);
+        await installOne(bn, `${dep}@${range}`, cwd, depth + 1, hoistSeen, false, onProgress, signal, lock);
+      }
+    }
+  }
+
+  if (withDeps && verMeta.optionalDependencies) {
+    for (const [dep, range] of Object.entries(verMeta.optionalDependencies)) {
+      try {
+        await installOne(bn, `${dep}@${range}`, cwd, depth + 1, seen, false, onProgress, signal, lock);
+      } catch (e) {
+        onProgress?.({
+          phase: 'resolve',
+          name: dep,
+          message: 'optional skipped: ' + (e instanceof Error ? e.message : String(e)),
+        });
       }
     }
   }

@@ -57,6 +57,29 @@ int main() {
 #endif
   }
 
+  {
+    auto pid = k.spawn("mkdir", {"-p", "/d/e"});
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    CHECK(k.vfs().exists("/d/e"));
+  }
+  {
+    auto pid = k.spawn("sh", {"-c", "echo a && echo b"});
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto proc = k.get(pid);
+    auto out = proc->stdout_buf.read_all_string();
+    CHECK(out.find("a") != std::string::npos);
+    CHECK(out.find("b") != std::string::npos);
+  }
+  {
+    auto pid = k.spawn("sh", {"-c", "echo hi > /redir.txt"});
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto t = k.vfs().read_text("/redir.txt");
+    CHECK(t.has_value() && t->find("hi") != std::string::npos);
+  }
+
 #if defined(BN_HAS_QUICKJS)
   {
     auto pid = k.spawn("node", {"/math.js"}, {}, "/");
@@ -212,6 +235,19 @@ int main() {
     CHECK(out.find("sha512=") != std::string::npos);
     CHECK(out.find("tty=false") != std::string::npos);
     CHECK(out.find("rlok") != std::string::npos);
+  }
+  {
+    CHECK(k.vfs().mkdir("/home/project/node_modules/hello-cli", true));
+    CHECK(k.vfs().write_text("/home/project/node_modules/hello-cli/cli.js",
+                             "console.log('frombin');\n"));
+    CHECK(k.vfs().mkdir("/home/project/node_modules/.bin", true));
+    CHECK(k.vfs().write_text("/home/project/node_modules/.bin/hello",
+                             "require('../hello-cli/cli.js');\n"));
+    auto pid = k.spawn("hello", {}, {}, "/home/project");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("frombin") != std::string::npos);
   }
 #endif
 

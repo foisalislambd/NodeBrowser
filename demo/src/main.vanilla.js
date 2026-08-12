@@ -378,6 +378,34 @@ async function boot() {
   await refreshTree();
   $('status').textContent = bn.runtime === 'wasm' ? 'ready · wasm' : 'ready · js';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
+  appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
+  const termInput = $('term-input');
+  if (termInput) {
+    termInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const line = termInput.value.trim();
+      if (!line) return;
+      termInput.value = '';
+      runShellLine(line).catch((err) => appendTerm(String(err) + '\n'));
+    });
+  }
+}
+
+async function runShellLine(line) {
+  if (!bn) return;
+  const cwd = projectCwd || '/home/project';
+  appendTerm(`$ ${line}\n`);
+  const proc = await bn.spawn('sh', ['-c', line], { cwd });
+  const reader = proc.output.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    appendTerm(value);
+  }
+  const code = await proc.exit;
+  appendTerm(`\n[exit ${code}]\n`);
+  await refreshTree();
 }
 
 async function runNode() {

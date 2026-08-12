@@ -124,7 +124,19 @@
               <span class="panel-spacer"></span>
               <span class="live-dot" aria-hidden="true"></span>
             </div>
-            <pre id="term" class="term" aria-live="polite"></pre>
+            <div class="term-wrap">
+              <pre id="term" class="term" aria-live="polite"></pre>
+              <label class="term-input-row">
+                <span class="prompt">$</span>
+                <input
+                  type="text"
+                  id="term-input"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="sh -c …  (Enter to run)"
+                />
+              </label>
+            </div>
           </section>
         </div>
 

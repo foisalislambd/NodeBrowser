@@ -721,6 +721,124 @@ export function createJsFallbackKernel(opts?: {
         });
         return pid;
       }
+      if (cmd === 'true') {
+        procs.set(pid, { out: '', err: '', code: 0, running: false });
+        return pid;
+      }
+      if (cmd === 'false') {
+        procs.set(pid, { out: '', err: '', code: 1, running: false });
+        return pid;
+      }
+      if (cmd === 'pwd') {
+        procs.set(pid, { out: cwd + '\n', err: '', code: 0, running: false });
+        return pid;
+      }
+      if (cmd === 'sh' || cmd === 'bash') {
+        const script = argv[0] === '-c' ? String(argv[1] || '') : '';
+        const runLine = (line: string): { out: string; err: string; code: number } => {
+          let body = line.trim();
+          if (!body) return { out: '', err: '', code: 0 };
+          let redir: string | null = null;
+          let append = false;
+          const rm = body.match(/^(.*?)(>>|>)\s*(\S+)\s*$/);
+          if (rm) {
+            body = rm[1]!.trim();
+            append = rm[2] === '>>';
+            redir = rm[3]!;
+          }
+          const parts = (body.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []).map((p) => {
+            if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
+              return p.slice(1, -1);
+            }
+            return p;
+          });
+          const c0 = parts[0] || 'true';
+          const a0 = parts.slice(1);
+          if (c0 === 'true') return { out: '', err: '', code: 0 };
+          if (c0 === 'false') return { out: '', err: '', code: 1 };
+          if (c0 === 'echo') {
+            const o = a0.join(' ') + '\n';
+            if (redir) {
+              const rp = redir.startsWith('/') ? redir : norm(cwd + '/' + redir);
+              const prev = append ? (readText(0, rp) ?? '') : '';
+              writeText(0, rp, prev + o);
+              return { out: '', err: '', code: 0 };
+            }
+            return { out: o, err: '', code: 0 };
+          }
+          if (c0 === 'cat') {
+            const t = readText(0, a0[0] ?? '');
+            return t == null
+              ? { out: '', err: 'cat: missing\n', code: 1 }
+              : { out: t, err: '', code: 0 };
+          }
+          if (c0 === 'pwd') return { out: cwd + '\n', err: '', code: 0 };
+          if (c0 === 'node') {
+            const scriptPath = (a0[0] ?? '').startsWith('/') ? a0[0]! : norm(cwd + '/' + (a0[0] ?? ''));
+            const result = runNode(scriptPath, cwd, pid, env);
+            return { out: result.out, err: result.err, code: result.code };
+          }
+          const bin = norm(cwd + '/node_modules/.bin/' + c0);
+          if (resolveRaw(bin).node) {
+            const result = runNode(bin, cwd, pid, env);
+            return { out: result.out, err: result.err, code: result.code };
+          }
+          return { out: '', err: `command not found: ${c0}\n`, code: 127 };
+        };
+        const chunks: { text: string; op: string }[] = [];
+        let buf = '';
+        let op = 'start';
+        for (let i = 0; i < script.length; i++) {
+          if (script.slice(i, i + 2) === '&&' || script.slice(i, i + 2) === '||') {
+            chunks.push({ text: buf, op });
+            op = script.slice(i, i + 2);
+            buf = '';
+            i++;
+          } else if (script[i] === ';') {
+            chunks.push({ text: buf, op });
+            op = ';';
+            buf = '';
+          } else buf += script[i];
+        }
+        chunks.push({ text: buf, op });
+        let out = '';
+        let err = '';
+        let code = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          const ch = chunks[i]!;
+          if (i > 0) {
+            if (ch.op === '&&' && code !== 0) continue;
+            if (ch.op === '||' && code === 0) continue;
+          }
+          const stages = ch.text.split('|');
+          let last = { out: '', err: '', code: 0 };
+          for (let s = 0; s < stages.length; s++) {
+            if (s === 0) last = runLine(stages[s]!);
+            else {
+              const tmp = '/tmp/.bn_pipe_' + s;
+              writeText(0, tmp, last.out);
+              const line = stages[s]!.trim();
+              last = line === 'cat' || line.startsWith('cat ') ? runLine('cat ' + tmp) : runLine(line);
+            }
+          }
+          out += last.out;
+          err += last.err;
+          code = last.code;
+        }
+        procs.set(pid, { out, err, code, running: false });
+        return pid;
+      }
+      const bin = norm(cwd + '/node_modules/.bin/' + cmd);
+      if (resolveRaw(bin).node) {
+        const result = runNode(bin, cwd, pid, env);
+        procs.set(pid, {
+          out: result.out,
+          err: result.err,
+          code: result.code,
+          running: result.running,
+        });
+        return pid;
+      }
       procs.set(pid, { out: '', err: `command not found: ${cmd}\n`, code: 127, running: false });
       return pid;
     },
