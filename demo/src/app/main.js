@@ -489,17 +489,7 @@ async function boot() {
   );
   bn.attachServiceWorkerBridge(previewPath);
   await loadTailwindBrowser();
-  await bn.mount({
-    home: {
-      directory: {
-        project: {
-          directory: {
-            'index.js': { file: { contents: editor.value } },
-          },
-        },
-      },
-    },
-  });
+  await bn.fs.mkdir('/home/project', { recursive: true });
   bn.on('http-log', (e) => {
     const log = $('net-log');
     if (log) {
@@ -542,6 +532,7 @@ async function boot() {
   appendTerm('Drop a ZIP or a project folder — it replaces /home/project and opens preview.\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
   hideSplash();
+  autoStartWorkspace().catch((e) => appendTerm(String(e) + '\n'));
   const termInput = $('term-input');
   if (termInput) {
     termInput.addEventListener('keydown', (e) => {
@@ -553,6 +544,49 @@ async function boot() {
       runShellLine(line).catch((err) => appendTerm(String(err) + '\n'));
     });
   }
+}
+
+const IGNORE_WORKSPACE = new Set(['hello.txt', 'hello.copy.txt', '.next-preview', 'dist', '.ds_store']);
+
+async function listWorkspaceNames(root) {
+  try {
+    return (await bn.fs.readdir(root)).filter((n) => n && n !== '.' && n !== '..');
+  } catch {
+    return [];
+  }
+}
+
+async function isDefaultWorkspace() {
+  const names = await listWorkspaceNames('/home/project');
+  const real = names.filter((n) => !IGNORE_WORKSPACE.has(n.toLowerCase()) && !n.startsWith('.bn-'));
+  if (real.length === 0) return true;
+  const onlyStarter = real.every((n) => n === 'index.js' || n === 'server.js');
+  if (!onlyStarter) return false;
+  try {
+    const idx = await bn.fs.readFile('/home/project/index.js', 'utf8');
+    if (idx && !idx.includes('NodeBrowser VFS OK')) return false;
+  } catch {
+    /* no index.js */
+  }
+  return true;
+}
+
+async function autoStartWorkspace() {
+  if (!bn) return;
+  const root = await bn.resolveProjectRoot('/home/project');
+  setCwd(root);
+  expandProjectTree(root);
+  selectedPath = root;
+  if (await isDefaultWorkspace()) {
+    appendTerm('auto-run HTTP demo …\n');
+    toast('HTTP demo', 'ok');
+    await httpDemo();
+    return;
+  }
+  await openBestProjectFile(root);
+  appendTerm('auto-run workspace …\n');
+  toast('Starting project', 'info');
+  await runCurrentProject();
 }
 
 async function runShellLine(line) {
@@ -758,6 +792,7 @@ const OPEN_CANDIDATES = [
   '/src/main.tsx',
   '/src/main.jsx',
   '/index.html',
+  '/server.js',
   '/package.json',
 ];
 
