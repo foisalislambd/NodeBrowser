@@ -6,6 +6,7 @@
 
 import type { NodeBrowser } from '../host/node-browser.js';
 import { bundleWithEsbuild } from './esbuild.js';
+import { copyPublicInto, stripTailwindImport, TW_BROWSER_VFS } from './preview-assets.js';
 
 const HMR_CLIENT = `(() => {
   let g = '';
@@ -88,8 +89,13 @@ export async function viteBuild(bn: NodeBrowser, cwd: string, opts?: { outDir?: 
     jsx: 'automatic',
   });
 
-  const css = (await readUtf8(bn, join(cwd, 'src/index.css'))) || (await readUtf8(bn, join(cwd, 'src/App.css'))) || '';
-  if (css) await bn.fs.writeFile(join(outDir, 'index.css'), css);
+  const cssParts: string[] = [];
+  for (const rel of ['src/index.css', 'src/App.css', 'src/app.css', 'index.css']) {
+    const chunk = await readUtf8(bn, join(cwd, rel));
+    if (chunk) cssParts.push(chunk);
+  }
+  const css = cssParts.join('\n');
+  await copyPublicInto(bn, cwd, outDir);
 
   let outHtml = html.replace(/<script[^>]+src=["'][^"']+["'][^>]*><\/script>/i, '<script src="./bundle.js"></script>');
   if (!outHtml.includes('bundle.js')) {
@@ -98,11 +104,26 @@ export async function viteBuild(bn: NodeBrowser, cwd: string, opts?: { outDir?: 
       outHtml += '<script src="./bundle.js"></script>';
     }
   }
-  if (css && !outHtml.includes('index.css')) {
-    if (outHtml.includes('</head>')) {
-      outHtml = outHtml.replace('</head>', '<link rel="stylesheet" href="./index.css"/></head>');
-    } else {
-      outHtml = '<link rel="stylesheet" href="./index.css"/>' + outHtml;
+  outHtml = outHtml.replace(/\b(href|src)=["']\/(?!\/)([^"']*)["']/gi, (_, attr, rest) => `${attr}="./${rest}"`);
+  const twSrc = await readUtf8(bn, TW_BROWSER_VFS);
+  if (twSrc) {
+    await bn.fs.writeFile(join(outDir, '__tw_browser.js'), twSrc);
+    if (!outHtml.includes('__tw_browser.js')) {
+      const twTag = css
+        ? `<style type="text/tailwindcss">${css.replace(/<\/style/gi, '<\\/style')}</style><script src="./__tw_browser.js"></script>`
+        : `<script src="./__tw_browser.js"></script>`;
+      if (outHtml.includes('</head>')) outHtml = outHtml.replace('</head>', twTag + '</head>');
+      else outHtml = twTag + outHtml;
+    }
+  }
+  if (css) {
+    await bn.fs.writeFile(join(outDir, 'index.css'), stripTailwindImport(css));
+    if (!outHtml.includes('index.css')) {
+      if (outHtml.includes('</head>')) {
+        outHtml = outHtml.replace('</head>', '<link rel="stylesheet" href="./index.css"/></head>');
+      } else {
+        outHtml = '<link rel="stylesheet" href="./index.css"/>' + outHtml;
+      }
     }
   }
   const hmrTag = `<script>${HMR_CLIENT}</script>`;

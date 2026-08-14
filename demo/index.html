@@ -37,6 +37,7 @@
                 <button type="button" class="menu-cmd" data-cmd="save">Save<span>Ctrl+S</span></button>
                 <div class="menu-sep"></div>
                 <button type="button" class="menu-cmd" data-cmd="zip">Upload ZIP…</button>
+                <button type="button" class="menu-cmd" data-cmd="folder">Open Folder…</button>
                 <button type="button" class="menu-cmd" data-cmd="export">Export Snapshot</button>
                 <button type="button" class="menu-cmd danger" data-cmd="clear">Clear Workspace</button>
               </div>
@@ -195,13 +196,14 @@
           <div class="sidebar-view" id="view-extensions" hidden>
             <div class="sidebar-title"><span>TEMPLATES</span></div>
             <div class="run-panel">
-              <p class="run-hint">Mount create-vite / Next / Express into the VFS.</p>
+              <p class="run-hint">Replaces /home/project with a template, then preview.</p>
               <button type="button" class="btn block" id="btn-vite-load">Load Vite</button>
               <button type="button" class="btn primary block" id="btn-vite-preview">Vite Preview</button>
               <button type="button" class="btn block" id="btn-next-load">Load Next</button>
               <button type="button" class="btn primary block" id="btn-next-preview">Next Preview</button>
               <button type="button" class="btn block" id="btn-express-load">Load Express</button>
               <button type="button" class="btn block" id="btn-zip-upload">Upload ZIP…</button>
+              <button type="button" class="btn block" id="btn-folder-open">Open Folder…</button>
             </div>
           </div>
 
@@ -308,7 +310,7 @@
             <div class="sb-empty" id="preview-empty">
               <div class="sb-empty-icon" aria-hidden="true"></div>
               <p>Simple Browser</p>
-              <span>Drop a ZIP (Vite or Next — including <code>src/app</code>), or run HTTP / Vite from the toolbar. Preview opens here.</span>
+              <span>Drop a ZIP or folder — it replaces the workspace and opens here. Tailwind/Vite/Next subset preview.</span>
             </div>
           </div>
         </aside>
@@ -331,6 +333,7 @@
     </div>
 
     <input type="file" id="zip-file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" hidden />
+    <input type="file" id="folder-pick" webkitdirectory directory multiple hidden />
 
     <nav class="mobile-nav" aria-label="Panels">
       <button type="button" class="mobile-nav-btn" data-pane="files">Explorer</button>

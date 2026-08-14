@@ -13,7 +13,8 @@
     "@tailwindcss/vite": "^4.3.3",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "@tailwindcss/browser": "^4.1.11"
   },
   "devDependencies": {
     "vite": "^6.3.5",

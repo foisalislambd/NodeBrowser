@@ -6,6 +6,7 @@
 
 import type { NodeBrowser } from '../host/node-browser.js';
 import { bundleWithEsbuild } from './esbuild.js';
+import { copyPublicInto, writePreviewHtml } from './preview-assets.js';
 
 function join(...parts: string[]): string {
   return parts
@@ -52,34 +53,12 @@ async function findPagesIndex(bn: NodeBrowser, cwd: string): Promise<string | nu
 
 export type NextResult = { url?: string; port?: number; outDir: string; appDir?: string };
 
-function pageToHtml(title: string, extraRoutes: string): string {
-  return `<!doctype html>
-<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${title}</title>
-<link rel="stylesheet" href="./index.css"/>
-</head>
-<body>
-<div id="root"></div>
-<nav style="font:14px system-ui,sans-serif;padding:8px 16px;border-bottom:1px solid #ddd;background:#fafafa">
-  <a href="./">Home</a>${extraRoutes}
-</nav>
-<script src="./bundle.js"></script>
-</body></html>`;
-}
-
 const LAYOUT_FILES = ['layout.tsx', 'layout.jsx', 'layout.ts', 'layout.js'];
 
 function wrapperSource(entryPage: string, layoutFile?: string | null): string {
-  if (layoutFile) {
-    return (
-      `import Page from ${JSON.stringify(entryPage)};\n` +
-      `import Layout from ${JSON.stringify(layoutFile)};\n` +
-      `import { createRoot } from 'react-dom/client';\n` +
-      `const el = document.getElementById('root') || document.body;\n` +
-      `createRoot(el).render(<Layout><Page /></Layout>);\n`
-    );
-  }
+  const layoutImport = layoutFile ? `import ${JSON.stringify(layoutFile)};\n` : '';
   return (
+    layoutImport +
     `import Page from ${JSON.stringify(entryPage)};\n` +
     `import { createRoot } from 'react-dom/client';\n` +
     `const el = document.getElementById('root') || document.body;\n` +
@@ -144,19 +123,19 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
       (await readUtf8(bn, join(appDir, 'page.module.css'))) ||
       (await readUtf8(bn, join(appDir, 'global.css'))) ||
       '';
-    await bn.fs.writeFile(join(outDir, 'index.css'), css);
+    await copyPublicInto(bn, cwd, outDir);
+    await writePreviewHtml(bn, outDir, join(outDir, 'index.html'), {
+      title: 'Next preview',
+      css,
+    });
 
     const extras = pages.filter((p) => p.route);
-    const extraNav = extras.map((p) => ` · <a href="./${p.route}/">/${p.route}</a>`).join('');
-    await bn.fs.writeFile(join(outDir, 'index.html'), pageToHtml('Next subset — NodeBrowser', extraNav));
-
     for (const extra of extras) {
       const helloWrap = join(cwd, `.bn-next-${extra.route.replace(/\//g, '-')}.jsx`);
-      const extraLayout =
-        (await firstExisting(bn, join(appDir, extra.route), LAYOUT_FILES)) || layout;
-      await bn.fs.writeFile(helloWrap, wrapperSource(extra.file, extraLayout));
+      await bn.fs.writeFile(helloWrap, wrapperSource(extra.file, layout));
       const destDir = join(outDir, extra.route);
       await bn.fs.mkdir(destDir, { recursive: true });
+      await copyPublicInto(bn, cwd, destDir);
       await bundleWithEsbuild(bn.fs, {
         entry: helloWrap,
         outfile: join(destDir, 'bundle.js'),
@@ -164,11 +143,11 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
         jsx: 'automatic',
       });
       const up = extra.route.split('/').map(() => '..').join('/');
-      await bn.fs.writeFile(
-        join(destDir, 'index.html'),
-        pageToHtml(`${extra.route} — Next subset`, ` · <a href="${up}/">Home</a>`),
-      );
-      await bn.fs.writeFile(join(destDir, 'index.css'), css);
+      await writePreviewHtml(bn, outDir, join(destDir, 'index.html'), {
+        title: extra.route,
+        css,
+        twHref: `${up}/__tw_browser.js`,
+      });
     }
 
     const apiRoot = join(appDir, 'api');
@@ -196,8 +175,8 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
       format: 'iife',
       jsx: 'automatic',
     });
-    await bn.fs.writeFile(join(outDir, 'index.css'), '');
-    await bn.fs.writeFile(join(outDir, 'index.html'), pageToHtml('Next pages — NodeBrowser', ''));
+    await copyPublicInto(bn, cwd, outDir);
+    await writePreviewHtml(bn, outDir, join(outDir, 'index.html'), { title: 'Next preview', css: '' });
     return { outDir };
   }
 

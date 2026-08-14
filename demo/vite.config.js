@@ -76,6 +76,12 @@ function copyKernelAssets(outDir) {
   if (!esbuildSrc) throw new Error('esbuild-wasm not found — run npm install at repo root');
   copyDir(esbuildSrc, join(outDir, 'node_modules', 'esbuild-wasm'));
 
+  const twBrowser = resolveTwBrowser();
+  if (twBrowser) {
+    mkdirSync(join(outDir, 'vendor'), { recursive: true });
+    cpSync(twBrowser, join(outDir, 'vendor', 'tailwind-browser.js'));
+  }
+
   const templatesRoot = join(demoRoot, 'templates');
   const outTemplates = join(outDir, 'templates');
   mkdirSync(outTemplates, { recursive: true });
@@ -94,8 +100,19 @@ function copyKernelAssets(outDir) {
   );
 }
 
+function resolveTwBrowser() {
+  return [
+    join(repoRoot, 'node_modules', '@tailwindcss', 'browser', 'dist', 'index.global.js'),
+    join(demoRoot, 'node_modules', '@tailwindcss', 'browser', 'dist', 'index.global.js'),
+  ].find((p) => existsSync(p));
+}
+
 function resolveDevFile(urlPath) {
   const path = urlPath.split('?')[0];
+  if (path === '/vendor/tailwind-browser.js' || path.endsWith('/vendor/tailwind-browser.js')) {
+    const file = resolveTwBrowser();
+    if (file) return { kind: 'file', file };
+  }
   const mappings = [
     ['/packages/api/wasm/', join(repoRoot, 'packages', 'api', 'wasm')],
     ['/packages/api/dist/', join(repoRoot, 'packages', 'api', 'dist')],

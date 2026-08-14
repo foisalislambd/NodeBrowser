@@ -416,6 +416,7 @@ async function boot() {
       `${bn.sabStdio ? ' sab-stdio=true' : ''}\n`,
   );
   bn.attachServiceWorkerBridge(previewPath);
+  await loadTailwindBrowser();
   await bn.mount({
     home: {
       directory: {
@@ -466,7 +467,7 @@ async function boot() {
   const sp = $('set-persist');
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
-  appendTerm('Upload a project ZIP (Vite, Next app/ or src/app, static HTML) — drop it anywhere to unpack and preview.\n');
+  appendTerm('Drop a ZIP or a project folder — it replaces /home/project and opens preview.\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
   hideSplash();
   const termInput = $('term-input');
@@ -604,6 +605,19 @@ async function bundleDemo() {
   }
 }
 
+async function loadTailwindBrowser() {
+  if (!bn) return;
+  try {
+    const res = await fetch(publicHref('vendor/tailwind-browser.js'), { cache: 'force-cache' });
+    if (!res.ok) return;
+    const text = await res.text();
+    await bn.fs.mkdir('/usr/share/nodebrowser', { recursive: true });
+    await bn.fs.writeFile('/usr/share/nodebrowser/tailwind-browser.js', text);
+  } catch {
+    /* preview still works; utilities may be missing */
+  }
+}
+
 async function loadApps() {
   return import('./apps.js');
 }
@@ -612,19 +626,11 @@ async function viteLoad() {
   if (!bn) return;
   const { loadVite } = await loadApps();
   clearTerm('term');
-  const { files } = await loadVite(bn, appendTerm);
-  try {
-    editor.value = await bn.fs.readFile('/apps/vite/src/App.jsx', 'utf8');
-    setEditorPath('/apps/vite/src/App.jsx');
-    setDirty(false);
-  } catch {
-    editor.value = files.slice(0, 12).join('\n');
-  }
-  expanded.add('/apps');
-  expanded.add('/apps/vite');
-  expanded.add('/apps/vite/src');
-  selectedPath = '/apps/vite';
-  setCwd('/apps/vite');
+  await loadVite(bn, appendTerm);
+  await openBestProjectFile('/home/project');
+  expandProjectTree('/home/project');
+  selectedPath = '/home/project';
+  setCwd('/home/project');
   await refreshTree();
 }
 
@@ -641,19 +647,11 @@ async function nextLoad() {
   if (!bn) return;
   const { loadNext } = await loadApps();
   clearTerm('term');
-  const { files } = await loadNext(bn, appendTerm);
-  try {
-    editor.value = await bn.fs.readFile('/apps/next/app/page.js', 'utf8');
-    setEditorPath('/apps/next/app/page.js');
-    setDirty(false);
-  } catch {
-    editor.value = files.slice(0, 12).join('\n');
-  }
-  expanded.add('/apps');
-  expanded.add('/apps/next');
-  expanded.add('/apps/next/app');
-  selectedPath = '/apps/next';
-  setCwd('/apps/next');
+  await loadNext(bn, appendTerm);
+  await openBestProjectFile('/home/project');
+  expandProjectTree('/home/project');
+  selectedPath = '/home/project';
+  setCwd('/home/project');
   await refreshTree();
 }
 
@@ -721,18 +719,28 @@ function expandProjectTree(root) {
   expanded.add(root + '/pages');
 }
 
-async function ingestArchiveBytes(bytes, label) {
-  if (!bn) return;
-  const dest = `/home/uploads/${sanitizeStem(label)}`;
-  appendTerm(`unpack ${label} → ${dest} …\n`);
-  $('status').textContent = 'unpacking…';
-  toast('Unpacking ' + label, 'info');
-  const { files } = await bn.importZip(bytes, dest);
+const SKIP_UPLOAD = new Set(['node_modules', '.git', 'dist', '.next', '.turbo', 'coverage', '.ds_store', '__macosx']);
+
+async function flattenIntoHomeProject(dest = '/home/project') {
   const root = await bn.resolveProjectRoot(dest);
-  appendTerm(`unpacked ${files} files → ${root}\n`);
-  setCwd(root);
+  if (root === '/home/project') return '/home/project';
+  await bn.fs.mkdir('/tmp', { recursive: true });
+  try {
+    await bn.fs.rm('/tmp/incoming-project', { recursive: true });
+  } catch {
+    /* */
+  }
+  await bn.fs.rename(root, '/tmp/incoming-project');
+  await bn.fs.rm('/home/project', { recursive: true });
+  await bn.fs.rename('/tmp/incoming-project', '/home/project');
+  return '/home/project';
+}
+
+async function activateWorkspaceAndPreview(label) {
+  const root = await flattenIntoHomeProject('/home/project');
   expandProjectTree(root);
   selectedPath = root;
+  setCwd(root);
   await openBestProjectFile(root);
   await refreshTree();
   appendTerm('starting in-tab preview …\n');
@@ -760,18 +768,92 @@ async function ingestArchiveBytes(bytes, label) {
   }
 }
 
+async function ingestArchiveBytes(bytes, label) {
+  if (!bn) return;
+  appendTerm(`replace workspace with ${label} …\n`);
+  $('status').textContent = 'unpacking…';
+  toast('Loading project…', 'info');
+  await bn.clearWorkspace();
+  const { files } = await bn.importZip(bytes, '/home/project');
+  appendTerm(`unpacked ${files} files → /home/project\n`);
+  await activateWorkspaceAndPreview(label);
+}
+
 async function ingestArchiveFile(file) {
   const ab = new Uint8Array(await file.arrayBuffer());
   await ingestArchiveBytes(ab, file.name);
+}
+
+function shouldSkipUploadPath(rel) {
+  return rel.split('/').some((p) => SKIP_UPLOAD.has(p.toLowerCase()));
+}
+
+function stripSharedRoot(paths) {
+  if (paths.length === 0) return paths;
+  const first = paths[0].split('/');
+  if (first.length < 2) return paths;
+  const top = first[0];
+  if (paths.every((p) => p === top || p.startsWith(top + '/'))) {
+    return paths.map((p) => (p === top ? '' : p.slice(top.length + 1)));
+  }
+  return paths;
+}
+
+async function ingestLooseFiles(entries) {
+  if (!bn) return;
+  const usable = entries.filter((e) => e.path && !shouldSkipUploadPath(e.path));
+  if (!usable.length) throw new Error('folder is empty');
+  const stripped = stripSharedRoot(usable.map((e) => e.path));
+  appendTerm(`replace workspace with folder (${usable.length} files) …\n`);
+  $('status').textContent = 'copying…';
+  toast('Loading folder…', 'info');
+  await bn.clearWorkspace();
+  for (let i = 0; i < usable.length; i++) {
+    const rel = stripped[i] || usable[i].path.split('/').slice(1).join('/');
+    if (!rel) continue;
+    const dest = `/home/project/${rel}`.replace(/\/+/g, '/');
+    const dir = dest.slice(0, dest.lastIndexOf('/'));
+    if (dir && dir !== '/') await bn.fs.mkdir(dir, { recursive: true });
+    const buf = new Uint8Array(await usable[i].file.arrayBuffer());
+    await bn.fs.writeFile(dest, buf);
+  }
+  await activateWorkspaceAndPreview('folder');
 }
 
 function openZipPicker() {
   $('zip-file')?.click();
 }
 
+function openFolderPicker() {
+  $('folder-pick')?.click();
+}
+
+async function walkDirectoryEntry(entry, prefix, out) {
+  if (SKIP_UPLOAD.has(entry.name.toLowerCase())) return;
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    out.push({ path: prefix ? `${prefix}/${entry.name}` : entry.name, file });
+    return;
+  }
+  if (!entry.isDirectory) return;
+  const reader = entry.createReader();
+  const kids = [];
+  for (;;) {
+    const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+    if (!batch.length) break;
+    kids.push(...batch);
+  }
+  const next = prefix ? `${prefix}/${entry.name}` : entry.name;
+  for (const child of kids) await walkDirectoryEntry(child, next, out);
+}
+
 async function runCurrentProject() {
   if (!bn) return;
-  const cwd = projectCwd || '/home/project';
+  const guess =
+    selectedPath && !/\.[a-z0-9]+$/i.test(selectedPath.split('/').pop() || '')
+      ? selectedPath
+      : projectCwd || '/home/project';
+  const cwd = await bn.resolveProjectRoot(guess);
   appendTerm(`previewProject ${cwd} …\n`);
   $('status').textContent = 'preview…';
   try {
@@ -928,6 +1010,7 @@ const PALETTE = [
   ['Next Preview', '', () => nextPreview()],
   ['Preview Project', '', () => runCurrentProject()],
   ['Upload ZIP…', '', () => openZipPicker()],
+  ['Open Folder…', '', () => openFolderPicker()],
   ['Export Snapshot', '', () => $('btn-fs-export')?.click()],
   ['New File', 'Ctrl+N', () => newFile()],
   ['Toggle Terminal', 'Ctrl+J', () => togglePanel()],
@@ -1013,6 +1096,7 @@ function runCmd(cmd) {
     newdir: () => newDir(),
     save: () => saveFile(),
     zip: () => openZipPicker(),
+    folder: () => openFolderPicker(),
     export: () => $('btn-fs-export')?.click(),
     clear: () => $('btn-fs-clear')?.click(),
     palette: () => openPalette(),
@@ -1125,13 +1209,24 @@ document.addEventListener('keydown', (e) => {
   }
 });
 $('btn-zip-upload')?.addEventListener('click', () => openZipPicker());
+$('btn-folder-open')?.addEventListener('click', () => openFolderPicker());
 $('btn-fs-import')?.addEventListener('click', () => openZipPicker());
 $('btn-zip-run')?.addEventListener('click', () => runCurrentProject().catch((e) => appendTerm(String(e) + '\n')));
 $('zip-file')?.addEventListener('change', (e) => {
-  const file = e.target.files && e.target.files[0];
+  const files = [...(e.target.files || [])];
   e.target.value = '';
-  if (!file) return;
-  ingestArchiveFile(file).catch((err) => appendTerm(String(err) + '\n'));
+  if (!files.length) return;
+  ingestArchiveFile(files[0]).catch((err) => appendTerm(String(err) + '\n'));
+});
+$('folder-pick')?.addEventListener('change', (e) => {
+  const files = [...(e.target.files || [])];
+  e.target.value = '';
+  if (!files.length) return;
+  const entries = files.map((file) => ({
+    path: file.webkitRelativePath || file.name,
+    file,
+  }));
+  ingestLooseFiles(entries).catch((err) => appendTerm(String(err) + '\n'));
 });
 
 {
@@ -1150,9 +1245,29 @@ $('zip-file')?.addEventListener('change', (e) => {
   wb?.addEventListener('drop', (e) => {
     e.preventDefault();
     wb.classList.remove('drop-target');
-    const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!file) return;
-    ingestArchiveFile(file).catch((err) => appendTerm(String(err) + '\n'));
+    const items = [...(e.dataTransfer.items || [])];
+    const entries = [];
+    const walk = (async () => {
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) await walkDirectoryEntry(entry, '', entries);
+      }
+      if (entries.length > 1 || (entries[0] && entries[0].file?.webkitRelativePath)) {
+        await ingestLooseFiles(entries);
+        return;
+      }
+      if (entries.length === 1 && /\.(zip|tgz|tar\.gz)$/i.test(entries[0].path)) {
+        await ingestArchiveFile(entries[0].file);
+        return;
+      }
+      if (entries.length === 1) {
+        await ingestLooseFiles(entries);
+        return;
+      }
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) await ingestArchiveFile(file);
+    })();
+    walk.catch((err) => appendTerm(String(err) + '\n'));
   });
 }
 

@@ -1,18 +1,12 @@
 /**
  * Mount real create-vite / create-next-app templates from /templates/*
- * into the NodeBrowser VFS, and drive host-style Dev/Build messaging.
- *
- * Full Vite/Next CLIs run on the host via:
- *   npm run dev:vite | build:vite
- *   npm run dev:next | build:next | start:next
+ * into /home/project (replaces the current workspace).
  */
 
 import { publicHref } from './paths.js';
 
-export const VITE_ROOT = '/apps/vite';
-export const NEXT_ROOT = '/apps/next';
+export const PROJECT_ROOT = '/home/project';
 
-/** Resolve demo assets from the vite-basepath deploy root (GitHub Pages /NodeBrowser/, Vite dev `/`). */
 function assetUrl(rel) {
   return publicHref(rel);
 }
@@ -29,7 +23,6 @@ async function listTemplateFiles(name) {
   return JSON.parse(raw);
 }
 
-/** Copy template sources (no node_modules) into VFS under mountRoot. */
 export async function mountTemplate(bn, name, mountRoot) {
   const files = await listTemplateFiles(name);
   for (const rel of files) {
@@ -42,42 +35,54 @@ export async function mountTemplate(bn, name, mountRoot) {
   return files;
 }
 
-export async function loadVite(bn, append) {
-  append('mounting demo/templates/vite (create-vite React) → /apps/vite …\n');
-  const files = await mountTemplate(bn, 'vite', VITE_ROOT);
+async function replaceWithTemplate(bn, name, append, note) {
+  append(`replacing /home/project with ${name} template …\n`);
+  await bn.clearWorkspace();
+  const files = await mountTemplate(bn, name, PROJECT_ROOT);
   append(`mounted ${files.length} files\n`);
-  append('In-tab: Vite preview uses esbuild-wasm + kernel VFS (not host npm run dev:vite).\n');
-  return { root: VITE_ROOT, files };
+  append(note);
+  return { root: PROJECT_ROOT, files };
+}
+
+export async function loadVite(bn, append) {
+  return replaceWithTemplate(
+    bn,
+    'vite',
+    append,
+    'In-tab Vite preview uses esbuild-wasm + kernel VFS (not host npm run dev:vite).\n',
+  );
 }
 
 export async function loadExpress(bn, append) {
-  append('mounting demo/templates/express → /apps/express …\n');
-  const files = await mountTemplate(bn, 'express', '/apps/express');
-  append(`mounted ${files.length} files — spawn: node /apps/express/server.js\n`);
-  return { root: '/apps/express', files };
+  return replaceWithTemplate(
+    bn,
+    'express',
+    append,
+    'spawn: node /home/project/server.js\n',
+  );
 }
 
 export async function loadNext(bn, append) {
-  append('mounting demo/templates/next (create-next-app) → /apps/next …\n');
-  const files = await mountTemplate(bn, 'next', NEXT_ROOT);
-  append(`mounted ${files.length} files\n`);
-  append('In-tab: Next preview is App Router subset (esbuild-wasm), not full next CLI.\n');
-  return { root: NEXT_ROOT, files };
+  return replaceWithTemplate(
+    bn,
+    'next',
+    append,
+    'In-tab Next preview is App Router subset (esbuild-wasm), not full next CLI.\n',
+  );
 }
 
-/** In-tab Vite: bundle + HMR reload + static preview. */
 export async function viteStaticPreview(bn, append) {
   await loadVite(bn, append);
-  append('viteDev /apps/vite …\n');
-  const { url, port, outfile } = await bn.viteDev(VITE_ROOT, { port: 5173 });
+  append('viteDev /home/project …\n');
+  const { url, port, outfile } = await bn.viteDev(PROJECT_ROOT, { port: 5173 });
   append(`in-tab Vite → ${url} (${outfile})\n`);
   return { url, port };
 }
 
 export async function nextStaticPreview(bn, append) {
   await loadNext(bn, append);
-  append('nextDev /apps/next …\n');
-  const { url, port } = await bn.nextDev(NEXT_ROOT, { port: 3000 });
+  append('nextDev /home/project …\n');
+  const { url, port } = await bn.nextDev(PROJECT_ROOT, { port: 3000 });
   append(`in-tab Next subset → ${url}\n`);
   return { url, port };
 }

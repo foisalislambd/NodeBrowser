@@ -16,7 +16,7 @@ export type BundleOptions = {
 
 type FsLike = {
   readFile: (path: string, encoding?: 'utf8' | 'buffer') => Promise<string | Uint8Array>;
-  writeFile: (path: string, data: string) => Promise<void>;
+  writeFile: (path: string, data: string | Uint8Array) => Promise<void>;
   mkdir: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
 };
 
@@ -111,6 +111,9 @@ export async function bundleWithEsbuild(
               } catch {
                 text = '';
               }
+              text = text
+                .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["']\s*;?/g, '')
+                .replace(/@import\s+["']tailwindcss["']\s*;?/g, '');
               if (args.path.includes('.module.')) {
                 return {
                   contents: 'export default new Proxy({}, { get: function(_, k) { return k; } });',
@@ -123,11 +126,8 @@ export async function bundleWithEsbuild(
                 ';document.head.appendChild(s);export default {};';
               return { contents: js, loader: 'js' };
             }
-            if (/\.(svg|png|jpe?g|gif|webp)$/i.test(args.path)) {
-              return {
-                contents: 'export default ' + JSON.stringify(args.path) + ';',
-                loader: 'js',
-              };
+            if (/\.(svg|png|jpe?g|gif|webp|ico)$/i.test(args.path)) {
+              return { contents: 'export default ' + JSON.stringify(await assetDataUrl(fs, args.path)), loader: 'js' };
             }
             const candidates = [
               args.path,
@@ -171,6 +171,41 @@ export async function bundleWithEsbuild(
   await fs.mkdir(dirname(outfile), { recursive: true });
   await fs.writeFile(outfile, code);
   return { outfile, code };
+}
+
+const EMPTY_GIF =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+async function assetDataUrl(fs: FsLike, path: string): Promise<string> {
+  try {
+    if (/\.svg$/i.test(path)) {
+      const text = String(await fs.readFile(path, 'utf8'));
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+    }
+    const raw = await fs.readFile(path, 'buffer');
+    const bytes = raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw));
+    const mime = /\.png$/i.test(path)
+      ? 'image/png'
+      : /\.jpe?g$/i.test(path)
+        ? 'image/jpeg'
+        : /\.webp$/i.test(path)
+          ? 'image/webp'
+          : /\.gif$/i.test(path)
+            ? 'image/gif'
+            : 'application/octet-stream';
+    return `data:${mime};base64,${uint8ToB64(bytes)}`;
+  } catch {
+    return EMPTY_GIF;
+  }
+}
+
+function uint8ToB64(bytes: Uint8Array): string {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
 }
 
 function isShimSpec(req: string): boolean {
@@ -229,7 +264,7 @@ function shimFor(spec: string): string {
     return REACT_DOM_SHIM;
   }
   if (spec === 'next/image') {
-    return 'export default function Image(p){ p=p||{}; return { type:"img", props:{ src:p.src, alt:p.alt||"", width:p.width, height:p.height, className:p.className } }; }';
+    return 'export default function Image(p){ p=p||{}; var src=p.src||""; if(typeof src==="string" && src.charAt(0)==="/" && src.charAt(1)!=="/") src="."+src; return { type:"img", props:{ src:src, alt:p.alt||"", width:p.width, height:p.height, className:p.className } }; }';
   }
   if (spec === 'next/link') {
     return 'export default function Link(p){ p=p||{}; return { type:"a", props:{ href:p.href||"#", children:p.children, className:p.className } }; }';
@@ -309,6 +344,7 @@ function toDom(node) {
     if (k === 'children' || k === 'key') return;
     if (k === 'className') el.setAttribute('class', p[k]);
     else if (k.slice(0, 2) === 'on' && typeof p[k] === 'function') el.addEventListener(k.slice(2).toLowerCase(), p[k]);
+    else if ((k === 'src' || k === 'href') && typeof p[k] === 'string' && p[k].charAt(0) === '/' && p[k].charAt(1) !== '/') el.setAttribute(k, '.' + p[k]);
     else if (p[k] != null && p[k] !== false) el.setAttribute(k, String(p[k]));
   });
   flatten(p.children).forEach(function(ch) { el.appendChild(toDom(ch)); });
