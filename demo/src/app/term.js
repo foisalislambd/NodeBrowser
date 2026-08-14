@@ -71,6 +71,7 @@ export async function mountXterm(el) {
       convertEol: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       fontSize: 13,
+      lineHeight: 1.2,
       theme: { background: '#1e1e1e', foreground: '#cccccc', cursor: '#89d185' },
       scrollback: 4000,
     });

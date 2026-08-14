@@ -577,7 +577,11 @@ export class NodeBrowser {
       const filePath = (root + (rel.startsWith('/') ? rel : '/' + rel)).replace(/\/+/g, '/');
       try {
         const body = await this.fs.readFile(filePath, 'utf8');
-        res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
+        res.writeHead(200, {
+          'Content-Type': contentTypeFor(filePath),
+          'Cross-Origin-Resource-Policy': 'same-origin',
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+        });
         res.end(body);
       } catch {
         // SPA fallback → index.html

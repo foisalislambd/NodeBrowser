@@ -96,6 +96,7 @@ let bn = null;
 let httpProc = null;
 let openPath = '/home/project/index.js';
 let projectCwd = '/home/project';
+let lastPreview = { port: null, url: '' };
 let selectedPath = '/home/project';
 let dirty = false;
 const expanded = new Set(['/', '/home', '/home/project']);
@@ -207,53 +208,124 @@ function setPreviewVisible(show) {
   });
 }
 
+function previewAssetPath(src) {
+  if (!src || /^(https?:|data:|blob:|javascript:|#)/i.test(src)) return null;
+  const u = String(src).split('#')[0].split('?')[0];
+  if (u.startsWith('/')) return u;
+  return '/' + u.replace(/^\.\//, '');
+}
+
+async function fetchPreviewPath(port, path) {
+  return bn.handleHttp({
+    id: 'pv-' + Math.random().toString(36).slice(2),
+    port,
+    method: 'GET',
+    path,
+  });
+}
+
+async function replaceAsync(input, re, fn) {
+  const matches = [...input.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'))];
+  if (!matches.length) return input;
+  let out = '';
+  let last = 0;
+  for (const m of matches) {
+    out += input.slice(last, m.index);
+    out += await fn(m);
+    last = m.index + m[0].length;
+  }
+  return out + input.slice(last);
+}
+
+/** iframe src=__bn_preview is often blank under COEP; srcdoc + inlined assets always paints. */
+async function htmlForSimpleBrowser(port, html) {
+  const cache = new Map();
+  const load = async (path) => {
+    const p = path.startsWith('/') ? path : '/' + path;
+    if (cache.has(p)) return cache.get(p);
+    const r = await fetchPreviewPath(port, p);
+    cache.set(p, r);
+    return r;
+  };
+
+  html = await replaceAsync(html, /<script\b([^>]*)>([\s\S]*?)<\/script>/gi, async (m) => {
+    const attrs = m[1] || '';
+    const srcM = attrs.match(/\bsrc=["']([^"']+)["']/i);
+    if (!srcM) return m[0];
+    const path = previewAssetPath(srcM[1]);
+    if (!path) return m[0];
+    const r = await load(path);
+    if (r.status >= 400 || r.body == null) return m[0];
+    const rest = attrs.replace(/\s*src=["'][^"']+["']/i, '').replace(/\s*type=["']module["']/i, '');
+    return `<script${rest}>\n${r.body}\n</script>`;
+  });
+
+  html = await replaceAsync(html, /<link\b[^>]*>/gi, async (m) => {
+    const tag = m[0];
+    if (!/rel=["']?stylesheet["']?/i.test(tag) && !/\.css/i.test(tag)) return tag;
+    const hrefM = tag.match(/\bhref=["']([^"']+)["']/i);
+    if (!hrefM) return tag;
+    const path = previewAssetPath(hrefM[1]);
+    if (!path) return tag;
+    const r = await load(path);
+    if (r.status >= 400) return tag;
+    return `<style>\n${r.body || ''}\n</style>`;
+  });
+
+  html = await replaceAsync(html, /\bsrc=["']([^"']+)["']/gi, async (m) => {
+    const path = previewAssetPath(m[1]);
+    if (!path || /\.(js|mjs)(\?|$)/i.test(path)) return m[0];
+    const r = await load(path);
+    if (r.status >= 400 || r.body == null) return m[0];
+    const mime = (r.headers && (r.headers['Content-Type'] || r.headers['content-type'])) || '';
+    if (String(mime).includes('svg') || /\.svg$/i.test(path)) {
+      return `src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.body)}"`;
+    }
+    return m[0];
+  });
+
+  return html;
+}
+
 function setPreviewChrome(url) {
   const hidden = $('preview-url');
   if (hidden) hidden.textContent = url || '';
   const input = $('preview-url-input');
   if (input && url) input.value = url;
   const empty = $('preview-empty');
-  if (empty) empty.classList.toggle('hidden', !!url || !!$('preview').srcdoc);
+  if (empty) empty.classList.toggle('hidden', !!(url || lastPreview.port != null));
   setPreviewVisible(true);
 }
 
 async function showPreview(port, url, opts = {}) {
+  lastPreview = { port: port ?? lastPreview.port, url: url || lastPreview.url };
   setPreviewChrome(url || (port != null ? `port ${port}` : ''));
-  if (opts.preferUrl && url) {
-    $('preview').removeAttribute('srcdoc');
-    $('preview').src = url;
-    appendTerm(`[preview] iframe → ${url}\n`);
-    if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
-    return;
-  }
+  const iframe = $('preview');
+  const empty = $('preview-empty');
+
   if (bn && port != null) {
     try {
-      const res = await bn.handleHttp({
-        id: 'preview-' + Math.random().toString(36).slice(2),
-        port,
-        method: 'GET',
-        path: '/',
-      });
-      if (res.status >= 200 && res.status < 400 && res.body) {
-        const type = (res.headers && res.headers['Content-Type']) || 'text/html';
-        if (String(type).includes('html') || res.body.trimStart().startsWith('<')) {
-          $('preview').removeAttribute('src');
-          $('preview').srcdoc = res.body;
-          const empty = $('preview-empty');
-          if (empty) empty.classList.add('hidden');
-          appendTerm(`[preview] rendered port ${port} via HttpBridge (${res.status})\n`);
-          if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
-          return;
-        }
+      const page = await fetchPreviewPath(port, '/');
+      if (page.status >= 200 && page.status < 400 && page.body) {
+        const html = await htmlForSimpleBrowser(port, page.body);
+        iframe.removeAttribute('src');
+        iframe.srcdoc = html;
+        if (empty) empty.classList.add('hidden');
+        appendTerm(`[preview] Simple Browser ← port ${port} (inlined)\n`);
+        if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
+        return;
       }
-      appendTerm(`[preview] handleHttp ${res.status}: ${String(res.body).slice(0, 120)}\n`);
+      appendTerm(`[preview] handleHttp ${page.status}: ${String(page.body).slice(0, 120)}\n`);
     } catch (e) {
-      appendTerm(`[preview] handleHttp failed: ${e}\n`);
+      appendTerm(`[preview] Simple Browser inline failed: ${e}\n`);
     }
   }
+
   if (url) {
-    $('preview').removeAttribute('srcdoc');
-    $('preview').src = url;
+    iframe.removeAttribute('srcdoc');
+    iframe.src = url;
+    if (empty) empty.classList.add('hidden');
+    appendTerm(`[preview] iframe → ${url}\n`);
     if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
   }
 }
@@ -1309,6 +1381,10 @@ $('activity-settings')?.addEventListener('click', () => setSidebarView('settings
 $('btn-preview-close')?.addEventListener('click', () => setPreviewVisible(false));
 
 $('btn-preview-reload')?.addEventListener('click', () => {
+  if (lastPreview.port != null) {
+    showPreview(lastPreview.port, lastPreview.url).catch((e) => appendTerm(String(e) + '\n'));
+    return;
+  }
   const iframe = $('preview');
   const input = $('preview-url-input');
   if (iframe.srcdoc) {

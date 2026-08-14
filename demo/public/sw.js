@@ -81,7 +81,11 @@ self.addEventListener('fetch', (event) => {
           resolve(
             new Response(data.body ?? '', {
               status: data.status || 200,
-              headers: data.headers || { 'Content-Type': 'text/html; charset=utf-8' },
+              headers: {
+                ...(data.headers || { 'Content-Type': 'text/html; charset=utf-8' }),
+                'Cross-Origin-Resource-Policy': 'same-origin',
+                'Cross-Origin-Embedder-Policy': 'require-corp',
+              },
             }),
           );
         };

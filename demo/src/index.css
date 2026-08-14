@@ -48,6 +48,30 @@
 @layer base {
   * {
     box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: #424242 #1e1e1e;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar:horizontal {
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: #1e1e1e;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #424242;
+    border: 2px solid #1e1e1e;
+    border-radius: 6px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #4e4e4e;
+  }
+  *::-webkit-scrollbar-corner {
+    background: #1e1e1e;
   }
 
   html,
@@ -255,7 +279,7 @@
     @apply min-w-0 flex-1;
   }
   .file-tree {
-    @apply flex-1 overflow-auto py-0.5 pb-2 text-[13px];
+    @apply flex-1 overflow-x-hidden overflow-y-auto py-0.5 pb-2 text-[13px];
   }
   .tree-item {
     @apply flex w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-1.5 py-0.5 text-left font-[inherit] text-wb-fg;
@@ -440,7 +464,7 @@
 
   .panel {
     height: var(--panel-h);
-    @apply flex max-h-[60%] min-h-[110px] shrink-0 flex-col border-t border-wb-border bg-wb-panel;
+    @apply flex max-h-[60%] min-h-[110px] shrink-0 flex-col overflow-hidden border-t border-wb-border bg-wb-panel;
   }
   .panel-tabs {
     @apply flex min-h-[35px] items-center bg-wb px-1.5;
@@ -462,16 +486,27 @@
     animation: ping 2s ease-out infinite;
   }
   .term-wrap {
-    @apply flex min-h-0 flex-1 flex-col;
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden;
   }
-  .xterm-host {
-    @apply m-0 min-h-0 flex-1 overflow-hidden bg-wb px-2 py-0.5;
+  .xterm-host,
+  .term.xterm-host {
+    @apply m-0 min-h-0 flex-1 overflow-hidden bg-wb px-1.5 py-0.5 whitespace-normal;
   }
   .xterm-host .xterm {
-    @apply h-full;
+    @apply h-full w-full overflow-hidden;
   }
-  .term {
-    @apply m-0 flex-1 overflow-auto bg-wb px-3.5 py-2 font-mono text-[13px] leading-snug break-words whitespace-pre-wrap text-[#ccc];
+  .xterm .xterm-viewport {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    scrollbar-width: thin;
+    scrollbar-color: #424242 #1e1e1e;
+  }
+  .xterm .xterm-screen,
+  .xterm .xterm-helpers {
+    overflow: hidden !important;
+  }
+  .term:not(.xterm-host) {
+    @apply m-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-wb px-3.5 py-2 font-mono text-[13px] leading-snug break-words whitespace-pre-wrap text-[#ccc];
   }
   .term-input-row {
     @apply flex items-center gap-1.5 border-t border-wb-border-soft bg-[#181818] px-3 py-1;
@@ -504,7 +539,7 @@
     @apply border-wb-focus;
   }
   .sb-viewport {
-    @apply relative min-h-0 flex-1 bg-white;
+    @apply relative min-h-0 flex-1 overflow-hidden bg-white;
   }
   #preview {
     @apply block h-full w-full border-0 bg-white;
