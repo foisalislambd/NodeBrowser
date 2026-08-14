@@ -11,8 +11,8 @@ Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)
 On every push to `main`:
 
 1. Emscripten **C++ → WASM** (`scripts/ci-build-cpp-wasm.sh`)
-2. `BASE_PATH=/NodeBrowser/ npm run build:demo` — copies API, WASM, and `esbuild-wasm` into `demo/dist`
-3. Deploys `demo/dist` via GitHub Pages
+2. `npm run build:demo` — Vite + [`vite-basepath`](https://www.npmjs.com/package/vite-basepath) (`base: './'`), plus API, WASM, and `esbuild-wasm` in `demo/dist`
+3. Deploys `demo/dist` via GitHub Pages (works at `/NodeBrowser/` without a `BASE_PATH` env)
 
 ## One-time repo setting
 
@@ -22,8 +22,8 @@ GitHub → **Settings** → **Pages** → **Source:** GitHub Actions
 
 ```bash
 npm run build:api
-BASE_PATH=/ npm run build:demo
-npm run dev
+npm run build:demo
+npm run preview
 ```
 
-For a Pages-like base path locally you would need a reverse-proxy prefix; normally use `BASE_PATH=/`.
+`vite-basepath` emits relative asset URLs, so the same `demo/dist` works at `/` and at `https://<user>.github.io/NodeBrowser/`. Local `npm run dev` uses Vite at `http://localhost:5173`.

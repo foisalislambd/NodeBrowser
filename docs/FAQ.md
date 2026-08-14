@@ -2,7 +2,7 @@
 
 ## Does NodeBrowser run on a remote server?
 
-No. The runtime executes in the browser tab (C++/WASM + QuickJS). The optional demo `npm run dev` process only serves static files with COOP/COEP headers.
+No. The runtime executes in the browser tab (C++/WASM + QuickJS). `npm run dev` is a Vite server with COOP/COEP headers (needed for SharedArrayBuffer). GitHub Pages uses the same Vite build with [`vite-basepath`](https://www.npmjs.com/package/vite-basepath) so assets work under `/NodeBrowser/`.
 
 ## Where do npm packages install?
 

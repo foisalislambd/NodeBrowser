@@ -4,12 +4,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>NodeBrowser</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "esbuild-wasm": "./node_modules/esbuild-wasm/esm/browser.js"
+        }
+      }
+    </script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23007acc' width='16' height='16' rx='2'/%3E%3Cpath fill='%23fff' d='M4 3h3l5 5-5 5H4l5-5z'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css" />
-    <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
   </head>
   <body>
-    <div class="workbench" id="workbench" data-pane="editor" data-sidebar="explorer">
+    <div id="boot-splash" class="boot-splash fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-wb text-wb-fg" role="status" aria-live="polite">
+      <div class="boot-mark" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="48" height="48"><rect fill="#007acc" width="16" height="16" rx="2"/><path fill="#fff" d="M4 3h3l5 5-5 5H4l5-5z"/></svg>
+      </div>
+      <p class="boot-title m-0 text-base font-semibold">NodeBrowser</p>
+      <p class="boot-sub m-0 text-wb-muted">Starting WASM kernel…</p>
+      <div class="boot-bar" aria-hidden="true"><span></span></div>
+    </div>
+    <div class="workbench flex h-dvh w-full flex-col bg-wb text-[13px] text-wb-fg" id="workbench" data-pane="editor" data-sidebar="explorer">
       <header class="titlebar" role="banner">
         <div class="titlebar-left">
           <span class="app-icon" title="NodeBrowser" aria-hidden="true">
@@ -74,7 +87,8 @@
         <div class="titlebar-center">
           <button type="button" class="command-center" id="btn-command-center" title="Command Palette (Ctrl+K)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M15.7 13.3l-3.81-3.83A5.93 5.93 0 0 0 13 6c0-3.31-2.69-6-6-6S1 2.69 1 6s2.69 6 6 6c1.3 0 2.48-.41 3.47-1.11l3.83 3.81c.10.0.2.3.7.3.26 0 .52-.09.7-.3a.996.996 0 0 0 0-1.41v.01zM7 10.7c-2.59 0-4.7-2.11-4.7-4.7 0-2.59 2.11-4.7 4.7-4.7 2.59 0 4.7 2.11 4.7 4.7 0 2.59-2.11 4.7-4.7 4.7z"/></svg>
-            <span class="window-title">NodeBrowser — /home/project</span>
+            <span class="window-title">NodeBrowser</span>
+            <kbd class="cc-hint">Ctrl+K</kbd>
           </button>
         </div>
         <div class="titlebar-right">
@@ -149,6 +163,11 @@
             <div id="file-tree" class="file-tree" role="tree" aria-label="VFS file tree"></div>
             <div class="cwd-bar">
               <span class="cwd-label">OPEN EDITORS</span>
+              <button type="button" class="open-editor" id="open-editor-btn" title="/home/project/index.js">
+                <span class="tab-icon js" id="open-editor-icon">JS</span>
+                <span id="open-editor-label">index.js</span>
+              </button>
+              <span class="cwd-label">WORKING DIRECTORY</span>
               <code id="cwd-path">/home/project</code>
             </div>
           </div>
@@ -289,7 +308,7 @@
             <div class="sb-empty" id="preview-empty">
               <div class="sb-empty-icon" aria-hidden="true"></div>
               <p>Simple Browser</p>
-              <span>Run HTTP demo, Vite preview, or drop a .zip to open a local preview.</span>
+              <span>Run HTTP demo, Vite preview, or drop a .zip — the preview opens here, like VS Code’s Simple Browser.</span>
             </div>
           </div>
         </aside>
@@ -323,20 +342,27 @@
     <dialog id="palette" class="palette">
       <div class="palette-head">
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M15.7 13.3l-3.81-3.83A5.93 5.93 0 0 0 13 6c0-3.31-2.69-6-6-6S1 2.69 1 6s2.69 6 6 6c1.3 0 2.48-.41 3.47-1.11l3.83 3.81c.10.0.2.3.7.3.26 0 .52-.09.7-.3a.996.996 0 0 0 0-1.41zM7 10.7c-2.59 0-4.7-2.11-4.7-4.7 0-2.59 2.11-4.7 4.7-4.7 2.59 0 4.7 2.11 4.7 4.7 0 2.59-2.11 4.7-4.7 4.7z"/></svg>
-        <input id="palette-input" placeholder="Type a command to run…" />
+        <input id="palette-input" placeholder="Type a command to run…" autocomplete="off" />
       </div>
       <div id="palette-list"></div>
     </dialog>
 
-    <script type="importmap">
-      {
-        "imports": {
-          "esbuild-wasm": "./node_modules/esbuild-wasm/esm/browser.js",
-          "@xterm/xterm": "./node_modules/@xterm/xterm/lib/xterm.js",
-          "@xterm/addon-fit": "./node_modules/@xterm/addon-fit/lib/addon-fit.js"
-        }
-      }
-    </script>
-    <script type="module" src="./main.js"></script>
+    <dialog id="quick-input" class="quick-input">
+      <div class="quick-input-title" id="quick-input-title">Input</div>
+      <input id="quick-input-field" autocomplete="off" spellcheck="false" />
+      <div class="quick-input-hint" id="quick-input-hint"></div>
+    </dialog>
+
+    <dialog id="quick-confirm" class="quick-input">
+      <div class="quick-input-title" id="quick-confirm-msg">Confirm</div>
+      <div class="quick-confirm-actions">
+        <button type="button" class="btn ghost" id="quick-confirm-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="quick-confirm-ok">OK</button>
+      </div>
+    </dialog>
+
+    <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+    <script type="module" src="/src/app/main.js"></script>
   </body>
 </html>

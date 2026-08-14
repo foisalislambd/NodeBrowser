@@ -7,30 +7,32 @@
  *   npm run dev:next | build:next | start:next
  */
 
+import type { NodeBrowser } from '@foisal/nodebrowser';
 import { publicHref } from './paths.js';
 
 export const VITE_ROOT = '/apps/vite';
 export const NEXT_ROOT = '/apps/next';
 
-/** Resolve demo assets from the vite-basepath deploy root (GitHub Pages /NodeBrowser/, Vite dev `/`). */
-function assetUrl(rel) {
+type Append = (text: string) => void;
+
+function assetUrl(rel: string): string {
   return publicHref(rel);
 }
 
-async function fetchText(rel) {
+async function fetchText(rel: string): Promise<string> {
   const url = assetUrl(rel);
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`fetch ${url} → ${res.status}`);
   return res.text();
 }
 
-async function listTemplateFiles(name) {
+async function listTemplateFiles(name: string): Promise<string[]> {
   const raw = await fetchText(`templates/${name}.files.json`);
-  return JSON.parse(raw);
+  return JSON.parse(raw) as string[];
 }
 
 /** Copy template sources (no node_modules) into VFS under mountRoot. */
-export async function mountTemplate(bn, name, mountRoot) {
+export async function mountTemplate(bn: NodeBrowser, name: string, mountRoot: string): Promise<string[]> {
   const files = await listTemplateFiles(name);
   for (const rel of files) {
     const text = await fetchText(`templates/${name}/${rel}`);
@@ -42,7 +44,7 @@ export async function mountTemplate(bn, name, mountRoot) {
   return files;
 }
 
-export async function loadVite(bn, append) {
+export async function loadVite(bn: NodeBrowser, append: Append): Promise<{ root: string; files: string[] }> {
   append('mounting demo/templates/vite (create-vite React) → /apps/vite …\n');
   const files = await mountTemplate(bn, 'vite', VITE_ROOT);
   append(`mounted ${files.length} files\n`);
@@ -50,14 +52,14 @@ export async function loadVite(bn, append) {
   return { root: VITE_ROOT, files };
 }
 
-export async function loadExpress(bn, append) {
+export async function loadExpress(bn: NodeBrowser, append: Append): Promise<{ root: string; files: string[] }> {
   append('mounting demo/templates/express → /apps/express …\n');
   const files = await mountTemplate(bn, 'express', '/apps/express');
   append(`mounted ${files.length} files — spawn: node /apps/express/server.js\n`);
   return { root: '/apps/express', files };
 }
 
-export async function loadNext(bn, append) {
+export async function loadNext(bn: NodeBrowser, append: Append): Promise<{ root: string; files: string[] }> {
   append('mounting demo/templates/next (create-next-app) → /apps/next …\n');
   const files = await mountTemplate(bn, 'next', NEXT_ROOT);
   append(`mounted ${files.length} files\n`);
@@ -66,7 +68,10 @@ export async function loadNext(bn, append) {
 }
 
 /** In-tab Vite: bundle + HMR reload + static preview. */
-export async function viteStaticPreview(bn, append) {
+export async function viteStaticPreview(
+  bn: NodeBrowser,
+  append: Append,
+): Promise<{ url: string; port: number }> {
   await loadVite(bn, append);
   append('viteDev /apps/vite …\n');
   const { url, port, outfile } = await bn.viteDev(VITE_ROOT, { port: 5173 });
@@ -74,7 +79,10 @@ export async function viteStaticPreview(bn, append) {
   return { url, port };
 }
 
-export async function nextStaticPreview(bn, append) {
+export async function nextStaticPreview(
+  bn: NodeBrowser,
+  append: Append,
+): Promise<{ url: string; port: number }> {
   await loadNext(bn, append);
   append('nextDev /apps/next …\n');
   const { url, port } = await bn.nextDev(NEXT_ROOT, { port: 3000 });

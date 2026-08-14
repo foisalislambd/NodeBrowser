@@ -1,5 +1,9 @@
 import { mountXterm, getTerm, fitAllTerms } from './term.js';
 import { fileIconEl, langFromPath, tabBadge } from './icons.js';
+import { publicBase, publicHref, publicPath } from './paths.js';
+import { hideSplash } from './ui.js';
+import '@xterm/xterm/css/xterm.css';
+import '../index.css';
 
 const DEFAULT = `const fs = require('fs');
 const crypto = require('crypto');
@@ -81,17 +85,8 @@ function joinPath(dir, name) {
 }
 
 async function loadApi() {
-  // Resolve from this module URL so GitHub Pages `/NodeBrowser/` works without relying on <base>
-  const url = new URL('packages/api/dist/index.js', import.meta.url).href;
-  try {
-    return await import(url);
-  } catch (e) {
-    try {
-      return await import(new URL('packages/api/dist/index.js', document.baseURI).href);
-    } catch {
-      throw e;
-    }
-  }
+  const url = publicHref('packages/api/dist/index.js');
+  return import(/* @vite-ignore */ url);
 }
 
 const editor = $('editor');
@@ -401,14 +396,16 @@ async function deleteSelected() {
 async function boot() {
   $('status').textContent = 'booting…';
   const { NodeBrowser } = await loadApi();
-  const previewPath = new URL('__bn_preview', import.meta.url).pathname.replace(/\/$/, '');
-  const previewBase = new URL('__bn_preview', import.meta.url).href.replace(/\/$/, '');
+  const previewPath = publicPath('__bn_preview').replace(/\/$/, '');
+  const previewBase = publicHref('__bn_preview').replace(/\/$/, '');
+  const wasmUrl = publicHref('packages/api/wasm/browsernode_kernel.js');
   // Primary path: C++ kernel via WASM (JS only if WASM fails to load)
   try {
-    bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true });
+    bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true, wasmUrl });
   } catch (e) {
     appendTerm(String(e) + '\nWASM kernel required — npm run build:wasm\n');
     $('status').textContent = 'wasm missing';
+    hideSplash();
     throw e;
   }
   await mountXterm($('term'));
@@ -471,6 +468,7 @@ async function boot() {
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
   appendTerm('Upload ZIP / drop a .zip to unpack and preview (Vite, Next, or static HTML).\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
+  hideSplash();
   const termInput = $('term-input');
   if (termInput) {
     termInput.addEventListener('keydown', (e) => {
@@ -1232,7 +1230,10 @@ bindSash('sash-panel', {
 async function registerSw() {
   if (!('serviceWorker' in navigator)) return;
   try {
-    const reg = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register(publicPath('sw.js'), {
+      updateViaCache: 'none',
+      scope: publicBase(),
+    });
     await reg.update().catch(() => {});
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
@@ -1261,4 +1262,5 @@ registerSw()
   .catch((e) => {
     $('status').textContent = 'boot failed';
     appendTerm(String(e) + '\n');
+    hideSplash();
   });
