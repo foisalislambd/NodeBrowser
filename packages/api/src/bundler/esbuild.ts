@@ -73,22 +73,22 @@ export async function bundleWithEsbuild(
       {
         name: 'browsernode-vfs',
         setup(build) {
-          build.onResolve({ filter: /.*/ }, (args) => {
+          build.onResolve({ filter: /.*/ }, async (args) => {
             if (args.kind === 'entry-point') {
               return { path: args.path, namespace: 'bnvfs' };
             }
             const req = args.path;
-            if (
-              req === 'react' ||
-              req === 'react-dom' ||
-              req === 'react-dom/client' ||
-              req === 'react/jsx-runtime' ||
-              req === 'react/jsx-dev-runtime' ||
-              req === 'next/image' ||
-              req === 'next/link' ||
-              req === 'next/navigation'
-            ) {
+            if (isShimSpec(req)) {
               return { path: req, namespace: 'bnshim' };
+            }
+            if (req.startsWith('@/')) {
+              const rest = req.slice(2);
+              const root = dirname(entry);
+              const hit = await firstReadable(fs, [
+                join(join(root, 'src'), rest),
+                join(root, rest),
+              ]);
+              return { path: hit || join(join(root, 'src'), rest), namespace: 'bnvfs' };
             }
             if (req.startsWith('./') || req.startsWith('../') || req.startsWith('/')) {
               const base = args.resolveDir || dirname(args.importer || entry);
@@ -137,6 +137,8 @@ export async function bundleWithEsbuild(
               args.path + '.jsx',
               join(args.path, 'index.js'),
               join(args.path, 'index.ts'),
+              join(args.path, 'index.tsx'),
+              join(args.path, 'index.jsx'),
             ];
             let text: string | null = null;
             let pathUsed = args.path;
@@ -171,6 +173,50 @@ export async function bundleWithEsbuild(
   return { outfile, code };
 }
 
+function isShimSpec(req: string): boolean {
+  return (
+    req === 'react' ||
+    req === 'react-dom' ||
+    req === 'react-dom/client' ||
+    req === 'react/jsx-runtime' ||
+    req === 'react/jsx-dev-runtime' ||
+    req === 'next/image' ||
+    req === 'next/link' ||
+    req === 'next/navigation' ||
+    req === 'next/headers' ||
+    req === 'next/cache' ||
+    req === 'next/head' ||
+    req === 'next/font' ||
+    req.startsWith('next/font/') ||
+    req.startsWith('geist/font')
+  );
+}
+
+async function firstReadable(fs: FsLike, bases: string[]): Promise<string | null> {
+  const extras = (p: string) => [
+    p,
+    p + '.tsx',
+    p + '.ts',
+    p + '.jsx',
+    p + '.js',
+    join(p, 'index.tsx'),
+    join(p, 'index.ts'),
+    join(p, 'index.jsx'),
+    join(p, 'index.js'),
+  ];
+  for (const base of bases) {
+    for (const c of extras(base)) {
+      try {
+        await fs.readFile(c, 'utf8');
+        return base;
+      } catch {
+        /* try next */
+      }
+    }
+  }
+  return null;
+}
+
 function shimFor(spec: string): string {
   if (spec === 'react/jsx-runtime' || spec === 'react/jsx-dev-runtime') {
     return [
@@ -189,7 +235,26 @@ function shimFor(spec: string): string {
     return 'export default function Link(p){ p=p||{}; return { type:"a", props:{ href:p.href||"#", children:p.children, className:p.className } }; }';
   }
   if (spec === 'next/navigation') {
-    return 'export function useRouter(){ return { push:function(){}, replace:function(){}, pathname:"/" }; } export function usePathname(){ return "/"; }';
+    return 'export function useRouter(){ return { push:function(){}, replace:function(){}, pathname:"/" }; } export function usePathname(){ return "/"; } export function useSearchParams(){ return new URLSearchParams(); }';
+  }
+  if (spec === 'next/headers') {
+    return 'export function headers(){ return new Headers(); } export function cookies(){ return { get:function(){}, getAll:function(){ return []; }, set:function(){} }; }';
+  }
+  if (spec === 'next/cache') {
+    return 'export function revalidatePath(){} export function revalidateTag(){} export function unstable_cache(fn){ return fn; }';
+  }
+  if (spec === 'next/head') {
+    return 'export default function Head(p){ return (p && p.children) || null; }';
+  }
+  if (spec === 'next/font' || spec.startsWith('next/font/') || spec.startsWith('geist/font')) {
+    return [
+      'function font(opts){ opts=opts||{}; var v=opts.variable||"--bn-font"; return { className: opts.className||"bn-font", variable: v, style: {} }; }',
+      'export const Geist = font; export const Geist_Mono = font; export const Inter = font; export const Roboto = font;',
+      'export const Poppins = font; export const Outfit = font; export const Open_Sans = font; export const Montserrat = font;',
+      'export const Lato = font; export const Rubik = font; export const Nunito = font; export const Ubuntu = font;',
+      'export function localFont(opts){ return font(opts); }',
+      'export default new Proxy(function(){ return font({}); }, { get: function(_, k){ if(k==="then") return undefined; return font; } });',
+    ].join('\n');
   }
   return REACT_SHIM;
 }

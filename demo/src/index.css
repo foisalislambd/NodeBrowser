@@ -611,8 +611,11 @@
   .toast {
     @apply rounded-sm border border-wb-border bg-wb-sidebar px-3 py-2 text-xs text-wb-fg shadow-lg;
   }
-  .toast.out {
-    @apply opacity-0;
+  .toast.toast-ok {
+    @apply border-emerald-700/80;
+  }
+  .toast.toast-err {
+    @apply border-red-700/80;
   }
 }
 

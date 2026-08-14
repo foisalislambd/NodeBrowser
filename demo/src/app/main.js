@@ -1,7 +1,7 @@
 import { mountXterm, getTerm, fitAllTerms } from './term.js';
 import { fileIconEl, langFromPath, tabBadge } from './icons.js';
 import { publicBase, publicHref, publicPath } from './paths.js';
-import { hideSplash } from './ui.js';
+import { hideSplash, toast } from './ui.js';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
 
@@ -466,7 +466,7 @@ async function boot() {
   const sp = $('set-persist');
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
   appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
-  appendTerm('Upload ZIP / drop a .zip to unpack and preview (Vite, Next, or static HTML).\n');
+  appendTerm('Upload a project ZIP (Vite, Next app/ or src/app, static HTML) — drop it anywhere to unpack and preview.\n');
   appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
   hideSplash();
   const termInput = $('term-input');
@@ -672,38 +672,91 @@ function sanitizeStem(name) {
   return stem.slice(0, 64);
 }
 
+const OPEN_CANDIDATES = [
+  '/src/app/page.tsx',
+  '/src/app/page.jsx',
+  '/src/app/page.ts',
+  '/src/app/page.js',
+  '/app/page.tsx',
+  '/app/page.jsx',
+  '/app/page.ts',
+  '/app/page.js',
+  '/src/pages/index.tsx',
+  '/src/pages/index.jsx',
+  '/pages/index.tsx',
+  '/pages/index.js',
+  '/src/main.tsx',
+  '/src/main.jsx',
+  '/index.html',
+  '/package.json',
+];
+
+async function openBestProjectFile(root) {
+  if (!bn) return;
+  for (const rel of OPEN_CANDIDATES) {
+    const p = root + rel;
+    try {
+      const text = await bn.fs.readFile(p, 'utf8');
+      editor.value = text;
+      setEditorPath(p);
+      setDirty(false);
+      return p;
+    } catch {
+      /* next */
+    }
+  }
+  return null;
+}
+
+function expandProjectTree(root) {
+  const parts = root.split('/').filter(Boolean);
+  let acc = '';
+  for (const part of parts) {
+    acc += '/' + part;
+    expanded.add(acc);
+  }
+  expanded.add(root + '/src');
+  expanded.add(root + '/src/app');
+  expanded.add(root + '/app');
+  expanded.add(root + '/pages');
+}
+
 async function ingestArchiveBytes(bytes, label) {
   if (!bn) return;
   const dest = `/home/uploads/${sanitizeStem(label)}`;
   appendTerm(`unpack ${label} → ${dest} …\n`);
+  $('status').textContent = 'unpacking…';
+  toast('Unpacking ' + label, 'info');
   const { files } = await bn.importZip(bytes, dest);
-  appendTerm(`unpacked ${files} files\n`);
-  setCwd(dest);
-  expanded.add('/home');
-  expanded.add('/home/uploads');
-  expanded.add(dest);
-  selectedPath = dest;
-  try {
-    const pkg = await bn.fs.readFile(dest + '/package.json', 'utf8');
-    editor.value = pkg;
-    setEditorPath(dest + '/package.json');
-    setDirty(false);
-  } catch {
-    try {
-      const html = await bn.fs.readFile(dest + '/index.html', 'utf8');
-      editor.value = html;
-      setEditorPath(dest + '/index.html');
-      setDirty(false);
-    } catch {
-      /* tree only */
-    }
-  }
+  const root = await bn.resolveProjectRoot(dest);
+  appendTerm(`unpacked ${files} files → ${root}\n`);
+  setCwd(root);
+  expandProjectTree(root);
+  selectedPath = root;
+  await openBestProjectFile(root);
   await refreshTree();
   appendTerm('starting in-tab preview …\n');
-  const result = await bn.previewProject(dest);
-  appendTerm(`[${result.kind}] ${result.message}${result.url ? ' → ' + result.url : ''}\n`);
-  if (result.port != null && result.url) {
-    await showPreview(result.port, result.url, { preferUrl: true });
+  $('status').textContent = 'preview…';
+  try {
+    const result = await bn.previewProject(root);
+    setCwd(result.root || root);
+    expandProjectTree(result.root || root);
+    appendTerm(`[${result.kind}] ${result.message}${result.url ? ' → ' + result.url : ''}\n`);
+    if (result.port != null && result.url) {
+      await showPreview(result.port, result.url, { preferUrl: true });
+      toast(`${result.kind} preview ready`, 'ok');
+      $('status').textContent = result.kind + ' preview';
+    } else {
+      toast(result.message, result.kind === 'unknown' ? 'info' : 'ok');
+      $('status').textContent = result.kind;
+    }
+    await refreshTree();
+  } catch (err) {
+    const msg = String(err?.message || err);
+    appendTerm('preview failed: ' + msg + '\n');
+    toast(msg, 'err');
+    $('status').textContent = 'preview failed';
+    throw err;
   }
 }
 
@@ -720,10 +773,22 @@ async function runCurrentProject() {
   if (!bn) return;
   const cwd = projectCwd || '/home/project';
   appendTerm(`previewProject ${cwd} …\n`);
-  const result = await bn.previewProject(cwd);
-  appendTerm(`[${result.kind}] ${result.message}${result.url ? ' → ' + result.url : ''}\n`);
-  if (result.port != null && result.url) {
-    await showPreview(result.port, result.url, { preferUrl: true });
+  $('status').textContent = 'preview…';
+  try {
+    const result = await bn.previewProject(cwd);
+    setCwd(result.root || cwd);
+    appendTerm(`[${result.kind}] ${result.message}${result.url ? ' → ' + result.url : ''}\n`);
+    if (result.port != null && result.url) {
+      await showPreview(result.port, result.url, { preferUrl: true });
+      toast(`${result.kind} preview ready`, 'ok');
+    }
+    $('status').textContent = result.kind + (result.url ? ' preview' : '');
+  } catch (err) {
+    const msg = String(err?.message || err);
+    appendTerm('preview failed: ' + msg + '\n');
+    toast(msg, 'err');
+    $('status').textContent = 'preview failed';
+    throw err;
   }
 }
 

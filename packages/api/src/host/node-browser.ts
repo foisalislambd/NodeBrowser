@@ -17,7 +17,7 @@ import {
 } from '../fs/opfs.js';
 import { zlibPureSync } from '../compress/zlib.js';
 import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
-import { previewProject, type PreviewResult } from '../bundler/preview.js';
+import { previewProject, resolveProjectRoot, type PreviewResult } from '../bundler/preview.js';
 import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './json-rpc.js';
 import { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
 
@@ -307,6 +307,11 @@ export class NodeBrowser {
   /** Detect Vite/Next/static/node at cwd and start in-tab preview when possible. */
   previewProject(cwd: string): Promise<PreviewResult> {
     return previewProject(this, cwd);
+  }
+
+  /** Prefer a nested folder that actually contains package.json / app / src/app. */
+  resolveProjectRoot(cwd: string): Promise<string> {
+    return resolveProjectRoot(this, cwd);
   }
 
   /** Clear `/home` workspace (VFS + OPFS when persist). */
@@ -833,7 +838,7 @@ export type { AgentRpcRequest, AgentRpcResponse } from './json-rpc.js';
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
 export type { BundleOptions } from '../bundler/esbuild.js';
 export type { PreviewResult, ProjectKind } from '../bundler/preview.js';
-export { detectProjectKind } from '../bundler/preview.js';
+export { detectProjectKind, resolveProjectRoot } from '../bundler/preview.js';
 export { extractArchive, isZip, isGzip } from '../fs/zip.js';
 export { HttpBridge } from '../net/http-bridge.js';
 export { resetKernelCache, type UseWasmOption } from '../kernel/load.js';

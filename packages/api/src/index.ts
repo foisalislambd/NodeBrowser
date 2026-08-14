@@ -12,6 +12,7 @@ export {
   SabStdioRing,
   assertAllowedFetchUrl,
   detectProjectKind,
+  resolveProjectRoot,
   extractArchive,
   isZip,
   isGzip,

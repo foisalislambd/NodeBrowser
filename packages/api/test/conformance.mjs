@@ -389,6 +389,36 @@ async function main() {
   const hjs = await bn.fs.readFile(nb2.outDir + '/hello/bundle.js', 'utf8');
   assert(hjs.length > 20, 'hello route bundle');
 
+  await bn.fs.mkdir('/nsrc/src/app', { recursive: true });
+  await bn.fs.writeFile(
+    '/nsrc/package.json',
+    JSON.stringify({ dependencies: { next: '15.0.0', react: '19.0.0' } }),
+  );
+  await bn.fs.writeFile(
+    '/nsrc/next.config.ts',
+    'import type { NextConfig } from "next";\nconst nextConfig: NextConfig = {};\nexport default nextConfig;\n',
+  );
+  await bn.fs.writeFile(
+    '/nsrc/src/app/layout.tsx',
+    'import { Geist } from "next/font/google";\nconst geist = Geist({ subsets: ["latin"] });\nexport default function RootLayout({ children }: { children: any }) { return <html className={geist.className}><body>{children}</body></html>; }\n',
+  );
+  await bn.fs.writeFile(
+    '/nsrc/src/app/page.tsx',
+    'export default function Page(){ return <h1>src-app-ok</h1>; }\n',
+  );
+  const nsrc = await bn.nextBuild('/nsrc');
+  const nsrcJs = await bn.fs.readFile(nsrc.outDir + '/bundle.js', 'utf8');
+  assert(nsrcJs.includes('src-app-ok') || nsrcJs.length > 50, 'src/app tsx bundle');
+  const { detectProjectKind, resolveProjectRoot } = await import('../dist/bundler/preview.js');
+  assert((await detectProjectKind(bn, '/nsrc')) === 'next', 'src next detect');
+  await bn.fs.mkdir('/nested/my-app/src/app', { recursive: true });
+  await bn.fs.writeFile('/nested/my-app/package.json', JSON.stringify({ dependencies: { next: '15.0.0' } }));
+  await bn.fs.writeFile('/nested/my-app/src/app/page.tsx', 'export default function Page(){ return <h1>nested-ok</h1>; }\n');
+  assert((await resolveProjectRoot(bn, '/nested')) === '/nested/my-app', 'resolve nested next root');
+  assert((await detectProjectKind(bn, '/nested/my-app')) === 'next', 'nested next detect');
+  const nestedBuilt = await bn.nextBuild('/nested/my-app');
+  assert((await bn.fs.readFile(nestedBuilt.outDir + '/index.html', 'utf8')).includes('bundle.js'), 'nested next html');
+
   const { makeStoredZip } = await import('../dist/fs/zip.js');
   const zip = makeStoredZip({
     'site/index.html': '<!doctype html><h1>zip-ok</h1>',
@@ -397,8 +427,7 @@ async function main() {
   const imp = await bn.importZip(zip, '/home/uploads/sitezip');
   assert(imp.files === 2, 'zip file count');
   assert((await bn.fs.readFile('/home/uploads/sitezip/index.html', 'utf8')).includes('zip-ok'));
-  const kind = (await import('../dist/bundler/preview.js')).detectProjectKind;
-  assert((await kind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
+  assert((await detectProjectKind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
 
   // --- Real CLI runner (needs WASM built after guest shebang/argv + cmd_tsc) ---
   await bn.fs.writeFile('/shebang-probe.js', '#!/usr/bin/env node\nconsole.log("shebang-ok");\n');
