@@ -18,7 +18,8 @@
   },
   "files": [
     "dist",
-    "wasm"
+    "wasm",
+    "README.md"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
