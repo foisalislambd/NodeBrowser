@@ -258,7 +258,7 @@
     @apply flex-1 overflow-auto py-0.5 pb-2 text-[13px];
   }
   .tree-item {
-    @apply flex w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-1.5 py-0.5 text-left font-inherit text-wb-fg;
+    @apply flex w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-1.5 py-0.5 text-left font-[inherit] text-wb-fg;
   }
   .tree-item:hover {
     @apply bg-wb-hover;
