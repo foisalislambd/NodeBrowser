@@ -11,13 +11,13 @@
   "dependencies": {
     "@foisal/nodebrowser": "*",
     "@tailwindcss/vite": "^4.3.3",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "tailwindcss": "^4.3.3",
     "@tailwindcss/browser": "^4.1.11"
   },
   "devDependencies": {
-    "vite": "^6.3.5",
+    "vite": "^8.2.1",
     "vite-basepath": "^1.0.1"
   }
 }
