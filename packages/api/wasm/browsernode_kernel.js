@@ -913,11 +913,11 @@ function dbg(...args) {
 // === Body ===
 
 var ASM_CONSTS = {
-  4420360: ($0, $1, $2) => { var tool = UTF8ToString($0); var cwd = UTF8ToString($1); var mode = UTF8ToString($2); if (typeof globalThis.__bn_on_tool === 'function') { globalThis.__bn_on_tool(tool, cwd, mode); } },  
- 4420547: ($0, $1, $2, $3) => { var cwd = UTF8ToString($0); var action = UTF8ToString($1); var payload = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npm === 'function') { globalThis.__bn_on_npm(cwd, action, payload, pid); } },  
- 4420761: ($0, $1, $2, $3) => { var pkg = UTF8ToString($0); var rest = UTF8ToString($1); var cwd = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npx === 'function') { globalThis.__bn_on_npx(pkg, rest, cwd, pid); } },  
- 4420963: ($0) => { if (typeof globalThis.__bn_on_server_ready === 'function') { globalThis.__bn_on_server_ready($0); } },  
- 4421067: ($0, $1, $2, $3, $4) => { try { if (typeof globalThis.__bn_wasm_http_dispatch !== 'function') return 0; var method = UTF8ToString($0); var path = UTF8ToString($1); var headers = UTF8ToString($2); var body = UTF8ToString($3); var port = $4; var out = globalThis.__bn_wasm_http_dispatch(port, method, path, headers, body); if (out == null) return 0; var s = String(out); var len = lengthBytesUTF8(s) + 1; var ptr = _malloc(len); stringToUTF8(s, ptr, len); return ptr; } catch (e) { return 0; } }
+  4420840: ($0, $1, $2) => { var tool = UTF8ToString($0); var cwd = UTF8ToString($1); var mode = UTF8ToString($2); if (typeof globalThis.__bn_on_tool === 'function') { globalThis.__bn_on_tool(tool, cwd, mode); } },  
+ 4421027: ($0, $1, $2, $3) => { var cwd = UTF8ToString($0); var action = UTF8ToString($1); var payload = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npm === 'function') { globalThis.__bn_on_npm(cwd, action, payload, pid); } },  
+ 4421241: ($0, $1, $2, $3) => { var pkg = UTF8ToString($0); var rest = UTF8ToString($1); var cwd = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npx === 'function') { globalThis.__bn_on_npx(pkg, rest, cwd, pid); } },  
+ 4421443: ($0) => { if (typeof globalThis.__bn_on_server_ready === 'function') { globalThis.__bn_on_server_ready($0); } },  
+ 4421547: ($0, $1, $2, $3, $4) => { try { if (typeof globalThis.__bn_wasm_http_dispatch !== 'function') return 0; var method = UTF8ToString($0); var path = UTF8ToString($1); var headers = UTF8ToString($2); var body = UTF8ToString($3); var port = $4; var out = globalThis.__bn_wasm_http_dispatch(port, method, path, headers, body); if (out == null) return 0; var s = String(out); var len = lengthBytesUTF8(s) + 1; var ptr = _malloc(len); stringToUTF8(s, ptr, len); return ptr; } catch (e) { return 0; } }
 };
 
 // end include: preamble.js
