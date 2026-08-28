@@ -20,8 +20,8 @@ Host templates still exist (`npm run dev:vite` / `dev:next`) for comparison.
 
 ## Is this a drop-in for StackBlitz WebContainers?
 
-No. `WebContainer` from `@foisal/nodebrowser` / `@foisal/nodebrowser/compat` is a **name shim** over the same C++ kernel (`boot` / `fs` / `mount` / `spawn` / `on` / `teardown`). Extra APIs live on `instance` (`install`, `viteDev`, `importZip`, …). See `PLAN.md` “How we beat WebContainers”.
+No. `WebContainer` from `@foisal/nodebrowser` / `@foisal/nodebrowser/compat` is a **name shim** over the same C++ kernel (`boot` / `fs` / `mount` / `spawn` / `on` / `teardown`). Extra APIs live on `instance` (`install`, `viteDev`, `importZip`, …). See [`ROADMAP.md`](../ROADMAP.md).
 
 ## Is this a security sandbox?
 
-Best-effort isolation for demos and tooling experiments — not a hardened multi-tenant boundary. See `SECURITY.md`.
+Best-effort isolation for demos and tooling experiments — not a hardened multi-tenant boundary. See [`SECURITY.md`](../SECURITY.md).

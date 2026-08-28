@@ -1,6 +1,7 @@
 import type { NodeBrowser } from '../host/node-browser.js';
 import { binRelTarget, makeBinShim, parseBinField } from './bin.js';
 import { assertAllowedFetchUrl } from '../net/egress.js';
+import { parseTar } from '../fs/zip.js';
 
 export type InstallProgress = {
   phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done';
@@ -110,7 +111,7 @@ async function runLifecycle(
   if (!cmd) return;
   const first = cmd.trim().split(/\s+/)[0] || '';
   const base = first.split('/').pop() || first;
-  if (!LIFECYCLE_ALLOW.has(base) && base !== 'node') {
+  if (!LIFECYCLE_ALLOW.has(base)) {
     onProgress?.({
       phase: 'lifecycle',
       name: scriptName,
@@ -137,9 +138,8 @@ async function installOne(
   if (signal?.aborted) throw new Error('install cancelled');
   if (depth > MAX_DEPTH) return;
   const { name, version: want } = parseSpec(spec);
-  const key = `${name}@${want}`;
-  if (seen.has(key)) return;
-  seen.add(key);
+  const rangeKey = `${name}@${want}`;
+  if (seen.has(rangeKey)) return;
 
   onProgress?.({ phase: 'resolve', name, message: `resolving ${name}@${want}` });
   const meta = await fetchJson<RegistryMeta>(registryUrl(name));
@@ -149,6 +149,13 @@ async function installOne(
       : want;
   const verMeta = meta.versions[ver];
   if (!verMeta) throw new Error(`version not found: ${name}@${ver}`);
+  const resolvedKey = `${name}@${verMeta.version}`;
+  if (seen.has(resolvedKey)) {
+    seen.add(rangeKey);
+    return;
+  }
+  seen.add(rangeKey);
+  seen.add(resolvedKey);
   if (lock) lock[name] = { version: verMeta.version, resolved: verMeta.dist.tarball };
 
   if (verMeta.peerDependencies) {
@@ -213,18 +220,41 @@ async function installOne(
   onProgress?.({ phase: 'done', name, version: verMeta.version });
 }
 
+function parseSemver(v: string): [number, number, number] | null {
+  const m = String(v).match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function cmpSemver(a: [number, number, number], b: [number, number, number]): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
 function pickVersion(meta: RegistryMeta, range: string): string {
   if (!range || range === 'latest' || range === '*') return meta['dist-tags'].latest;
-  const versions = Object.keys(meta.versions);
+  const versions = Object.keys(meta.versions)
+    .map((v) => ({ v, p: parseSemver(v) }))
+    .filter((x): x is { v: string; p: [number, number, number] } => x.p != null)
+    .sort((a, b) => cmpSemver(a.p, b.p));
   if (range.startsWith('^') || range.startsWith('~')) {
-    const base = range.slice(1);
-    const found = versions.filter((v) => v === base || v.startsWith(base.split('.')[0] + '.')).pop();
-    return found || meta['dist-tags'].latest;
+    const caret = range.startsWith('^');
+    const base = parseSemver(range.slice(1));
+    if (!base) return meta['dist-tags'].latest;
+    const match = versions.filter(({ p }) => {
+      if (p[0] !== base[0]) return false;
+      if (!caret) return p[1] === base[1] && p[2] >= base[2];
+      if (base[0] === 0) {
+        if (base[1] === 0) return p[1] === 0 && p[2] === base[2];
+        return p[1] === base[1] && p[2] >= base[2];
+      }
+      return p[1] > base[1] || (p[1] === base[1] && p[2] >= base[2]);
+    });
+    return match.length ? match[match.length - 1]!.v : meta['dist-tags'].latest;
   }
   return meta.versions[range] ? range : meta['dist-tags'].latest;
 }
 
-function parseSpec(spec: string): { name: string; version: string } {
+export function parseSpec(spec: string): { name: string; version: string } {
   if (spec.startsWith('@')) {
     const i = spec.indexOf('@', 1);
     if (i === -1) return { name: spec, version: 'latest' };
@@ -297,39 +327,7 @@ async function untarGzip(data: Uint8Array): Promise<Record<string, Uint8Array>> 
   const ds = new DecompressionStream('gzip');
   const copy = new Uint8Array(data.byteLength);
   copy.set(data);
-  const stream = new Blob([copy.buffer]).stream().pipeThrough(ds);
+  const stream = new Blob([copy]).stream().pipeThrough(ds);
   const ab = await new Response(stream).arrayBuffer();
   return parseTar(new Uint8Array(ab));
-}
-
-function parseTar(buf: Uint8Array): Record<string, Uint8Array> {
-  const out: Record<string, Uint8Array> = {};
-  const decoder = new TextDecoder();
-  let offset = 0;
-  const readStr = (start: number, len: number) => {
-    let end = start;
-    const limit = start + len;
-    while (end < limit && buf[end] !== 0) end++;
-    return decoder.decode(buf.subarray(start, end));
-  };
-  const readOctal = (start: number, len: number) => {
-    const s = readStr(start, len).trim();
-    return s ? parseInt(s, 8) : 0;
-  };
-  while (offset + 512 <= buf.length) {
-    const block = buf.subarray(offset, offset + 512);
-    if (block.every((b) => b === 0)) break;
-    const name = readStr(offset, 100);
-    const size = readOctal(offset + 124, 12);
-    const type = buf[offset + 156] ?? 0;
-    const prefix = readStr(offset + 345, 155);
-    const fullName = prefix ? `${prefix}/${name}` : name;
-    offset += 512;
-    const content = buf.subarray(offset, offset + size);
-    if ((type === 0 || type === 48) && fullName) {
-      out[fullName] = content.slice();
-    }
-    offset += Math.ceil(size / 512) * 512;
-  }
-  return out;
 }

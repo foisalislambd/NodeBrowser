@@ -381,7 +381,35 @@ int main() {
     auto out = k.get(pid)->stdout_buf.read_all_string();
     CHECK(out.find("vite-cli=build") != std::string::npos);
   }
+  {
+    CHECK(k.vfs().mkdir("/empty-rm", true));
+    k.vfs().write_text(
+        "/rmdir.js",
+        "const fs=require('fs');\n"
+        "fs.rmdirSync('/empty-rm');\n"
+        "console.log('rmdir=' + (!fs.existsSync('/empty-rm')));\n");
+    auto pid = k.spawn("node", {"/rmdir.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    CHECK(k.get(pid)->stdout_buf.read_all_string().find("rmdir=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text("/so.js", "process.stdout.write('A'); process.stdout.write('B');\n");
+    auto pid = k.spawn("node", {"/so.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("AB") != std::string::npos);
+  }
 #endif
+
+  {
+    CHECK(k.vfs().mkdir("/realdir", true));
+    CHECK(k.vfs().write_text("/realdir/x.txt", "keep"));
+    CHECK(k.vfs().symlink("/realdir", "/linkdir"));
+    auto pid = k.spawn("rm", {"-r", "/linkdir"});
+    CHECK(k.wait(pid).value_or(1) == 0);
+    CHECK(k.vfs().exists("/realdir/x.txt"));
+    CHECK(!k.vfs().exists("/linkdir"));
+  }
 
   if (fails) {
     std::cerr << fails << " failure(s)\n";

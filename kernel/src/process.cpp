@@ -280,7 +280,7 @@ int Kernel::pump(int64_t now_ms) {
       if (t.cancelled) continue;
       if (t.due_ms > now_ms) continue;
       due.push_back({t.pid, t.id, t.interval});
-      if (t.interval) t.due_ms = now_ms + (t.interval_ms > 0 ? t.interval_ms : 0);
+      if (t.interval) t.due_ms = now_ms + (t.interval_ms > 0 ? t.interval_ms : 1);
       else t.cancelled = true;
     }
   }

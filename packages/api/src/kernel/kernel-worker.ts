@@ -13,6 +13,7 @@ type HookOut = { t: 'hook'; n: string; a: unknown[] };
 
 type StdioSlot = {
   k: number;
+  pid: number;
   out: SabStdioRing;
   err: SabStdioRing;
   inn: SabStdioRing;
@@ -64,8 +65,10 @@ function flushRing(ring: SabStdioRing, pending: Uint8Array, extra: string): Uint
   return off === 0 ? src : src.slice(off);
 }
 
-let mod: KernelModule | null = null;
-const stdio = new Map<number, StdioSlot>();
+function stdioKey(k: number, pid: number): string {
+  return `${k}:${pid}`;
+}
+
 let pumpTimer: ReturnType<typeof setInterval> | null = null;
 let pumpQueued = false;
 let chain: Promise<void> = Promise.resolve();
@@ -87,11 +90,14 @@ function closeSlot(slot: StdioSlot, code: number): void {
   }
 }
 
+let mod: KernelModule | null = null;
+const stdio = new Map<string, StdioSlot>();
+
 function dropKernelStdio(k: number, code = -1): void {
-  for (const [pid, slot] of [...stdio]) {
+  for (const [key, slot] of [...stdio]) {
     if (slot.k !== k) continue;
     closeSlot(slot, code);
-    stdio.delete(pid);
+    stdio.delete(key);
   }
 }
 
@@ -104,8 +110,9 @@ async function pumpOnce(): Promise<void> {
     return;
   }
   try {
-    for (const [pid, slot] of [...stdio]) {
+    for (const [key, slot] of [...stdio]) {
       const k = slot.k;
+      const pid = slot.pid;
       const out = await Promise.resolve(mod.readStdout(k, pid));
       slot.outPend = flushRing(slot.out, slot.outPend, out);
       const err = await Promise.resolve(mod.readStderr(k, pid));
@@ -132,7 +139,7 @@ async function pumpOnce(): Promise<void> {
 
       if (slot.exitCode !== null && !slot.outPend.byteLength && !slot.errPend.byteLength) {
         closeSlot(slot, slot.exitCode);
-        stdio.delete(pid);
+        stdio.delete(key);
       }
     }
     if (!stdio.size && pumpTimer) {
@@ -140,9 +147,9 @@ async function pumpOnce(): Promise<void> {
       pumpTimer = null;
     }
   } catch {
-    for (const [pid, slot] of [...stdio]) {
+    for (const [key, slot] of [...stdio]) {
       closeSlot(slot, slot.exitCode ?? 1);
-      stdio.delete(pid);
+      stdio.delete(key);
     }
     if (pumpTimer) {
       clearInterval(pumpTimer);
@@ -178,8 +185,9 @@ async function dispatch(op: string, args: unknown[]): Promise<unknown> {
     if (!mod) throw new Error('worker: kernel not booted');
     const k = args[0] as number;
     const pid = args[1] as number;
-    stdio.set(pid, {
+    stdio.set(stdioKey(k, pid), {
       k,
+      pid,
       out: SabStdioRing.wrap(args[2] as SharedArrayBuffer),
       err: SabStdioRing.wrap(args[3] as SharedArrayBuffer),
       inn: SabStdioRing.wrap(args[4] as SharedArrayBuffer),

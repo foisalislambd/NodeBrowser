@@ -79,7 +79,7 @@ What we are **not** trying to be on day one: bit-identical Node, native `.node` 
 | `WebContainer` name shim | ✅ |
 | Full Vite/Next CLI in QuickJS | 🔜 |
 
-Roadmap and design: [`PLAN.md`](./PLAN.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md).
+Roadmap and design: [`ROADMAP.md`](./ROADMAP.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md).
 
 ---
 
@@ -192,7 +192,7 @@ Guides: [`docs/PUBLISHING.md`](./docs/PUBLISHING.md), [`docs/RELEASING.md`](./do
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
-Bug reports and ideas: [GitHub Issues](../../issues). Security: [`SECURITY.md`](./SECURITY.md).
+Bug reports and ideas: [GitHub Issues](https://github.com/foisalislambd/NodeBrowser/issues). Security: [`SECURITY.md`](./SECURITY.md).
 
 ---
 

@@ -40,10 +40,25 @@ export async function handleAgentRpc(bn: NodeBrowser, req: AgentRpcRequest): Pro
         await bn.fs.mkdir(String(p.path), { recursive: true });
         result = true;
         break;
+      case 'killTree':
+        result = await bn.killTree(Number(p.pid));
+        break;
       case 'spawn': {
-        const proc = await bn.spawn(String(p.cmd), Array.isArray(p.args) ? (p.args as string[]) : [], {
-          cwd: typeof p.cwd === 'string' ? p.cwd : '/',
-        });
+        const cmd = Array.isArray(req.params) ? String((req.params as unknown[])[0]) : String(p.cmd);
+        const args = Array.isArray(req.params)
+          ? Array.isArray((req.params as unknown[])[1])
+            ? ((req.params as unknown[])[1] as string[])
+            : []
+          : Array.isArray(p.args)
+            ? (p.args as string[])
+            : [];
+        const cwd =
+          Array.isArray(req.params) && typeof (req.params as unknown[])[2] === 'string'
+            ? String((req.params as unknown[])[2])
+            : typeof p.cwd === 'string'
+              ? p.cwd
+              : '/';
+        const proc = await bn.spawn(cmd, args, { cwd });
         result = { pid: proc.pid };
         break;
       }
@@ -53,9 +68,6 @@ export async function handleAgentRpc(bn: NodeBrowser, req: AgentRpcRequest): Pro
         break;
       case 'ports':
         result = bn.ports();
-        break;
-      case 'killTree':
-        result = bn.killTree(Number(p.pid));
         break;
       case 'runtime':
         result = bn.runtime;

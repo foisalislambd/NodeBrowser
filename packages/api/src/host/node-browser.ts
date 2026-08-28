@@ -1,7 +1,7 @@
 import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
 import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from '../kernel/load.js';
 import { flattenTree } from '../fs/tree.js';
-import { installPackage } from '../npm/install.js';
+import { installPackage, parseSpec } from '../npm/install.js';
 import { detectForeignLockfile } from '../npm/lockfiles.js';
 import { HttpBridge } from '../net/http-bridge.js';
 import { bundleWithEsbuild, type BundleOptions } from '../bundler/esbuild.js';
@@ -17,6 +17,7 @@ import {
 } from '../fs/opfs.js';
 import { zlibPureSync } from '../compress/zlib.js';
 import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
+import { resolveUnderRoot } from '../fs/paths.js';
 import { previewProject, resolveProjectRoot, type PreviewResult } from '../bundler/preview.js';
 import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './json-rpc.js';
 import { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
@@ -32,7 +33,6 @@ export class NodeBrowser {
   #k: KernelHandle;
   #listeners = new Map<string, Set<Function>>();
   #previewBase: string;
-  #booted = true;
   #http = new HttpBridge();
   #detachSw: (() => void) | null = null;
   #portsByPid = new Map<number, Set<number>>();
@@ -125,6 +125,15 @@ export class NodeBrowser {
     };
     const rmTree = async (path: string): Promise<void> => {
       if (!(await asy(mod.exists(k, path)))) return;
+      if (mod.lstatKind) {
+        const kind = await asy(mod.lstatKind(k, path));
+        if (kind === 'symlink') {
+          if (!(await asy(mod.unlink(k, path))) && (await asy(mod.exists(k, path)))) {
+            throw new Error(`EPERM: cannot remove ${path}`);
+          }
+          return;
+        }
+      }
       if (await isDir(path)) {
         for (const name of await asy(mod.readdir(k, path))) {
           await rmTree(joinFs(path, name));
@@ -142,19 +151,22 @@ export class NodeBrowser {
     };
     const copyTree = async (from: string, to: string): Promise<void> => {
       if (await isDir(from)) {
-        await asy(mod.mkdir(k, to, true));
+        if (!(await asy(mod.mkdir(k, to, true)))) throw new Error(`EIO: mkdir ${to}`);
         for (const name of await asy(mod.readdir(k, from))) {
           await copyTree(joinFs(from, name), joinFs(to, name));
         }
         return;
       }
       const bytes = await readBytes(from);
-      await asy(mod.writeBytes(k, to, bytes));
+      if (!(await asy(mod.writeBytes(k, to, bytes)))) throw new Error(`EIO: write ${to}`);
     };
     return {
       writeFile: async (path: string, data: string | Uint8Array) => {
-        if (typeof data === 'string') await asy(mod.writeText(k, path, data));
-        else await asy(mod.writeBytes(k, path, data));
+        const ok =
+          typeof data === 'string'
+            ? await asy(mod.writeText(k, path, data))
+            : await asy(mod.writeBytes(k, path, data));
+        if (!ok) throw new Error(`EIO: write ${path}`);
         // JS kernel emits via setFsChangeListener; WASM needs host emit.
         if (!mod.setFsChangeListener) {
           self.#emit('fs-change', { type: 'change', path });
@@ -176,7 +188,9 @@ export class NodeBrowser {
         return asy(mod.readdir(k, path));
       },
       mkdir: async (path: string, opts?: { recursive?: boolean }) => {
-        await asy(mod.mkdir(k, path, opts?.recursive ?? true));
+        if (!(await asy(mod.mkdir(k, path, opts?.recursive ?? true)))) {
+          throw new Error(`EIO: mkdir ${path}`);
+        }
         if (!mod.setFsChangeListener) {
           self.#emit('fs-change', { type: 'rename', path });
           self.#opfsFlusher?.mark(path, 'write');
@@ -201,8 +215,15 @@ export class NodeBrowser {
           }
           return;
         }
-        if (await isDir(path)) throw new Error(`EISDIR: ${path} (use { recursive: true })`);
-        if (!(await asy(mod.unlink(k, path)))) throw new Error(`ENOENT: ${path}`);
+        if (mod.lstatKind) {
+          const kind = await asy(mod.lstatKind(k, path));
+          if (kind === 'directory') throw new Error(`EISDIR: ${path} (use { recursive: true })`);
+        } else if (await isDir(path)) {
+          throw new Error(`EISDIR: ${path} (use { recursive: true })`);
+        }
+        if (!(await asy(mod.unlink(k, path)))) {
+          throw new Error((await asy(mod.exists(k, path))) ? `EPERM: ${path}` : `ENOENT: ${path}`);
+        }
         if (!mod.setFsChangeListener) {
           self.#emit('fs-change', { type: 'rename', path });
           self.#opfsFlusher?.mark(path, 'delete');
@@ -257,14 +278,12 @@ export class NodeBrowser {
   }
 
   async mount(tree: FileSystemTree, mountPoint = '/'): Promise<void> {
-    const files = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
+    const { files, dirs } = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
+    for (const dir of dirs) {
+      await this.fs.mkdir(dir, { recursive: true });
+    }
     for (const [path, contents] of Object.entries(files)) {
-      if (typeof contents === 'string') await asy(this.#mod.writeText(this.#k, path, contents));
-      else await asy(this.#mod.writeBytes(this.#k, path, contents));
-      if (!this.#mod.setFsChangeListener) {
-        this.#emit('fs-change', { type: 'change', path });
-        this.#opfsFlusher?.mark(path, 'write');
-      }
+      await this.fs.writeFile(path, contents);
     }
   }
 
@@ -413,10 +432,19 @@ export class NodeBrowser {
     let errRing: SabStdioRing | null = null;
     let inRing: SabStdioRing | null = null;
     if (this.sabStdio && this.#mod.attachStdio) {
-      outRing = SabStdioRing.create();
-      errRing = SabStdioRing.create();
-      inRing = SabStdioRing.create();
-      await asy(this.#mod.attachStdio(this.#k, pid, outRing.buffer, errRing.buffer, inRing.buffer));
+      const created = {
+        out: SabStdioRing.create(),
+        err: SabStdioRing.create(),
+        inn: SabStdioRing.create(),
+      };
+      const attached = await asy(
+        this.#mod.attachStdio(this.#k, pid, created.out.buffer, created.err.buffer, created.inn.buffer),
+      );
+      if (attached) {
+        outRing = created.out;
+        errRing = created.err;
+        inRing = created.inn;
+      }
     }
 
     const output = new ReadableStream<string>({
@@ -443,7 +471,7 @@ export class NodeBrowser {
           const err = errRing!.readString();
           if (out) controller.enqueue(out);
           if (err) controller.enqueue(err);
-          if (!outRing!.closed) {
+          if (!outRing!.closed || !errRing!.closed) {
             setTimeout(pollSab, 8);
             return;
           }
@@ -469,11 +497,18 @@ export class NodeBrowser {
         if (inRing) {
           const bytes = new TextEncoder().encode(data);
           let off = 0;
-          while (off < bytes.byteLength) {
-            const n = inRing.writeBytes(bytes.subarray(off));
-            if (n <= 0) break;
-            off += n;
-          }
+          const tryWrite = () => {
+            while (off < bytes.byteLength) {
+              if (inRing!.closed || outRing?.closed) return;
+              const n = inRing!.writeBytes(bytes.subarray(off));
+              if (n <= 0) {
+                setTimeout(tryWrite, 8);
+                return;
+              }
+              off += n;
+            }
+          };
+          tryWrite();
         } else void asy(this.#mod.writeStdin(this.#k, pid, data));
       },
     };
@@ -528,7 +563,8 @@ export class NodeBrowser {
    * Execution is kernel `spawn` (C++/WASM or thin JS fallback).
    */
   async npx(pkg: string, args: string[] = [], cwd = '/'): Promise<BrowserNodeProcess> {
-    const binName = pkg.includes('/') ? pkg.slice(pkg.lastIndexOf('/') + 1) : pkg.split('@')[0]!;
+    const { name } = parseSpec(pkg);
+    const binName = name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name;
     const binPath = joinFsPath(cwd, 'node_modules', '.bin', binName);
     try {
       await this.fs.readFile(binPath, 'utf8');
@@ -574,7 +610,14 @@ export class NodeBrowser {
       const urlPath = (req.url || '/').split('?')[0] || '/';
       let rel = decodeURIComponent(urlPath);
       if (rel === '/' || rel === '') rel = '/' + indexName;
-      const filePath = (root + (rel.startsWith('/') ? rel : '/' + rel)).replace(/\/+/g, '/');
+      let filePath: string;
+      try {
+        filePath = resolveUnderRoot(root, rel);
+      } catch {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden');
+        return;
+      }
       try {
         const body = await this.fs.readFile(filePath, 'utf8');
         res.writeHead(200, {
@@ -727,12 +770,13 @@ export class NodeBrowser {
       const handler = g.__bn_wasm_http_handlers?.get(port);
       if (handler) {
         try {
-          const out = handler({
+          const outMaybe = handler({
             method: req.method,
             url: req.url,
             headers: req.headers || {},
             body: req.body,
           });
+          const out = await Promise.resolve(outMaybe);
           res.writeHead(out.status || 200, out.headers || {});
           res.end(out.body || '');
           return;
@@ -780,8 +824,8 @@ export class NodeBrowser {
   teardown(): void {
     this.#detachSw?.();
     this.#detachSw = null;
+    for (const p of this.#http.ports()) this.#http.close(p);
     void asy(this.#mod.destroy(this.#k));
-    this.#booted = false;
   }
 
   /** Virtual listen ports currently registered on the host HttpBridge. */
@@ -790,9 +834,8 @@ export class NodeBrowser {
   }
 
   /** Kill pid and descendants (C++ process tree + host-spawned npm/npx children). */
-  killTree(pid: number): boolean {
-    void this.#killWithChildren(pid);
-    return true;
+  async killTree(pid: number): Promise<boolean> {
+    return this.#killWithChildren(pid);
   }
 
   #attachSpawnChild(parent: number, child: number): void {

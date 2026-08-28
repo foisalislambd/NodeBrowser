@@ -32,7 +32,6 @@ type Handler = (
 
 export class HttpBridge {
   #servers = new Map<number, Handler>();
-  #pending = new Map<string, (r: OutgoingHttpResponse) => void>();
 
   listen(port: number, handler: Handler): void {
     this.#servers.set(port | 0, handler);

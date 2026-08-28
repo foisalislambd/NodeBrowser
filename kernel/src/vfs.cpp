@@ -13,6 +13,12 @@ int64_t now_ms() {
   return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
+bool path_is_under(const std::string& root, const std::string& path) {
+  if (root == "/") return !path.empty() && path.front() == '/';
+  return path == root || (path.size() > root.size() && path.compare(0, root.size(), root) == 0 &&
+                          path[root.size()] == '/');
+}
+
 }  // namespace
 
 // --- VfsFile ---
@@ -109,29 +115,21 @@ std::string Vfs::normalize(std::string_view path) {
   }
   push(cur);
 
-  std::string out = abs || parts.empty() ? "/" : "";
-  for (size_t i = 0; i < parts.size(); ++i) {
-    if (i || abs) out += "/";
-    // For absolute we always start with /
-    if (abs) {
-      // rebuild absolute
-    }
-  }
   if (abs) {
-    out = "/";
+    std::string out = "/";
     for (size_t i = 0; i < parts.size(); ++i) {
       if (i) out += "/";
       out += parts[i];
     }
     if (parts.empty()) out = "/";
-  } else {
-    out.clear();
-    for (size_t i = 0; i < parts.size(); ++i) {
-      if (i) out += "/";
-      out += parts[i];
-    }
-    if (out.empty()) out = ".";
+    return out;
   }
+  std::string out;
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i) out += "/";
+    out += parts[i];
+  }
+  if (out.empty()) out = ".";
   return out;
 }
 
@@ -245,6 +243,7 @@ bool Vfs::mkdir(std::string_view path, bool recursive) {
       continue;
     }
     if (child->kind() != NodeKind::Directory) return false;
+    if (i + 1 == parts.size() && !recursive) return false;
     dir = std::static_pointer_cast<VfsDir>(child);
   }
   return true;
@@ -338,7 +337,6 @@ bool Vfs::rename(std::string_view from, std::string_view to) {
     }
   }
   auto node = a.node;
-  if (!a.parent->erase(a.name)) return false;
   auto parts = split(to);
   if (parts.empty()) return false;
   auto dir = root_;
@@ -347,7 +345,19 @@ bool Vfs::rename(std::string_view from, std::string_view to) {
     if (!child || child->kind() != NodeKind::Directory) return false;
     dir = std::static_pointer_cast<VfsDir>(child);
   }
-  dir->set(parts.back(), node);
+  auto dest_name = parts.back();
+  auto existing = dir->get(dest_name);
+  if (existing && existing.get() == node.get()) return true;
+  if (existing) {
+    if (existing->kind() == NodeKind::Directory) return false;
+    if (existing->kind() == NodeKind::File) {
+      auto sz = static_cast<VfsFile*>(existing.get())->data().size();
+      if (bytes_ >= sz) bytes_ -= sz;
+      else bytes_ = 0;
+    }
+  }
+  if (!a.parent->erase(a.name)) return false;
+  dir->set(dest_name, node);
   return true;
 }
 
@@ -373,6 +383,11 @@ bool Vfs::symlink(std::string_view target, std::string_view linkpath) {
   std::lock_guard lock(mu_);
   auto r = resolve(linkpath, false);
   if (!r.parent) return false;
+  if (r.node && r.node->kind() == NodeKind::File) {
+    auto sz = static_cast<VfsFile*>(r.node.get())->data().size();
+    if (bytes_ >= sz) bytes_ -= sz;
+    else bytes_ = 0;
+  }
   r.parent->set(r.name, std::make_shared<VfsSymlink>(std::string(target)));
   return true;
 }
@@ -496,10 +511,15 @@ int Vfs::extract_tar(const uint8_t* data, size_t len, std::string_view dest_dir)
     char type = static_cast<char>(hdr[156] ? hdr[156] : '0');
     offset += 512;
     if (offset + size > len) break;
-    std::string full = dest;
     if (!name.empty() && name.front() == '/') name.erase(name.begin());
+    std::string full = dest;
     if (full.back() == '/') full += name;
     else full += "/" + name;
+    full = Vfs::normalize(full);
+    if (!path_is_under(dest == "/" ? "/" : (dest.back() == '/' ? dest.substr(0, dest.size() - 1) : dest), full)) {
+      offset += ((size + 511) / 512) * 512;
+      continue;
+    }
     if (type == '5') {
       mkdir(full, true);
     } else if (type == '2') {

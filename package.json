@@ -10,7 +10,7 @@
     "demo"
   ],
   "scripts": {
-    "build:native": "cmake -S . -B build-native -G Ninja -DBN_WITH_QUICKJS=ON -DBN_BUILD_NATIVE_TESTS=ON && cmake --build build-native && ./build-native/kernel/bn_vfs_test && ./build-native/kernel/bn_node_test && ./build-native/kernel/bn_stdio_test",
+    "build:native": "bash scripts/gen-guest-modules.sh && cmake -S . -B build-native -G Ninja -DBN_WITH_QUICKJS=ON -DBN_BUILD_NATIVE_TESTS=ON && cmake --build build-native && ./build-native/kernel/bn_vfs_test && ./build-native/kernel/bn_node_test && ./build-native/kernel/bn_stdio_test",
     "build:wasm": "bash scripts/build-wasm.sh",
     "build:cpp-wasm": "bash scripts/ci-build-cpp-wasm.sh",
     "build:api": "npm run build -w @foisal/nodebrowser",
@@ -29,7 +29,7 @@
     "test:e2e": "npx playwright test --project=chromium",
     "bench": "node scripts/bench.mjs",
     "bakeoff": "node scripts/bakeoff.mjs",
-    "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md']) require('fs').accessSync(f)\""
+    "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md','GOVERNANCE.md','ROADMAP.md','SUPPORT.md','AUTHORS.md','NOTICE','docs/ARCHITECTURE.md','docs/FAQ.md']) require('fs').accessSync(f)\""
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

@@ -21,7 +21,7 @@ async function readOut(proc) {
 }
 
 async function main() {
-  resetKernelCache();
+  await resetKernelCache();
   const bn = await NodeBrowser.boot({ useWasm: true });
   assert(bn.runtime === 'wasm', 'boot must use WASM kernel, got ' + bn.runtime);
 
@@ -96,10 +96,10 @@ async function main() {
   assert(runOut.out.includes('m=7'), runOut.out);
 
   // --- default boot is WASM; useWasm:false throws ---
-  resetKernelCache();
+  await resetKernelCache();
   const auto = await NodeBrowser.boot({ useWasm: 'auto' });
   assert(auto.runtime === 'wasm', 'auto runtime wasm');
-  resetKernelCache();
+  await resetKernelCache();
   const preferred = await NodeBrowser.boot();
   assert(preferred.runtime === 'wasm', 'default boot wasm');
   let falseThrew = false;
@@ -111,7 +111,7 @@ async function main() {
   assert(falseThrew, 'useWasm:false must throw');
 
   // --- boot isolation: two WASM kernels must not share VFS ---
-  resetKernelCache();
+  await resetKernelCache();
   const a = await NodeBrowser.boot({ useWasm: true });
   const b = await NodeBrowser.boot({ useWasm: true });
   await a.fs.writeFile('/iso.txt', 'A');
@@ -428,6 +428,18 @@ async function main() {
   assert(imp.files === 2, 'zip file count');
   assert((await bn.fs.readFile('/home/uploads/sitezip/index.html', 'utf8')).includes('zip-ok'));
   assert((await detectProjectKind(bn, '/home/uploads/sitezip')) === 'static', 'zip static detect');
+
+  let zipEscape = false;
+  try {
+    await bn.importZip(makeStoredZip({ '../outside.txt': 'nope' }), '/home/uploads/safe');
+  } catch {
+    zipEscape = true;
+  }
+  assert(zipEscape || !(await bn.fs.exists('/outside.txt')), 'zip must not write outside dest');
+  assert(!(await bn.fs.exists('/home/uploads/outside.txt')), 'zip must not land beside dest');
+
+  await bn.mount({ emptybox: { directory: {} } }, '/');
+  assert(await bn.fs.exists('/emptybox'), 'empty directory mount');
 
   // --- Real CLI runner (needs WASM built after guest shebang/argv + cmd_tsc) ---
   await bn.fs.writeFile('/shebang-probe.js', '#!/usr/bin/env node\nconsole.log("shebang-ok");\n');

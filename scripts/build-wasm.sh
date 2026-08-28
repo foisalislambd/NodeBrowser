@@ -16,6 +16,9 @@ fi
 OUT="${ROOT}/packages/api/wasm"
 mkdir -p "${OUT}"
 
+echo "==> Generate guest JS embed"
+bash "${ROOT}/scripts/gen-guest-modules.sh"
+
 emcmake cmake -S "${ROOT}" -B "${ROOT}/build-wasm" -G Ninja \
   -DBN_BUILD_WASM=ON \
   -DBN_BUILD_NATIVE_TESTS=OFF \

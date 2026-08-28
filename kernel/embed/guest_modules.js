@@ -1067,14 +1067,22 @@ function loadCore(name) {
           var e = new Error('ENOENT: ' + p); e.code = 'ENOENT'; throw e;
         }
       },
-      mkdirSync: function(p, opts) { __bn.mkdir(String(p), !!(opts && opts.recursive)); },
+      mkdirSync: function(p, opts) {
+        if (!__bn.mkdir(String(p), !!(opts && opts.recursive))) throw new Error('EEXIST mkdir: ' + p);
+      },
       readdirSync: function(p) {
         var a = __bn.readdir(String(p));
         if (a === null) throw new Error('ENOENT');
         return a;
       },
       unlinkSync: function(p) { if (!__bn.unlink(String(p))) throw new Error('ENOENT'); },
-      rmdirSync: function(p) { if (!__bn.unlink(String(p))) throw new Error('ENOENT rmdir: ' + p); },
+      rmdirSync: function(p) {
+        if (__bn.rmdir) {
+          if (!__bn.rmdir(String(p))) throw new Error('ENOENT rmdir: ' + p);
+          return;
+        }
+        if (!__bn.unlink(String(p))) throw new Error('ENOENT rmdir: ' + p);
+      },
       mkdtempSync: function(prefix) {
         prefix = String(prefix || '/tmp/tmp-');
         var name = prefix + Math.floor(Math.random() * 1e9).toString(36);
@@ -1208,8 +1216,12 @@ function loadCore(name) {
         var b = __bn.readBytes ? __bn.readBytes(String(src)) : null;
         if (b != null) {
           if (__bn.writeBytes) {
-            if (typeof ArrayBuffer !== 'undefined' && b instanceof ArrayBuffer) b = new Uint8Array(b);
-            if (!__bn.writeBytes(String(dest), b)) throw new Error('EIO');
+            var payload = b;
+            if (typeof Uint8Array !== 'undefined' && !(b instanceof ArrayBuffer)) {
+              var u8 = b instanceof Uint8Array ? b : new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+              payload = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+            }
+            if (!__bn.writeBytes(String(dest), payload)) throw new Error('EIO');
             return;
           }
         }

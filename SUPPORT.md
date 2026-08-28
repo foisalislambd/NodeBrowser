@@ -2,8 +2,8 @@
 
 ## Getting help
 
-1. Read the [README](./README.md) and [PLAN](./PLAN.md).
-2. Search [existing issues](../../issues) before opening a new one.
+1. Read the [README](./README.md) and [roadmap](./ROADMAP.md).
+2. Search [existing issues](https://github.com/foisalislambd/NodeBrowser/issues) before opening a new one.
 3. For usage questions, open a **Question** discussion or an issue with the `question` label.
 4. For bugs, use the bug report template and include repro steps.
 

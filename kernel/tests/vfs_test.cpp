@@ -89,6 +89,47 @@ int main() {
     CHECK(ht.has_value() && *ht == "hello");
   }
 
+  {
+    CHECK(vfs.mkdir("/keep", true));
+    CHECK(vfs.write_text("/keep/a.txt", "a"));
+    CHECK(!vfs.rename("/keep/a.txt", "/no-parent/a.txt"));
+    CHECK(vfs.exists("/keep/a.txt"));
+    CHECK(vfs.mkdir("/exists-dir", true));
+    CHECK(!vfs.mkdir("/exists-dir", false));
+    CHECK(vfs.mkdir("/exists-dir", true));
+  }
+
+  {
+    std::vector<uint8_t> tar(512 + 512, 0);
+    const char* name = "../pwn.txt";
+    for (int i = 0; name[i]; ++i) tar[static_cast<size_t>(i)] = static_cast<uint8_t>(name[i]);
+    const char* sz = "00000000001";
+    for (int i = 0; i < 11; ++i) tar[124 + i] = static_cast<uint8_t>(sz[i]);
+    tar[156] = '0';
+    unsigned sum = 0;
+    for (int i = 0; i < 512; ++i) sum += (i >= 148 && i < 156) ? 32 : tar[static_cast<size_t>(i)];
+    char chk[8];
+    std::snprintf(chk, sizeof(chk), "%06o", sum);
+    for (int i = 0; i < 6; ++i) tar[148 + i] = static_cast<uint8_t>(chk[i]);
+    tar[154] = '\0';
+    tar[155] = ' ';
+    tar[512] = 'X';
+    vfs.extract_tar(tar.data(), tar.size(), "/safe");
+    CHECK(!vfs.exists("/pwn.txt"));
+  }
+
+  {
+    const char* nasty[] = {
+      "/fuzz/./c.txt",
+      "/fuzz/a/../a/b/c.txt",
+      "/fuzz/a/b/c.txt",
+    };
+    CHECK(vfs.mkdir("/fuzz/a/b", true));
+    CHECK(vfs.write_text("/fuzz/a/b/c.txt", "ok"));
+    CHECK(vfs.read_text(nasty[1]).has_value());
+    CHECK(*vfs.read_text(nasty[1]) == "ok");
+  }
+
   if (fails) {
     std::cerr << fails << " failure(s)\n";
     return 1;

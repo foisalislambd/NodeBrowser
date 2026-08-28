@@ -52,6 +52,8 @@ function attachWorker(w: Worker): void {
     const err = new Error(ev.message || 'kernel worker crashed');
     for (const slot of pending.values()) slot.reject(err);
     pending.clear();
+    worker?.terminate();
+    worker = null;
   };
 }
 

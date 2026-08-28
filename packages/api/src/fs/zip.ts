@@ -1,5 +1,7 @@
 /** ZIP + gzip-tar extract into the kernel VFS (demo upload). */
 
+import { resolveUnderRoot, sanitizeArchiveName } from './paths.js';
+
 const SIG_EOCD = 0x06054b50;
 const SIG_CD = 0x02014b50;
 const MAX_FILES = 8000;
@@ -73,10 +75,10 @@ export async function unzip(bytes: Uint8Array): Promise<Record<string, Uint8Arra
     const commentLen = u16(bytes, p + 32);
     const localOff = u32(bytes, p + 42);
     const nameBytes = bytes.subarray(p + 46, p + 46 + nameLen);
-    const name = decodeName(nameBytes, !!(flags & 0x800)).replace(/\\/g, '/');
+    const rawName = decodeName(nameBytes, !!(flags & 0x800)).replace(/\\/g, '/');
     p += 46 + nameLen + extraLen + commentLen;
-    if (!name || name.endsWith('/')) continue;
-    if (name.startsWith('__MACOSX/') || name.includes('/__MACOSX/') || name.endsWith('.DS_Store')) continue;
+    const name = sanitizeArchiveName(rawName);
+    if (!name) continue;
     if (uncompSize > MAX_BYTES || (total += uncompSize) > MAX_BYTES) {
       throw new Error('zip: uncompressed size exceeds 80 MiB limit');
     }
@@ -89,7 +91,7 @@ export async function unzip(bytes: Uint8Array): Promise<Record<string, Uint8Arra
     if (method === 0) raw = compressed.slice();
     else if (method === 8) raw = await inflateRaw(compressed);
     else throw new Error(`zip: unsupported compression method ${method} (${name})`);
-    out[name.replace(/^\.\//, '')] = raw;
+    out[name] = raw;
   }
   return out;
 }
@@ -118,12 +120,9 @@ export function parseTar(buf: Uint8Array): Record<string, Uint8Array> {
     const fullName = (prefix ? `${prefix}/${name}` : name).replace(/\\/g, '/');
     offset += 512;
     const content = buf.subarray(offset, offset + size);
-    if ((type === 0 || type === 48) && fullName && !fullName.endsWith('/')) {
-      if (fullName.startsWith('__MACOSX/')) {
-        offset += Math.ceil(size / 512) * 512;
-        continue;
-      }
-      out[fullName.replace(/^\.\//, '')] = content.slice();
+    const safe = sanitizeArchiveName(fullName);
+    if ((type === 0 || type === 48) && safe) {
+      out[safe] = content.slice();
     }
     offset += Math.ceil(size / 512) * 512;
   }
@@ -151,8 +150,9 @@ export function stripSingleRoot(files: Record<string, Uint8Array>): Record<strin
   return Object.keys(out).length ? out : files;
 }
 
-export function joinArchivePath(...parts: string[]): string {
-  return parts.join('/').replace(/\/+/g, '/');
+export function joinArchivePath(root: string, ...relParts: string[]): string {
+  const rel = relParts.filter(Boolean).join('/');
+  return resolveUnderRoot(root, rel);
 }
 
 function crc32(data: Uint8Array): number {

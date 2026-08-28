@@ -14,7 +14,7 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: How should it work? Link PLAN.md phase if relevant.
+      description: How should it work? Link ROADMAP.md if relevant.
     validations:
       required: true
   - type: textarea
@@ -26,5 +26,5 @@ body:
     attributes:
       label: Scope check
       options:
-        - label: I understand full Node / Vite / Next parity is gradual (see PLAN.md)
+        - label: I understand full Node / Vite / Next parity is gradual (see ROADMAP.md)
           required: true

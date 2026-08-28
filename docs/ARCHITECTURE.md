@@ -9,7 +9,7 @@
 │  └──────────────┘  └──────┬───────┘  └─────────┬─────────┘  │
 │                           │ MessagePort / SAB               │
 │                    ┌──────▼────────────────────┐            │
-│                    │  browsernode.wasm (kernel)│            │
+│                    │  browsernode_kernel.wasm  │            │
 │                    │  ┌────────┐ ┌───────────┐ │            │
 │                    │  │  VFS   │ │ Processes │ │            │
 │                    │  └────────┘ └───────────┘ │            │
@@ -50,7 +50,7 @@
 | `compress/` | gzip/inflate helper |
 | `index.ts` / `compat.ts` | public barrels (`dist/index.js`, `dist/compat.js`) |
 
-See **Language law** in `[PLAN.md](../PLAN.md)`.
+See **Language law** in [`ROADMAP.md`](../ROADMAP.md).
 
 ## Why QuickJS (not full Node C++ port)
 
@@ -77,5 +77,5 @@ Processes are **cooperative**, not OS threads:
 ## Networking
 
 Node `net.Server` / `http.Server` register a port in the kernel.
-Host maps `https://<origin>/__bn/<id>/<port>/...` via Service Worker
+Host maps `https://<origin>/__bn_preview/<port>/...` via Service Worker
 into an in-memory request that invokes the JS HTTP callback.

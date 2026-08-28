@@ -1,7 +1,5 @@
 /** Link package.json "bin" entries into node_modules/.bin (Phase 23). */
 
-export type BinLink = { name: string; target: string };
-
 /** Parse package.json bin field into name → relative path map. */
 export function parseBinField(
   pkgName: string,

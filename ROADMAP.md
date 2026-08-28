@@ -1,12 +1,18 @@
 # Roadmap
 
-Full detail: [`PLAN.md`](./PLAN.md).
+See also [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## North star
 
 Open-source **WebContainers-class** runtime in the browser tab — **C/C++ → WASM kernel**, not a JavaScript Node.
 
 Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeScript is only `boot` / `mount` / `spawn`, npm `fetch`, OPFS, Service Worker, and UI.
+
+## Language law
+
+- **Kernel / guest Node:** C++ and the QuickJS embed (`kernel/`, `kernel/embed/guest_modules.js`). New Node modules go there, not in the host package.
+- **Host (`@foisal/nodebrowser`):** TypeScript only — WASM load, npm registry fetch, OPFS, Service Worker, bundler shims.
+- **Demo UI:** JavaScript under `demo/src` (Vite; no parallel `.ts` sources).
 
 ## Already in C++/WASM (early)
 
@@ -30,4 +36,4 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 
 ## Non-goals
 
-Native `.node` addons, raw internet TCP, perfect Node parity, a second Node in TypeScript, full Turbopack — see `PLAN.md`.
+Native `.node` addons, raw internet TCP, perfect Node parity, a second Node in TypeScript, full Turbopack — see `ROADMAP.md`.

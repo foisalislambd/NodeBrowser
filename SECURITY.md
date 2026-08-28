@@ -4,7 +4,7 @@
 
 | Version | Supported |
 |---------|-----------|
-| `0.1.x` (main) | ✅ |
+| `1.x` (main) | ✅ |
 | older / unreleased forks | ❌ best-effort only |
 
 NodeBrowser runs untrusted-looking workloads **inside the browser tab** (VFS + JS/WASM). Treat it like any other client-side sandbox: isolation is best-effort, not a hardened multi-tenant security boundary yet.

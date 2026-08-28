@@ -9,7 +9,7 @@ Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md).
 ## Ways to contribute
 
 - Bug reports and reproducible demos
-- Docs / PLAN clarifications
+- Docs / roadmap clarifications
 - Node API polyfills and tests
 - Demo UX (file manager, preview, a11y)
 - Kernel / WASM improvements
@@ -20,7 +20,7 @@ Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ```bash
 git clone --recurse-submodules <repo-url>
-cd browsernode
+cd NodeBrowser
 npm install
 npm run build:api
 npm run build:demo
@@ -59,7 +59,7 @@ Prefer short, imperative subjects:
 - C++ kernel changes should include or update `kernel/tests` when behavior changes.
 - Demo: vanilla JS/CSS; keep mobile pane switching working.
 - Do not commit secrets, large binaries, or `node_modules`.
-- Do not expand scope into full Vite/Next-in-WASM unless agreed in an issue/`PLAN.md`.
+- Do not expand scope into full Vite/Next-in-WASM unless agreed in an issue/`ROADMAP.md`.
 
 ## Testing
 
@@ -74,7 +74,7 @@ Prefer short, imperative subjects:
 ## Documentation
 
 - User-facing behavior → `README.md`
-- Roadmap → `PLAN.md`
+- Roadmap → `ROADMAP.md`
 - Architecture → `docs/ARCHITECTURE.md`
 - Node module matrix → `runtime/node/MODULES.md` (if present)
 

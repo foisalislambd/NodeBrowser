@@ -1,13 +1,13 @@
 /** Origin Private File System persistence for `/home` (browser only). */
 
+import { parseTar } from './zip.js';
+import { resolveUnderRoot, sanitizeArchiveName } from './paths.js';
+
 const ROOT = 'nodebrowser-vfs';
 const HOME_PREFIX = '/home';
 
 function enc(): TextEncoder {
   return new TextEncoder();
-}
-function dec(): TextDecoder {
-  return new TextDecoder();
 }
 
 async function getRoot(): Promise<FileSystemDirectoryHandle | null> {
@@ -23,11 +23,12 @@ async function getRoot(): Promise<FileSystemDirectoryHandle | null> {
 async function ensureDir(
   root: FileSystemDirectoryHandle,
   parts: string[],
+  create = true,
 ): Promise<FileSystemDirectoryHandle> {
   let dir = root;
   for (const part of parts) {
     if (!part) continue;
-    dir = await dir.getDirectoryHandle(part, { create: true });
+    dir = await dir.getDirectoryHandle(part, { create });
   }
   return dir;
 }
@@ -52,7 +53,7 @@ async function removeOpfsPath(root: FileSystemDirectoryHandle, absPath: string):
   if (parts.length === 0) return;
   const name = parts.pop()!;
   try {
-    const dir = parts.length ? await ensureDir(root, parts) : root;
+    const dir = parts.length ? await ensureDir(root, parts, false) : root;
     await dir.removeEntry(name, { recursive: true });
   } catch {
     /* missing ok */
@@ -88,6 +89,7 @@ export type OpfsFs = {
   readdir: (path: string) => Promise<string[]>;
   exists: (path: string) => Promise<boolean>;
   rm: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
+  stat?: (path: string) => Promise<{ isFile: () => boolean; isDirectory: () => boolean }>;
 };
 
 /** Hydrate VFS `/home` from OPFS. */
@@ -143,10 +145,18 @@ export function createOpfsFlusher(fs: OpfsFs, debounceMs = 400) {
           continue;
         }
         try {
+          if (fs.stat) {
+            const st = await fs.stat(path);
+            if (st.isDirectory()) {
+              const parts = path.replace(/^\/+/, '').split('/').filter(Boolean);
+              await ensureDir(root, parts, true);
+              continue;
+            }
+          }
           const bytes = await fs.readFile(path, 'buffer');
           await writeOpfsFile(root, path, bytes);
         } catch {
-          await removeOpfsPath(root, path);
+          /* missing file after mkdir-as-write: skip, do not delete siblings */
         }
       }
     });
@@ -217,10 +227,12 @@ export async function importHomeTarGz(
   gunzip: (data: Uint8Array) => Uint8Array,
 ): Promise<number> {
   const tar = gunzip(bytes);
-  const files = parseUstar(tar);
+  const files = parseTar(tar);
   let n = 0;
   for (const [rel, data] of Object.entries(files)) {
-    const path = rel.startsWith('/') ? rel : `/${rel}`;
+    const safe = sanitizeArchiveName(rel);
+    if (!safe) continue;
+    const path = resolveUnderRoot('/', safe);
     const dir = path.slice(0, path.lastIndexOf('/')) || '/';
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path, data);
@@ -229,13 +241,26 @@ export async function importHomeTarGz(
   return n;
 }
 
+function splitUstarName(path: string): { name: string; prefix: string } {
+  if (path.length <= 100) return { name: path, prefix: '' };
+  for (let i = path.length - 100; i < path.length; i++) {
+    if (path[i] === '/') {
+      const prefix = path.slice(0, i);
+      const name = path.slice(i + 1);
+      if (prefix.length <= 155 && name.length <= 100) return { name, prefix };
+    }
+  }
+  return { name: path.slice(0, 100), prefix: '' };
+}
+
 function buildUstar(files: { path: string; data: Uint8Array }[]): Uint8Array {
   const blocks: Uint8Array[] = [];
   const encoder = enc();
   for (const f of files) {
-    const name = f.path.slice(0, 100);
+    const { name, prefix } = splitUstarName(f.path);
     const header = new Uint8Array(512);
     header.set(encoder.encode(name), 0);
+    if (prefix) header.set(encoder.encode(prefix), 345);
     const sizeOct = f.data.length.toString(8).padStart(11, '0') + '\0';
     header.set(encoder.encode(sizeOct), 124);
     header[156] = '0'.charCodeAt(0);
@@ -263,33 +288,6 @@ function buildUstar(files: { path: string; data: Uint8Array }[]): Uint8Array {
   for (const b of blocks) {
     out.set(b, o);
     o += b.length;
-  }
-  return out;
-}
-
-function parseUstar(buf: Uint8Array): Record<string, Uint8Array> {
-  const out: Record<string, Uint8Array> = {};
-  const decoder = dec();
-  let offset = 0;
-  const readStr = (start: number, len: number) => {
-    let end = start;
-    const limit = start + len;
-    while (end < limit && buf[end] !== 0) end++;
-    return decoder.decode(buf.subarray(start, end));
-  };
-  while (offset + 512 <= buf.length) {
-    const block = buf.subarray(offset, offset + 512);
-    if (block.every((b) => b === 0)) break;
-    const name = readStr(offset, 100);
-    const sizeStr = readStr(offset + 124, 12).trim();
-    const size = sizeStr ? parseInt(sizeStr, 8) : 0;
-    const type = buf[offset + 156] ?? 0;
-    offset += 512;
-    const content = buf.subarray(offset, offset + size);
-    if ((type === 0 || type === 48) && name) {
-      out[name] = content.slice();
-    }
-    offset += Math.ceil(size / 512) * 512;
   }
   return out;
 }

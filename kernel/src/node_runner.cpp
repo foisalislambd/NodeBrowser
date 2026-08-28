@@ -415,8 +415,9 @@ int cmd_mkdir(Kernel& k, Process& proc) {
 }
 
 bool rm_tree(Kernel& k, const std::string& path) {
-  auto st = k.vfs().stat(path, true);
+  auto st = k.vfs().stat(path, false);
   if (!st) return false;
+  if (st->kind == NodeKind::Symlink) return k.vfs().unlink(path);
   if (st->kind == NodeKind::Directory) {
     auto ents = k.vfs().readdir(path);
     if (ents) {
@@ -449,7 +450,7 @@ int cmd_rm(Kernel& k, Process& proc) {
   int rc = 0;
   for (const auto& p : paths) {
     auto path = join_path(proc.cwd, p);
-    auto st = k.vfs().stat(path, true);
+    auto st = k.vfs().stat(path, false);
     if (!st) {
       write_err(proc, "rm: cannot remove " + p + "\n");
       rc = 1;
@@ -880,16 +881,22 @@ static JSValue js_bn_write_file(JSContext* ctx, JSValueConst, int argc, JSValueC
   if (ab) {
     ok = nc->kernel->vfs().write_file(path, std::vector<uint8_t>(ab, ab + ab_size), true);
   } else {
+    size_t off = 0, len = 0, bpe = 0;
+    uint8_t* ta = JS_GetTypedArrayBuffer(ctx, argv[1], &off, &len, &bpe);
+    if (ta) {
+      ok = nc->kernel->vfs().write_file(path, std::vector<uint8_t>(ta + off, ta + off + len), true);
+    } else {
     // Prefer ArrayBuffer from guest (Uint8Array.buffer). TypedArray objects are not
     // unwrapped by JS_GetArrayBuffer — fall back to string only for text writes.
-    size_t len = 0;
-    const char* data = JS_ToCStringLen(ctx, &len, argv[1]);
+    size_t slen = 0;
+    const char* data = JS_ToCStringLen(ctx, &slen, argv[1]);
     if (!data) {
       JS_FreeCString(ctx, path);
       return JS_EXCEPTION;
     }
-    ok = nc->kernel->vfs().write_text(path, std::string_view(data, len), true);
+    ok = nc->kernel->vfs().write_text(path, std::string_view(data, slen), true);
     JS_FreeCString(ctx, data);
+    }
   }
   if (ok) emit_fs_js(ctx, "change", path);
   JS_FreeCString(ctx, path);
@@ -1258,6 +1265,17 @@ static JSValue js_bn_unlink(JSContext* ctx, JSValueConst, int argc, JSValueConst
   return JS_NewBool(ctx, ok);
 }
 
+static JSValue js_bn_rmdir(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+  bool ok = nc->kernel->vfs().rmdir(path);
+  if (ok) emit_fs_js(ctx, "rename", path);
+  JS_FreeCString(ctx, path);
+  return JS_NewBool(ctx, ok);
+}
+
 static JSValue js_bn_print(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   auto* nc = get_opaque(ctx);
   if (!nc) return JS_EXCEPTION;
@@ -1283,6 +1301,26 @@ static JSValue js_bn_eprint(JSContext* ctx, JSValueConst, int argc, JSValueConst
     JS_FreeCString(ctx, s);
   }
   write_err(*nc->proc, "\n");
+  return JS_UNDEFINED;
+}
+
+static JSValue js_bn_write_out(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* s = JS_ToCString(ctx, argv[0]);
+  if (!s) return JS_EXCEPTION;
+  write_out(*nc->proc, s);
+  JS_FreeCString(ctx, s);
+  return JS_UNDEFINED;
+}
+
+static JSValue js_bn_write_err(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* s = JS_ToCString(ctx, argv[0]);
+  if (!s) return JS_EXCEPTION;
+  write_err(*nc->proc, s);
+  JS_FreeCString(ctx, s);
   return JS_UNDEFINED;
 }
 
@@ -1347,8 +1385,8 @@ var process = {
   browser: false,
   title: 'node',
   exit: function(code) { process.exitCode = code|0; throw {__bn_exit: code|0}; },
-  stdout: { write: function(s) { __bn.print(String(s)); }, isTTY: false },
-  stderr: { write: function(s) { __bn.eprint(String(s)); }, isTTY: false },
+  stdout: { write: function(s) { (__bn.writeOut || __bn.print)(String(s)); }, isTTY: false },
+  stderr: { write: function(s) { (__bn.writeErr || __bn.eprint)(String(s)); }, isTTY: false },
   stdin: {
     isTTY: false,
     readable: true,
@@ -2084,10 +2122,13 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "readdir", JS_NewCFunction(ctx, js_bn_readdir, "readdir", 1));
   JS_SetPropertyStr(ctx, bn, "mkdir", JS_NewCFunction(ctx, js_bn_mkdir, "mkdir", 2));
   JS_SetPropertyStr(ctx, bn, "unlink", JS_NewCFunction(ctx, js_bn_unlink, "unlink", 1));
+  JS_SetPropertyStr(ctx, bn, "rmdir", JS_NewCFunction(ctx, js_bn_rmdir, "rmdir", 1));
   JS_SetPropertyStr(ctx, bn, "symlink", JS_NewCFunction(ctx, js_bn_symlink, "symlink", 2));
   JS_SetPropertyStr(ctx, bn, "readlink", JS_NewCFunction(ctx, js_bn_readlink, "readlink", 1));
   JS_SetPropertyStr(ctx, bn, "print", JS_NewCFunction(ctx, js_bn_print, "print", 0));
   JS_SetPropertyStr(ctx, bn, "eprint", JS_NewCFunction(ctx, js_bn_eprint, "eprint", 0));
+  JS_SetPropertyStr(ctx, bn, "writeOut", JS_NewCFunction(ctx, js_bn_write_out, "writeOut", 1));
+  JS_SetPropertyStr(ctx, bn, "writeErr", JS_NewCFunction(ctx, js_bn_write_err, "writeErr", 1));
   JS_SetPropertyStr(ctx, bn, "cwd", JS_NewCFunction(ctx, js_bn_cwd, "cwd", 0));
   JS_SetPropertyStr(ctx, bn, "getEnv", JS_NewCFunction(ctx, js_bn_get_env, "getEnv", 0));
   JS_SetPropertyStr(ctx, bn, "serverReady", JS_NewCFunction(ctx, js_bn_server_ready, "serverReady", 1));

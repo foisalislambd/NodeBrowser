@@ -56,13 +56,18 @@ export type NextResult = { url?: string; port?: number; outDir: string; appDir?:
 const LAYOUT_FILES = ['layout.tsx', 'layout.jsx', 'layout.ts', 'layout.js'];
 
 function wrapperSource(entryPage: string, layoutFile?: string | null): string {
-  const layoutImport = layoutFile ? `import ${JSON.stringify(layoutFile)};\n` : '';
+  const layoutImport = layoutFile
+    ? `import Layout from ${JSON.stringify(layoutFile)};\n`
+    : '';
+  const render = layoutFile
+    ? `createRoot(el).render(<Layout><Page /></Layout>);\n`
+    : `createRoot(el).render(<Page />);\n`;
   return (
     layoutImport +
     `import Page from ${JSON.stringify(entryPage)};\n` +
     `import { createRoot } from 'react-dom/client';\n` +
     `const el = document.getElementById('root') || document.body;\n` +
-    `createRoot(el).render(<Page />);\n`
+    render
   );
 }
 

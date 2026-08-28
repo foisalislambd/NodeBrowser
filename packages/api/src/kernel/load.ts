@@ -163,11 +163,16 @@ function wrap(mod: EmscriptenModule): KernelModule {
   };
 
   const readLstatKind = (k: number, path: string): string | null => {
-    if (!mod._bn_vfs_lstat_json) return null;
+    return readStatKind(k, path, false);
+  };
+
+  const readStatKind = (k: number, path: string, follow: boolean): string | null => {
+    const fn = follow ? mod._bn_vfs_stat_json : mod._bn_vfs_lstat_json;
+    if (!fn) return null;
     const p = allocStr(path);
     const outPtr = mod._malloc(4);
     try {
-      if (!mod._bn_vfs_lstat_json(k, p, outPtr)) return null;
+      if (!fn(k, p, outPtr)) return null;
       const jsonPtr =
         mod.getValue?.(outPtr, 'i32') ??
         new DataView(mod.HEAPU8.buffer).getUint32(outPtr, true);
@@ -296,7 +301,7 @@ function wrap(mod: EmscriptenModule): KernelModule {
     },
     isDir: (k, path) => {
       if (path === '/' || path === '') return true;
-      const kind = readLstatKind(k, path);
+      const kind = readStatKind(k, path, true);
       if (kind != null) return kind === 'directory';
       const p = allocStr(path);
       try {
@@ -428,12 +433,15 @@ export type LoadKernelOptions = {
   useWasm?: UseWasmOption;
 };
 
-/** Clear kernel caches (tests). */
-export function resetKernelCache(): void {
+/** Clear kernel caches (tests). Await this before the next `boot()` so the Worker is gone. */
+export async function resetKernelCache(): Promise<void> {
   cachedWasmFactory = null;
-  void import('./kernel-proxy.js')
-    .then((m) => m.terminateKernelWorker())
-    .catch(() => undefined);
+  try {
+    const m = await import('./kernel-proxy.js');
+    m.terminateKernelWorker();
+  } catch {
+    /* ignore */
+  }
 }
 
 export function defaultWasmJsUrl(): string {
