@@ -881,21 +881,27 @@ static JSValue js_bn_write_file(JSContext* ctx, JSValueConst, int argc, JSValueC
   if (ab) {
     ok = nc->kernel->vfs().write_file(path, std::vector<uint8_t>(ab, ab + ab_size), true);
   } else {
+    // Current QuickJS: JS_GetTypedArrayBuffer returns a JSValue ArrayBuffer, not uint8_t*.
     size_t off = 0, len = 0, bpe = 0;
-    uint8_t* ta = JS_GetTypedArrayBuffer(ctx, argv[1], &off, &len, &bpe);
-    if (ta) {
-      ok = nc->kernel->vfs().write_file(path, std::vector<uint8_t>(ta + off, ta + off + len), true);
+    JSValue buf = JS_GetTypedArrayBuffer(ctx, argv[1], &off, &len, &bpe);
+    if (!JS_IsException(buf)) {
+      size_t backing = 0;
+      uint8_t* ta = JS_GetArrayBuffer(ctx, &backing, buf);
+      if (ta && off <= backing && len <= backing - off) {
+        ok = nc->kernel->vfs().write_file(path, std::vector<uint8_t>(ta + off, ta + off + len), true);
+      }
+      JS_FreeValue(ctx, buf);
     } else {
-    // Prefer ArrayBuffer from guest (Uint8Array.buffer). TypedArray objects are not
-    // unwrapped by JS_GetArrayBuffer — fall back to string only for text writes.
-    size_t slen = 0;
-    const char* data = JS_ToCStringLen(ctx, &slen, argv[1]);
-    if (!data) {
-      JS_FreeCString(ctx, path);
-      return JS_EXCEPTION;
-    }
-    ok = nc->kernel->vfs().write_text(path, std::string_view(data, slen), true);
-    JS_FreeCString(ctx, data);
+      JSValue ex = JS_GetException(ctx);
+      JS_FreeValue(ctx, ex);
+      size_t slen = 0;
+      const char* data = JS_ToCStringLen(ctx, &slen, argv[1]);
+      if (!data) {
+        JS_FreeCString(ctx, path);
+        return JS_EXCEPTION;
+      }
+      ok = nc->kernel->vfs().write_text(path, std::string_view(data, slen), true);
+      JS_FreeCString(ctx, data);
     }
   }
   if (ok) emit_fs_js(ctx, "change", path);
