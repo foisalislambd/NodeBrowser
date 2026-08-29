@@ -20,7 +20,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `child_process` | ok (subset) | spawn/execFile; `parent_pid`; `kill` = kill tree; max 32 procs |
 | `module` / `require` | ok | CJS + **createRequire** + `exports` field + ESM rewrite |
 | `url` | ok (subset) | parse + `fileURLToPath` / `pathToFileURL` |
-| `util` | ok (subset) | promisify/callbackify/format/inherits |
+| `util` | ok (subset) | promisify/callbackify/format/inherits/deprecate/types |
 | `os` | ok (subset) | platform linux, tmpdir, cpus, homedir |
 | `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(**sha1/sha256/sha384/sha512**) |
 | `zlib` | ok (subset) | gzip/gunzip/deflate/inflate sync (+ streams) |
@@ -35,8 +35,9 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `cluster` | stub | `fork` throws |
 | `dns` / `dgram` | stub | lookup → 127.0.0.1 |
 | `inspector` / `v8` / `wasi` | stub | |
-| `assert` | stub | |
-| `querystring` | stub | |
+| `assert` | ok (subset) | ok/equal/strictEqual/deepEqual/throws |
+| `querystring` | ok (subset) | parse/stringify + arrays |
+| `constants` / `punycode` / `sys` | stub | sys → util |
 | `tty` | ok (stub) | `isatty` → false; ReadStream/WriteStream |
 | `readline` | ok (stub) | createInterface MVP |
 

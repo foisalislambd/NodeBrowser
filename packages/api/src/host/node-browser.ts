@@ -1,7 +1,7 @@
 import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
 import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from '../kernel/load.js';
 import { flattenTree } from '../fs/tree.js';
-import { installPackage, parseSpec } from '../npm/install.js';
+import { installMany, uninstallPackages, listInstalled, parseSpec } from '../npm/install.js';
 import { detectForeignLockfile } from '../npm/lockfiles.js';
 import { HttpBridge } from '../net/http-bridge.js';
 import { bundleWithEsbuild, type BundleOptions } from '../bundler/esbuild.js';
@@ -347,6 +347,8 @@ export class NodeBrowser {
 
   async spawn(cmd: string, args: string[] = [], opts: SpawnOptions = {}): Promise<BrowserNodeProcess> {
     const cwd = opts.cwd ?? '/';
+    const npm = matchHostNpm(cmd, args);
+    if (npm) return this.#spawnHostNpm(npm, cwd);
 
     // Reserve pid tracking up-front — listen() fires synchronously inside spawn().
     const pendingPorts = new Set<number>();
@@ -388,36 +390,56 @@ export class NodeBrowser {
       __bn_on_npm?: (cwd: string, action: string, payload: string, pid: number) => void;
       __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
     }).__bn_on_npm = (cwd, action, payload, pid) => {
-      const finish = () => {
-        void this.#killWithChildren(pid);
+      const finish = (code: number) => {
+        void this.#completePid(pid, code);
       };
       void (async () => {
         if (action === 'run') {
           const child = await self.runScript(payload, cwd);
           this.#attachSpawnChild(pid, child.pid);
-          await child.exit;
+          const code = await child.exit;
+          finish(code);
           return;
         }
+        if (action === 'ls') {
+          const rows = await listInstalled(self, cwd);
+          const lines =
+            (rows.length ? rows.map((r) => `${r.name}@${r.version}`).join('\n') : '(empty)') + '\n';
+          await self.#writeProcOut(pid, lines);
+          finish(0);
+          return;
+        }
+        if (action === 'uninstall') {
+          const names = payload.trim() ? payload.trim().split(/\s+/) : [];
+          const n = await uninstallPackages(self, names, cwd);
+          await self.#writeProcOut(pid, `removed ${n} package${n === 1 ? '' : 's'}\n`);
+          finish(0);
+          return;
+        }
+        const saveDev = action === 'install-dev';
         const specs = payload.trim() ? payload.trim().split(/\s+/) : [];
-        await self.install(specs, cwd);
-      })()
-        .catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))))
-        .finally(finish);
+        await self.install(specs, cwd, { logPid: pid, saveDev });
+        finish(0);
+      })().catch(async (e) => {
+        const err = e instanceof Error ? e : new Error(String(e));
+        self.#emit('error', err);
+        await self.#writeProcErr(pid, String(err.message || err) + '\n');
+        finish(1);
+      });
     };
     (globalThis as unknown as {
       __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
     }).__bn_on_npx = (pkg, rest, cwd, pid) => {
-      const finish = () => {
-        void this.#killWithChildren(pid);
-      };
       const args = rest ? rest.split('\x1f').filter(Boolean) : [];
       void (async () => {
         const child = await self.npx(pkg, args, cwd);
         this.#attachSpawnChild(pid, child.pid);
-        await child.exit;
-      })()
-        .catch((e) => self.#emit('error', e instanceof Error ? e : new Error(String(e))))
-        .finally(finish);
+        const code = await child.exit;
+        await this.#completePid(pid, code);
+      })().catch(async (e) => {
+        self.#emit('error', e instanceof Error ? e : new Error(String(e)));
+        await this.#completePid(pid, 1);
+      });
     };
 
     const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, opts.env));
@@ -515,38 +537,36 @@ export class NodeBrowser {
   }
 
   /** Install npm packages into cwd/node_modules (deps + cache). Empty list = package.json deps. */
-  async install(packages: string[], cwd = '/'): Promise<void> {
+  async install(
+    packages: string[],
+    cwd = '/',
+    opts?: { logPid?: number; saveDev?: boolean; onLog?: (line: string) => void },
+  ): Promise<void> {
     const foreign = await detectForeignLockfile(this.fs, cwd);
     if (foreign) {
-      this.#emit('install-progress', {
-        phase: 'resolve',
-        name: 'lockfile',
-        message: `${foreign} lockfile found — NodeBrowser installs with npm (corepack/yarn/pnpm not executed)`,
-      });
+      this.#emitInstall(
+        {
+          phase: 'resolve',
+          name: 'lockfile',
+          message: `${foreign} lockfile found — NodeBrowser installs with npm (corepack/yarn/pnpm not executed)`,
+        },
+        opts?.logPid,
+        opts?.onLog,
+      );
     }
-    let list = packages;
-    if (!list.length) {
-      list = await this.#manifestDeps(cwd);
-    }
-    for (const pkg of list) {
-      await installPackage(this, pkg, cwd, {
-        withDeps: true,
-        onProgress: (p) => this.#emit('install-progress', p),
-      });
-    }
+    await installMany(this, packages, cwd, {
+      saveDev: opts?.saveDev,
+      onProgress: (p) => this.#emitInstall(p, opts?.logPid, opts?.onLog),
+    });
   }
 
-  async #manifestDeps(cwd: string): Promise<string[]> {
-    try {
-      const raw = await this.fs.readFile(joinFsPath(cwd, 'package.json'), 'utf8');
-      const pkg = JSON.parse(raw) as {
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      return [...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.devDependencies || {})];
-    } catch {
-      return [];
-    }
+  /**
+   * Unpack an uncompressed tar into dest (used by npm tarball extract).
+   * npm packages use a `package/` prefix which the installer then hoists.
+   */
+  async extractTar(data: Uint8Array, destDir: string): Promise<number> {
+    if (!this.#mod.extractTar) throw new Error('extractTar: kernel ABI missing');
+    return asy(this.#mod.extractTar(this.#k, data, destDir));
   }
 
   /** Run `package.json` scripts via kernel `sh -c` (not a JS guest shell). */
@@ -838,6 +858,122 @@ export class NodeBrowser {
     return this.#killWithChildren(pid);
   }
 
+  async #spawnHostNpm(
+    req: { action: string; specs: string[]; saveDev: boolean; script?: string },
+    cwd: string,
+  ): Promise<BrowserNodeProcess> {
+    let exitResolve!: (code: number) => void;
+    const exit = new Promise<number>((r) => {
+      exitResolve = r;
+    });
+    const self = this;
+    const output = new ReadableStream<string>({
+      start(controller) {
+        const log = (text: string) => {
+          if (text) controller.enqueue(text);
+        };
+        void (async () => {
+          try {
+            if (req.action === 'help') {
+              log('npm: in-tab supports install, uninstall, ls, and run\n');
+              exitResolve(1);
+              return;
+            }
+            if (req.action === 'run') {
+              if (!req.script) throw new Error('npm run: missing script name');
+              log(`npm run ${req.script}\n`);
+              const child = await self.runScript(req.script, cwd);
+              const reader = child.output.getReader();
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) controller.enqueue(value);
+              }
+              exitResolve(await child.exit);
+              return;
+            }
+            if (req.action === 'ls') {
+              log('npm ls\n');
+              const rows = await listInstalled(self, cwd);
+              log((rows.length ? rows.map((r) => `${r.name}@${r.version}`).join('\n') : '(empty)') + '\n');
+              exitResolve(0);
+              return;
+            }
+            if (req.action === 'uninstall') {
+              log(`npm uninstall ${req.specs.join(' ')}\n`);
+              const n = await uninstallPackages(self, req.specs, cwd);
+              log(`removed ${n} package${n === 1 ? '' : 's'}\n`);
+              exitResolve(0);
+              return;
+            }
+            log(req.specs.length ? `npm install ${req.specs.join(' ')}\n` : 'npm install\n');
+            await self.install(req.specs, cwd, {
+              saveDev: req.saveDev,
+              onLog: (line) => log(line),
+            });
+            exitResolve(0);
+          } catch (e) {
+            log(String(e instanceof Error ? e.message : e) + '\n');
+            exitResolve(1);
+          } finally {
+            controller.close();
+          }
+        })();
+      },
+    });
+    return {
+      pid: 0,
+      exit,
+      output,
+      kill: () => undefined,
+      write: () => undefined,
+    };
+  }
+
+  async #completePid(pid: number, code: number): Promise<void> {
+    try {
+      if (this.#mod.complete) await asy(this.#mod.complete(this.#k, pid, code));
+    } catch {
+      /* older WASM without bn_complete */
+    }
+    const left = await asy(this.#mod.wait(this.#k, pid));
+    if (left === -1) await this.#killWithChildren(pid);
+  }
+
+  async #writeProcOut(pid: number, text: string): Promise<void> {
+    try {
+      if (this.#mod.writeStdout) await asy(this.#mod.writeStdout(this.#k, pid, text));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async #writeProcErr(pid: number, text: string): Promise<void> {
+    try {
+      if (this.#mod.writeStderr) await asy(this.#mod.writeStderr(this.#k, pid, text));
+      else if (this.#mod.writeStdout) await asy(this.#mod.writeStdout(this.#k, pid, text));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  #emitInstall(
+    p: {
+      phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done' | 'summary';
+      name: string;
+      version?: string;
+      message?: string;
+    },
+    logPid?: number,
+    onLog?: (line: string) => void,
+  ): void {
+    const line = formatNpmLine(p);
+    const streamed = !!(line && (logPid || onLog));
+    if (line && logPid) void this.#writeProcOut(logPid, line);
+    if (line && onLog) onLog(line);
+    this.#emit('install-progress', { ...p, streamed: streamed || undefined });
+  }
+
   #attachSpawnChild(parent: number, child: number): void {
     let set = this.#spawnChildren.get(parent);
     if (!set) {
@@ -860,6 +996,65 @@ export class NodeBrowser {
       return false;
     }
   }
+}
+
+function matchHostNpm(
+  cmd: string,
+  args: string[],
+): { action: string; specs: string[]; saveDev: boolean; script?: string } | null {
+  let argv = args;
+  if (cmd === 'npm') {
+    /* use argv */
+  } else if ((cmd === 'sh' || cmd === 'bash') && args[0] === '-c' && typeof args[1] === 'string') {
+    const script = args[1].trim();
+    if (/[|&;<>]/.test(script)) return null;
+    const parts = script.split(/\s+/).filter(Boolean);
+    if (parts[0] !== 'npm') return null;
+    argv = parts.slice(1);
+  } else {
+    return null;
+  }
+  if (!argv.length) return { action: 'help', specs: [], saveDev: false };
+  if (argv[0] === 'run') return { action: 'run', specs: [], saveDev: false, script: argv[1] };
+  let saveDev = false;
+  let action = '';
+  const specs: string[] = [];
+  let gotCmd = false;
+  for (const a of argv) {
+    if (a === '-D' || a === '--save-dev') {
+      saveDev = true;
+      continue;
+    }
+    if (a.startsWith('-')) continue;
+    if (!gotCmd) {
+      gotCmd = true;
+      if (a === 'install' || a === 'i' || a === 'add' || a === 'ci') action = 'install';
+      else if (a === 'uninstall' || a === 'un' || a === 'remove' || a === 'rm') action = 'uninstall';
+      else if (a === 'ls' || a === 'list') action = 'ls';
+      else return null;
+      continue;
+    }
+    specs.push(a);
+  }
+  if (!action) return null;
+  return { action, specs, saveDev };
+}
+
+function formatNpmLine(p: {
+  phase: string;
+  name: string;
+  version?: string;
+  message?: string;
+}): string {
+  if (p.phase === 'summary' && p.message) return p.message + '\n';
+  if (p.phase === 'fetch' && p.message) return p.message + '\n';
+  if (p.phase === 'done' && p.message && p.message.startsWith('+')) return p.message + '\n';
+  if (p.phase === 'done' && p.message === 'already installed') return '';
+  if (p.phase === 'lifecycle' && p.message) return `> ${p.name}\n> ${p.message}\n`;
+  if (p.phase === 'resolve' && p.message && /^(skipped|optional|peer|lockfile)/.test(p.message)) {
+    return `npm WARN ${p.message}\n`;
+  }
+  return '';
 }
 
 function contentTypeFor(filePath: string): string {

@@ -32,7 +32,7 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 ## Must add (still C++/WASM)
 
 1. Real installed `vite`/`tsc` graph coverage (Microsoft tsc.js still may miss APIs)
-2. WC-speed install cache  
+  2. WC-speed install cache
 
 ## Non-goals
 

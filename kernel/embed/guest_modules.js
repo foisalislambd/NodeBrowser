@@ -162,6 +162,7 @@ var __bn_CORE_MODULES = [
   'module', 'buffer', 'assert', 'querystring', 'crypto', 'perf_hooks', 'async_hooks',
   'diagnostics_channel', 'zlib', 'string_decoder', 'timers', 'timers/promises', 'child_process',
   'tty', 'readline', 'worker_threads', 'vm', 'cluster', 'dns', 'dgram', 'inspector', 'v8', 'wasi',
+  'constants', 'punycode', 'sys',
   'connect', 'ws', 'corepack', 'next/cache', 'next/headers'
 ];
 
@@ -721,7 +722,19 @@ function __bn_load_util() {
     inspect: function(v) { try { return JSON.stringify(v); } catch (e) { return String(v); } },
     promisify: promisify,
     callbackify: callbackify,
-    types: { isPromise: function(v) { return !!v && typeof v.then === 'function'; } }
+    deprecate: function(fn) { return fn; },
+    isDeepStrictEqual: function(a, b) { try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return a === b; } },
+    types: {
+      isPromise: function(v) { return !!v && typeof v.then === 'function'; },
+      isDate: function(v) { return v instanceof Date; },
+      isRegExp: function(v) { return v instanceof RegExp; },
+      isMap: function(v) { return typeof Map !== 'undefined' && v instanceof Map; },
+      isSet: function(v) { return typeof Set !== 'undefined' && v instanceof Set; },
+      isArrayBuffer: function(v) { return typeof ArrayBuffer !== 'undefined' && v instanceof ArrayBuffer; },
+      isTypedArray: function(v) { return typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(v) && !(v instanceof DataView); },
+      isUint8Array: function(v) { return v instanceof Uint8Array; },
+      isBuffer: function(v) { return !!(Buffer.isBuffer && Buffer.isBuffer(v)); }
+    }
   };
 }
 
@@ -1726,30 +1739,92 @@ function loadCore(name) {
     };
   }
   if (name === 'assert') {
-    function assert(v, m) { if (!v) throw new Error(m || 'assert'); }
-    assert.strictEqual = function(a, b) { if (a !== b) throw new Error('neq'); };
+    function AssertionError(opts) {
+      opts = opts || {};
+      var msg = opts.message || 'assert failed';
+      var e = new Error(msg);
+      e.name = 'AssertionError';
+      e.code = 'ERR_ASSERTION';
+      e.actual = opts.actual;
+      e.expected = opts.expected;
+      e.operator = opts.operator;
+      return e;
+    }
+    function fail(a, b, m, op) {
+      throw AssertionError({ actual: a, expected: b, message: m, operator: op || 'fail' });
+    }
+    function deep(a, b) {
+      if (a === b) return true;
+      if (a && b && typeof a === 'object' && typeof b === 'object') {
+        try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; }
+      }
+      return false;
+    }
+    function assert(v, m) { if (!v) fail(v, true, m || 'assert', '=='); }
     assert.ok = assert;
+    assert.equal = function(a, b, m) { if (a != b) fail(a, b, m, '=='); };
+    assert.notEqual = function(a, b, m) { if (a == b) fail(a, b, m, '!='); };
+    assert.strictEqual = function(a, b, m) { if (a !== b) fail(a, b, m, '==='); };
+    assert.notStrictEqual = function(a, b, m) { if (a === b) fail(a, b, m, '!=='); };
+    assert.deepEqual = function(a, b, m) { if (!deep(a, b)) fail(a, b, m, 'deepEqual'); };
+    assert.notDeepEqual = function(a, b, m) { if (deep(a, b)) fail(a, b, m, 'notDeepEqual'); };
+    assert.deepStrictEqual = assert.deepEqual;
+    assert.notDeepStrictEqual = assert.notDeepEqual;
+    assert.fail = function(m) { fail(undefined, undefined, m || 'fail', 'fail'); };
+    assert.ifError = function(err) { if (err) throw err; };
+    assert.throws = function(fn, err, m) {
+      var threw = false, got;
+      try { fn(); } catch (e) { threw = true; got = e; }
+      if (!threw) fail(undefined, err, m || 'Missing expected exception', 'throws');
+      if (typeof err === 'function' && !(got instanceof err)) fail(got, err, m, 'throws');
+    };
+    assert.doesNotThrow = function(fn, m) {
+      try { fn(); } catch (e) { fail(e, undefined, m || 'Got unwanted exception', 'doesNotThrow'); }
+    };
+    assert.match = function(s, re, m) { if (!re.test(String(s))) fail(s, re, m, 'match'); };
+    assert.doesNotMatch = function(s, re, m) { if (re.test(String(s))) fail(s, re, m, 'doesNotMatch'); };
+    assert.AssertionError = AssertionError;
     return assert;
   }
   if (name === 'querystring') {
-    return {
-      parse: function(s) {
-        var o = {};
-        String(s || '').split('&').forEach(function(kv) {
-          var p = kv.split('=');
-          if (!p[0]) return;
-          o[decodeURIComponent(p[0])] = decodeURIComponent(p[1] || '');
-        });
-        return o;
-      },
-      stringify: function(o) {
-        var keys = Object.keys(o || {});
-        return keys.map(function(k) {
-          return encodeURIComponent(k) + '=' + encodeURIComponent(o[k]);
-        }).join('&');
-      }
-    };
+    function parse(s, sep, eq) {
+      sep = sep || '&'; eq = eq || '=';
+      var o = {};
+      String(s || '').split(sep).forEach(function(kv) {
+        if (!kv) return;
+        var i = kv.indexOf(eq);
+        var k = decodeURIComponent((i < 0 ? kv : kv.slice(0, i)).replace(/\+/g, ' '));
+        var v = decodeURIComponent((i < 0 ? '' : kv.slice(i + 1)).replace(/\+/g, ' '));
+        if (Object.prototype.hasOwnProperty.call(o, k)) {
+          if (Array.isArray(o[k])) o[k].push(v);
+          else o[k] = [o[k], v];
+        } else o[k] = v;
+      });
+      return o;
+    }
+    function stringify(obj, sep, eq) {
+      sep = sep || '&'; eq = eq || '=';
+      var keys = Object.keys(obj || {});
+      var parts = [];
+      keys.forEach(function(k) {
+        var v = obj[k];
+        if (Array.isArray(v)) {
+          v.forEach(function(item) { parts.push(encodeURIComponent(k) + eq + encodeURIComponent(item)); });
+        } else {
+          parts.push(encodeURIComponent(k) + eq + encodeURIComponent(v == null ? '' : v));
+        }
+      });
+      return parts.join(sep);
+    }
+    return { parse: parse, stringify: stringify, escape: encodeURIComponent, unescape: decodeURIComponent };
   }
+  if (name === 'constants') {
+    return { os: {}, fs: loadCore('fs').constants, crypto: {} };
+  }
+  if (name === 'punycode') {
+    return { toASCII: function(s) { return String(s); }, toUnicode: function(s) { return String(s); }, encode: function(s) { return String(s); }, decode: function(s) { return String(s); } };
+  }
+  if (name === 'sys') return loadCore('util');
   if (name === 'crypto') return __bn_load_crypto();
   if (name === 'perf_hooks') return __bn_load_perf_hooks();
   if (name === 'async_hooks') {

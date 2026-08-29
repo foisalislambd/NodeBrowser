@@ -307,6 +307,22 @@ int main() {
     CHECK(out.find("vm=3") != std::string::npos);
     CHECK(out.find("wt=function") != std::string::npos);
   }
+  {
+    k.vfs().write_text(
+        "/assert.js",
+        "var a=require('assert');\n"
+        "a.strictEqual(1,1);\n"
+        "a.deepEqual({x:1},{x:1});\n"
+        "a.equal(1,'1');\n"
+        "console.log('qs='+require('querystring').stringify({a:1,b:2}));\n"
+        "console.log('sys='+typeof require('sys').format);\n");
+    auto pid = k.spawn("node", {"/assert.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("qs=a=1&b=2") != std::string::npos);
+    CHECK(out.find("sys=function") != std::string::npos);
+  }
 #endif
 
   {

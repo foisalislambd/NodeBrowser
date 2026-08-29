@@ -85,8 +85,12 @@ public:
 
   // stdio helpers for host
   size_t write_stdin(Pid pid, const uint8_t* data, size_t n);
+  size_t write_stdout(Pid pid, const uint8_t* data, size_t n);
+  size_t write_stderr(Pid pid, const uint8_t* data, size_t n);
   size_t read_stdout(Pid pid, uint8_t* data, size_t n);
   size_t read_stderr(Pid pid, uint8_t* data, size_t n);
+  /** Copy running children's unread stdio into the parent (sh -c npm install). */
+  void forward_child_stdio();
 
   // Virtual HTTP servers
   void register_server(Pid pid, int port);

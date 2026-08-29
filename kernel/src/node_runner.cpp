@@ -1387,7 +1387,7 @@ var process = {
   execPath: '/usr/bin/node',
   execArgv: [],
   version: 'v20.11.0',
-  versions: { node: '20.11.0' },
+  versions: { node: '20.11.0', v8: '11.8.172', uv: '1.48.0', modules: '115', openssl: '3.0.13' },
   browser: false,
   title: 'node',
   exit: function(code) { process.exitCode = code|0; throw {__bn_exit: code|0}; },
@@ -2187,6 +2187,11 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   }
 
   std::string script = proc.argv.empty() ? "" : proc.argv[0];
+  if ((script == "-e" || script == "--eval") && proc.argv.size() >= 2) {
+    std::string tmp = join_path(proc.cwd.empty() ? "/" : proc.cwd, ".bn-eval.js");
+    kernel.vfs().write_text(tmp, proc.argv[1]);
+    script = tmp;
+  }
   // Inject argv + env, then run main
   {
     std::ostringstream oss;
@@ -2309,15 +2314,38 @@ int cmd_npm(Kernel& k, Process& proc) {
     payload = proc.argv[1];
   } else {
     bool is_install = false;
+    bool save_dev = false;
+    bool is_uninstall = false;
+    bool is_ls = false;
+    bool got_cmd = false;
     for (const auto& a : proc.argv) {
-      if (a == "install" || a == "i" || a == "add" || a == "ci") is_install = true;
-      else if (!a.empty() && a[0] != '-') {
-        if (!payload.empty()) payload.push_back(' ');
-        payload += a;
+      if (a == "-D" || a == "--save-dev") {
+        save_dev = true;
+        continue;
       }
+      if (!a.empty() && a[0] == '-') continue;
+      if (!got_cmd) {
+        got_cmd = true;
+        if (a == "install" || a == "i" || a == "add" || a == "ci") is_install = true;
+        else if (a == "uninstall" || a == "un" || a == "remove" || a == "rm") is_uninstall = true;
+        else if (a == "ls" || a == "list") is_ls = true;
+        else {
+          write_err(proc, "npm: in-tab supports install, uninstall, ls, and run\n");
+          return 1;
+        }
+        continue;
+      }
+      if (!payload.empty()) payload.push_back(' ');
+      payload += a;
     }
-    if (!is_install) {
-      write_err(proc, "npm: in-tab supports install/i/add/ci and run only\n");
+    if (is_ls) {
+      action = "ls";
+    } else if (is_uninstall) {
+      action = "uninstall";
+    } else if (is_install) {
+      action = save_dev ? "install-dev" : "install";
+    } else {
+      write_err(proc, "npm: in-tab supports install, uninstall, ls, and run\n");
       return 1;
     }
   }
@@ -2333,7 +2361,7 @@ int cmd_npm(Kernel& k, Process& proc) {
         }
       },
       proc.cwd.c_str(), action.c_str(), payload.c_str(), proc.pid);
-  write_out(proc, std::string("npm ") + action + " (host registry fetch → kernel VFS)\n");
+  write_out(proc, std::string("npm ") + action + "\n");
   proc.keep_alive = true;
   return -1;
 #else

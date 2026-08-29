@@ -507,7 +507,26 @@ async function boot() {
     showPreview(port, url).catch((e) => appendTerm(String(e) + '\n'));
   });
   bn.on('install-progress', (p) => {
-    appendTerm(`[install] ${p.phase} ${p.name}${p.version ? '@' + p.version : ''}${p.message ? ' — ' + p.message : ''}\n`);
+    if (p.streamed) return;
+    if (p.phase === 'summary' && p.message) {
+      appendTerm(`${p.message}\n`);
+      return;
+    }
+    if (p.phase === 'done' && p.message && String(p.message).startsWith('+')) {
+      appendTerm(`${p.message}\n`);
+      return;
+    }
+    if (p.phase === 'fetch' && p.message) {
+      appendTerm(`${p.message}\n`);
+      return;
+    }
+    if (p.phase === 'lifecycle' && p.message) {
+      appendTerm(`> ${p.name}\n> ${p.message}\n`);
+      return;
+    }
+    if (p.phase === 'resolve' && p.message && /skipped|optional|lockfile/.test(p.message)) {
+      appendTerm(`npm WARN ${p.message}\n`);
+    }
   });
   setEditorPath(openPath);
   setCwd(projectCwd);
@@ -528,18 +547,35 @@ async function boot() {
   if (ss) ss.textContent = bn.sabStdio ? 'on' : 'off';
   const sp = $('set-persist');
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
-  appendTerm('NodeBrowser ready — VFS file manager + in-tab install/run.\n');
-  appendTerm('Drop a ZIP or a project folder — it replaces /home/project and opens preview.\n');
-  appendTerm('Type a command below (runs as sh -c in the C++/WASM kernel).\n');
+  appendTerm('NodeBrowser ready — VFS file manager + in-tab npm/run.\n');
+  appendTerm('Type `npm install lodash` below — packages land in /home/project/node_modules and print in this terminal.\n');
+  appendTerm('Then require() the package from a .js file and press Run File.\n');
   hideSplash();
   autoStartWorkspace().catch((e) => appendTerm(String(e) + '\n'));
+  const termHistory = [];
+  let termHistIdx = 0;
   const termInput = $('term-input');
   if (termInput) {
     termInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!termHistory.length) return;
+        termHistIdx = Math.max(0, termHistIdx - 1);
+        termInput.value = termHistory[termHistIdx] || '';
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        termHistIdx = Math.min(termHistory.length, termHistIdx + 1);
+        termInput.value = termHistIdx >= termHistory.length ? '' : termHistory[termHistIdx] || '';
+        return;
+      }
       if (e.key !== 'Enter') return;
       e.preventDefault();
       const line = termInput.value.trim();
       if (!line) return;
+      termHistory.push(line);
+      termHistIdx = termHistory.length;
       termInput.value = '';
       runShellLine(line).catch((err) => appendTerm(String(err) + '\n'));
     });
@@ -632,28 +668,9 @@ async function runNode() {
 
 async function installPkg() {
   if (!bn) return;
-  const spec = prompt('npm package to install into VFS', 'ms');
+  const spec = prompt('npm package to install into the project (like a PC)', 'lodash');
   if (!spec) return;
-  const cwd = projectCwd || '/home/project';
-  appendTerm(`npm install ${spec} → ${cwd}/node_modules (in-tab)\n`);
-  try {
-    await bn.install([spec], cwd);
-    appendTerm(`installed ${spec} → ${cwd}/node_modules\n`);
-    expanded.add(cwd);
-    expanded.add(joinPath(cwd, 'node_modules'));
-    await refreshTree();
-    if (spec === 'ms' || spec.startsWith('ms@')) {
-      const smoke = `const ms = require('ms');\nconsole.log(ms('2 days'));\nconsole.log(ms('1h'));\n`;
-      const smokePath = joinPath(cwd, 'index.js');
-      await bn.fs.writeFile(smokePath, smoke);
-      editor.value = smoke;
-      setDirty(false);
-      setEditorPath(smokePath);
-      selectedPath = smokePath;
-    }
-  } catch (e) {
-    appendTerm(String(e) + '\n');
-  }
+  await runShellLine('npm install ' + spec);
 }
 
 async function httpDemo() {

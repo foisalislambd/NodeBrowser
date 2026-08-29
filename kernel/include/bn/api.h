@@ -45,6 +45,10 @@ double bn_vfs_usage(BNKernel* k);
 int bn_read_stdout(BNKernel* k, int pid, uint8_t* buf, int buflen);
 int bn_read_stderr(BNKernel* k, int pid, uint8_t* buf, int buflen);
 int bn_write_stdin(BNKernel* k, int pid, const uint8_t* buf, int buflen);
+int bn_write_stdout(BNKernel* k, int pid, const uint8_t* buf, int buflen);
+int bn_write_stderr(BNKernel* k, int pid, const uint8_t* buf, int buflen);
+/** Finish a keep-alive process (npm/npx) with an exit code instead of SIGKILL. */
+int bn_complete(BNKernel* k, int pid, int exit_code);
 
 // Keep-alive HTTP dispatch (JSON response: {status,headers,body}); malloc'd string
 char* bn_http_dispatch(BNKernel* k, int port, const char* method, const char* path,

@@ -19,10 +19,12 @@ export interface BrowserNodeProcess {
 }
 
 export type InstallProgressEvent = {
-  phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done';
+  phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done' | 'summary';
   name: string;
   version?: string;
   message?: string;
+  /** True when the same line was written to the npm process stdout. */
+  streamed?: boolean;
 };
 
 export type FsChangeEvent = { type: string; path: string };

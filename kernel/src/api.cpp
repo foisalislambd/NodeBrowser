@@ -317,6 +317,22 @@ int bn_write_stdin(BNKernel* k, int pid, const uint8_t* buf, int buflen) {
   return static_cast<int>(k->kernel.write_stdin(pid, buf, static_cast<size_t>(buflen)));
 }
 
+int bn_write_stdout(BNKernel* k, int pid, const uint8_t* buf, int buflen) {
+  if (!k || !buf || buflen <= 0) return 0;
+  return static_cast<int>(k->kernel.write_stdout(pid, buf, static_cast<size_t>(buflen)));
+}
+
+int bn_write_stderr(BNKernel* k, int pid, const uint8_t* buf, int buflen) {
+  if (!k || !buf || buflen <= 0) return 0;
+  return static_cast<int>(k->kernel.write_stderr(pid, buf, static_cast<size_t>(buflen)));
+}
+
+int bn_complete(BNKernel* k, int pid, int exit_code) {
+  if (!k) return 0;
+  k->kernel.complete(pid, exit_code);
+  return 1;
+}
+
 void bn_register_builtins(BNKernel* k) {
   if (!k) return;
   bn::register_node_command(k->kernel);

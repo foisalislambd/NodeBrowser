@@ -55,6 +55,9 @@ export interface KernelModule {
   readStdout(k: KernelHandle, pid: number): Awaitable<string>;
   readStderr(k: KernelHandle, pid: number): Awaitable<string>;
   writeStdin(k: KernelHandle, pid: number, data: string): Awaitable<number>;
+  writeStdout?(k: KernelHandle, pid: number, data: string): Awaitable<number>;
+  writeStderr?(k: KernelHandle, pid: number, data: string): Awaitable<number>;
+  complete?(k: KernelHandle, pid: number, exitCode: number): Awaitable<number>;
   /** Optional: JS fallback exposes this for HttpBridge wiring. */
   setHttpRegistrar?: (fn: HttpRegistrar | null) => void;
   /** Optional: host FS mutation bus (JS kernel). */
@@ -117,6 +120,9 @@ type EmscriptenModule = {
   _bn_read_stdout: (k: number, pid: number, buf: number, len: number) => number;
   _bn_read_stderr: (k: number, pid: number, buf: number, len: number) => number;
   _bn_write_stdin: (k: number, pid: number, buf: number, len: number) => number;
+  _bn_write_stdout?: (k: number, pid: number, buf: number, len: number) => number;
+  _bn_write_stderr?: (k: number, pid: number, buf: number, len: number) => number;
+  _bn_complete?: (k: number, pid: number, code: number) => number;
   _bn_http_dispatch?: (
     k: number,
     port: number,
@@ -149,6 +155,29 @@ function wrap(mod: EmscriptenModule): KernelModule {
     const s = mod.UTF8ToString(ptr);
     mod._bn_free(ptr);
     return s;
+  };
+
+  const writePipe = (
+    fn: (k: number, pid: number, buf: number, len: number) => number,
+    k: number,
+    pid: number,
+    data: string,
+  ) => {
+    const bytes = new TextEncoder().encode(data);
+    let off = 0;
+    while (off < bytes.byteLength) {
+      const slice = bytes.subarray(off);
+      const buf = mod._malloc(slice.byteLength);
+      try {
+        mod.HEAPU8.set(slice, buf);
+        const n = fn(k, pid, buf, slice.byteLength);
+        if (n <= 0) break;
+        off += n;
+      } finally {
+        mod._free(buf);
+      }
+    }
+    return off;
   };
 
   const readPipe = (fn: (k: number, pid: number, buf: number, len: number) => number, k: number, pid: number) => {
@@ -376,23 +405,14 @@ function wrap(mod: EmscriptenModule): KernelModule {
     usageBytes: mod._bn_vfs_usage ? (k) => mod._bn_vfs_usage!(k) : undefined,
     readStdout: (k, pid) => readPipe(mod._bn_read_stdout, k, pid),
     readStderr: (k, pid) => readPipe(mod._bn_read_stderr, k, pid),
-    writeStdin: (k, pid, data) => {
-      const bytes = new TextEncoder().encode(data);
-      let off = 0;
-      while (off < bytes.byteLength) {
-        const slice = bytes.subarray(off);
-        const buf = mod._malloc(slice.byteLength);
-        try {
-          mod.HEAPU8.set(slice, buf);
-          const n = mod._bn_write_stdin(k, pid, buf, slice.byteLength);
-          if (n <= 0) break;
-          off += n;
-        } finally {
-          mod._free(buf);
-        }
-      }
-      return off;
-    },
+    writeStdin: (k, pid, data) => writePipe(mod._bn_write_stdin, k, pid, data),
+    writeStdout: mod._bn_write_stdout
+      ? (k, pid, data) => writePipe(mod._bn_write_stdout!, k, pid, data)
+      : undefined,
+    writeStderr: mod._bn_write_stderr
+      ? (k, pid, data) => writePipe(mod._bn_write_stderr!, k, pid, data)
+      : undefined,
+    complete: mod._bn_complete ? (k, pid, code) => mod._bn_complete!(k, pid, code) : undefined,
     httpDispatch: mod._bn_http_dispatch
       ? (k, port, method, path, headersJson, body) => {
           const m = allocStr(method);

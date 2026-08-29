@@ -504,6 +504,14 @@ async function main() {
   assert(viteCli.out.includes('vite-cli=build'), viteCli.out);
   }
 
+  await bn.fs.writeFile(
+    '/home/project/qs.js',
+    "console.log('qs=' + require('querystring').stringify({ a: 1, b: 'x' }));\n",
+  );
+  const qsOut = await readOut(await bn.spawn('node', ['/home/project/qs.js'], { cwd: '/home/project' }));
+  assert(qsOut.code === 0, 'qs exit');
+  assert(qsOut.out.includes('qs=a=1&b=x'), qsOut.out);
+
   const { WebContainer } = await import('../dist/compat.js');
   const wc = await WebContainer.boot({ useWasm: true });
   assert(wc.runtime === 'wasm', 'compat runtime');

@@ -255,6 +255,43 @@ void Kernel::complete(Pid pid, int exit_code) {
   }
 }
 
+void Kernel::forward_child_stdio() {
+  struct Pair {
+    Pid child;
+    Pid parent;
+  };
+  std::vector<Pair> pairs;
+  {
+    std::lock_guard lock(mu_);
+    for (const auto& kv : procs_) {
+      auto& child = kv.second;
+      if (!child || child->parent_pid <= 0) continue;
+      auto pit = procs_.find(child->parent_pid);
+      if (pit == procs_.end() || !pit->second) continue;
+      const auto& pcmd = pit->second->cmd;
+      // Only shell parents: draining into `node` would steal child_process pipes.
+      if (pcmd != "sh" && pcmd != "bash") continue;
+      if (child->state != ProcessState::Running && child->stdout_buf.data.empty() &&
+          child->stderr_buf.data.empty())
+        continue;
+      pairs.push_back({child->pid, child->parent_pid});
+    }
+  }
+  for (const auto& pr : pairs) {
+    auto child = get(pr.child);
+    auto parent = get(pr.parent);
+    if (!child || !parent) continue;
+    auto out = child->stdout_buf.read_all_string();
+    if (!out.empty()) {
+      parent->stdout_buf.write(reinterpret_cast<const uint8_t*>(out.data()), out.size());
+    }
+    auto err = child->stderr_buf.read_all_string();
+    if (!err.empty()) {
+      parent->stderr_buf.write(reinterpret_cast<const uint8_t*>(err.data()), err.size());
+    }
+  }
+}
+
 int Kernel::pump(int64_t now_ms) {
   if (pumping_) return 0;
   pumping_ = true;
@@ -262,6 +299,8 @@ int Kernel::pump(int64_t now_ms) {
     bool* flag;
     ~PumpGuard() { *flag = false; }
   } guard{&pumping_};
+
+  forward_child_stdio();
 
   if (now_ms <= 0) {
     now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -339,6 +378,18 @@ size_t Kernel::write_stdin(Pid pid, const uint8_t* data, size_t n) {
   auto p = get(pid);
   if (!p) return 0;
   return p->stdin_buf.write(data, n);
+}
+
+size_t Kernel::write_stdout(Pid pid, const uint8_t* data, size_t n) {
+  auto p = get(pid);
+  if (!p || !data || !n) return 0;
+  return p->stdout_buf.write(data, n);
+}
+
+size_t Kernel::write_stderr(Pid pid, const uint8_t* data, size_t n) {
+  auto p = get(pid);
+  if (!p || !data || !n) return 0;
+  return p->stderr_buf.write(data, n);
 }
 
 size_t Kernel::read_stdout(Pid pid, uint8_t* data, size_t n) {
