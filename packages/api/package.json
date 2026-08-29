@@ -1,6 +1,6 @@
 {
   "name": "@foisal/nodebrowser",
-  "version": "1.2.9",
+  "version": "1.3.0",
   "description": "Node.js in the browser (NodeBrowser) — WebContainers-style runtime (VFS, spawn, npm, HTTP preview)",
   "license": "MIT",
   "type": "module",
