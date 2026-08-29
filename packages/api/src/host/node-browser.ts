@@ -18,6 +18,7 @@ import {
 import { zlibPureSync } from '../compress/zlib.js';
 import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
 import { resolveUnderRoot } from '../fs/paths.js';
+import { compileTailwind, syncTailwindBrowser } from '../bundler/tailwind.js';
 import { previewProject, resolveProjectRoot, type PreviewResult } from '../bundler/preview.js';
 import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './json-rpc.js';
 import { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
@@ -349,6 +350,8 @@ export class NodeBrowser {
     const cwd = opts.cwd ?? '/';
     const npm = matchHostNpm(cmd, args);
     if (npm) return this.#spawnHostNpm(npm, cwd);
+    const tw = matchHostTailwind(cmd, args);
+    if (tw) return this.#spawnHostTailwind(tw, cwd);
 
     // Reserve pid tracking up-front — listen() fires synchronously inside spawn().
     const pendingPorts = new Set<number>();
@@ -558,6 +561,9 @@ export class NodeBrowser {
       saveDev: opts?.saveDev,
       onProgress: (p) => this.#emitInstall(p, opts?.logPid, opts?.onLog),
     });
+    if (packages.some((s) => /tailwindcss/i.test(s)) || !packages.length) {
+      await syncTailwindBrowser(this, cwd).catch(() => false);
+    }
   }
 
   /**
@@ -594,6 +600,11 @@ export class NodeBrowser {
     }
     await this.install([pkg], cwd);
     return this.spawn(binName, args, { cwd });
+  }
+
+  /** Compile Tailwind using npm-installed packages + @tailwindcss/browser (no native CLI). */
+  compileTailwind(cwd: string, args: string[] = []) {
+    return compileTailwind(this, cwd, args);
   }
 
   /** In-tab Vite subset: esbuild-wasm + kernel VFS. `spawn('vite')` tries installed CLI first. */
@@ -930,6 +941,45 @@ export class NodeBrowser {
     };
   }
 
+  async #spawnHostTailwind(
+    args: string[],
+    cwd: string,
+  ): Promise<BrowserNodeProcess> {
+    let exitResolve!: (code: number) => void;
+    const exit = new Promise<number>((r) => {
+      exitResolve = r;
+    });
+    const self = this;
+    const output = new ReadableStream<string>({
+      start(controller) {
+        const log = (text: string) => {
+          if (text) controller.enqueue(text);
+        };
+        void (async () => {
+          try {
+            log('≈ tailwindcss in-tab (npm packages + @tailwindcss/browser)\n\n');
+            const r = await compileTailwind(self, cwd, args);
+            log(`Done: ${r.input} → ${r.output}\n`);
+            if (!r.engine) log('npm WARN @tailwindcss/browser missing — preview utilities may be empty\n');
+            exitResolve(0);
+          } catch (e) {
+            log(String(e instanceof Error ? e.message : e) + '\n');
+            exitResolve(1);
+          } finally {
+            controller.close();
+          }
+        })();
+      },
+    });
+    return {
+      pid: 0,
+      exit,
+      output,
+      kill: () => undefined,
+      write: () => undefined,
+    };
+  }
+
   async #completePid(pid: number, code: number): Promise<void> {
     try {
       if (this.#mod.complete) await asy(this.#mod.complete(this.#k, pid, code));
@@ -996,6 +1046,68 @@ export class NodeBrowser {
       return false;
     }
   }
+}
+
+function npmSpecName(spec: string): string {
+  if (spec.startsWith('@')) {
+    const rest = spec.slice(1);
+    const at = rest.lastIndexOf('@');
+    return at > 0 ? '@' + rest.slice(0, at) : spec;
+  }
+  const at = spec.lastIndexOf('@');
+  return at > 0 ? spec.slice(0, at) : spec;
+}
+
+function isTailwindBin(spec: string): boolean {
+  const name = npmSpecName(spec);
+  return name === 'tailwindcss' || name === 'tailwind' || name === '@tailwindcss/cli';
+}
+
+/** Drop `npx` meta flags (`-y`, `--yes`, `-p pkg`) so the CLI args reach compileTailwind. */
+function afterNpx(argv: string[]): string[] {
+  let i = 0;
+  while (i < argv.length) {
+    const a = argv[i]!;
+    if (a === '--') {
+      i += 1;
+      break;
+    }
+    if (a === '-y' || a === '--yes' || a === '--no-install' || a === '--prefer-offline') {
+      i += 1;
+      continue;
+    }
+    if ((a === '-p' || a === '--package') && argv[i + 1]) {
+      i += 2;
+      continue;
+    }
+    if (a.startsWith('-')) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  return argv.slice(i);
+}
+
+function matchHostTailwind(cmd: string, args: string[]): string[] | null {
+  if (cmd === 'tailwindcss' || cmd === 'tailwind' || cmd === '@tailwindcss/cli') return args;
+  if (cmd === 'npx') {
+    const rest = afterNpx(args);
+    if (rest[0] && isTailwindBin(rest[0])) return rest.slice(1);
+    return null;
+  }
+  if ((cmd === 'sh' || cmd === 'bash') && args[0] === '-c' && typeof args[1] === 'string') {
+    const script = args[1].trim();
+    if (/[|&;<>]/.test(script)) return null;
+    const parts = script.split(/\s+/).filter(Boolean);
+    if (parts[0] === 'npx') {
+      const rest = afterNpx(parts.slice(1));
+      if (rest[0] && isTailwindBin(rest[0])) return rest.slice(1);
+      return null;
+    }
+    if (parts[0] && isTailwindBin(parts[0])) return parts.slice(1);
+  }
+  return null;
 }
 
 function matchHostNpm(

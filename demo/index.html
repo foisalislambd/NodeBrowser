@@ -46,6 +46,7 @@
               <button type="button" class="menu-item" data-menu="edit">Edit</button>
               <div class="menu-dropdown" id="menu-edit" hidden>
                 <button type="button" class="menu-cmd" data-cmd="palette">Command Palette…<span>Ctrl+K</span></button>
+                <button type="button" class="menu-cmd" data-cmd="save">Save<span>Ctrl+S</span></button>
               </div>
             </div>
             <div class="menu-wrap">
@@ -64,6 +65,8 @@
               <div class="menu-dropdown" id="menu-run" hidden>
                 <button type="button" class="menu-cmd" data-cmd="run">Run File<span>F5</span></button>
                 <button type="button" class="menu-cmd" data-cmd="install">Install Package…</button>
+                <button type="button" class="menu-cmd" data-cmd="tailwind">Install Tailwind CSS</button>
+                <button type="button" class="menu-cmd" data-cmd="tailwind-build">Compile Tailwind</button>
                 <button type="button" class="menu-cmd" data-cmd="http">HTTP Demo</button>
                 <button type="button" class="menu-cmd" data-cmd="bundle">Bundle (esbuild)</button>
                 <button type="button" class="menu-cmd" data-cmd="preview-project">Preview Project</button>
@@ -80,7 +83,9 @@
             <div class="menu-wrap">
               <button type="button" class="menu-item" data-menu="help">Help</button>
               <div class="menu-dropdown" id="menu-help" hidden>
-                <button type="button" class="menu-cmd" data-cmd="palette">Show All Commands</button>
+                <button type="button" class="menu-cmd" data-cmd="welcome">Welcome</button>
+                <button type="button" class="menu-cmd" data-cmd="install">Install Package…</button>
+                <button type="button" class="menu-cmd" data-cmd="tailwind">Install Tailwind CSS</button>
               </div>
             </div>
           </nav>
@@ -148,7 +153,7 @@
             </div>
             <div class="sidebar-section-head">
               <span class="twistie">▾</span>
-              <span class="section-label">NODEBROWSER</span>
+              <span class="section-label">PROJECT</span>
               <div class="section-actions">
                 <button type="button" id="btn-fs-import" class="icon-btn" title="Upload ZIP / tar.gz">
                   <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 2v8M5 5l3-3 3 3"/><path d="M3 12h10v2H3z"/></svg>
@@ -184,9 +189,11 @@
           <div class="sidebar-view" id="view-run" hidden>
             <div class="sidebar-title"><span>RUN AND DEBUG</span></div>
             <div class="run-panel">
-              <p class="run-hint">Preview the project at the current folder (Vite, Next <code>app/</code> or <code>src/app</code>, or static HTML).</p>
-              <button type="button" class="btn primary block" id="btn-run" data-cmd="run">▶ Run File</button>
+              <p class="run-hint">Run the open file. npm install puts packages in the project like a PC. Tailwind compiles with npx tailwindcss — no extra toolchain.</p>
+              <button type="button" class="btn primary block" id="btn-run" data-cmd="run">Run File</button>
               <button type="button" class="btn block" id="btn-install" data-cmd="install">Install Package…</button>
+              <button type="button" class="btn block" id="btn-tailwind" data-cmd="tailwind">Install Tailwind CSS</button>
+              <button type="button" class="btn block" id="btn-tailwind-build" data-cmd="tailwind-build">Compile Tailwind</button>
               <button type="button" class="btn block" id="btn-http" data-cmd="http">HTTP Demo :3000</button>
               <button type="button" class="btn block" id="btn-bundle" data-cmd="bundle">Bundle (esbuild-wasm)</button>
               <button type="button" class="btn block" id="btn-zip-run" data-cmd="preview-project">Preview Project</button>
@@ -251,9 +258,10 @@
 
           <section class="panel" id="bottom-panel" data-panel="term">
             <div class="panel-tabs">
+              <button type="button" class="panel-tab" id="tab-problems">PROBLEMS</button>
               <button type="button" class="panel-tab active" id="tab-term-1" data-term="1">TERMINAL</button>
-              <button type="button" class="panel-tab" id="tab-term-2" data-term="2">TERMINAL 2</button>
               <button type="button" class="panel-tab" id="tab-output">OUTPUT</button>
+              <button type="button" class="panel-tab" id="tab-term-2" data-term="2">DEBUG CONSOLE</button>
               <span class="panel-spacer"></span>
               <button type="button" class="icon-btn" id="btn-term-clear" title="Clear Terminal">
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M3 3h10v2H3zm0 4h10v6H3z"/></svg>
@@ -263,18 +271,21 @@
             <div class="term-wrap" id="term-wrap-1">
               <div id="term" class="term xterm-host" aria-live="polite"></div>
               <label class="term-input-row">
-                <span class="prompt">❯</span>
-                <input type="text" id="term-input" spellcheck="false" autocomplete="off" placeholder="Run a shell command (sh -c)…" />
+                <span class="prompt">$</span>
+                <input type="text" id="term-input" spellcheck="false" autocomplete="off" placeholder="npm install lodash" />
               </label>
             </div>
             <div class="term-wrap" id="term-wrap-2" hidden>
               <div id="term-2" class="term xterm-host" aria-live="polite"></div>
               <label class="term-input-row">
-                <span class="prompt">❯</span>
-                <input type="text" id="term-input-2" spellcheck="false" autocomplete="off" placeholder="Run a shell command…" />
+                <span class="prompt">$</span>
+                <input type="text" id="term-input-2" spellcheck="false" autocomplete="off" placeholder="npm install tailwindcss" />
               </label>
             </div>
             <pre id="net-log" class="term" hidden></pre>
+            <div id="problems-empty" class="problems-empty" hidden>
+              <p>No problems have been detected in the workspace.</p>
+            </div>
           </section>
         </div>
 
@@ -310,7 +321,7 @@
             <div class="sb-empty" id="preview-empty">
               <div class="sb-empty-icon" aria-hidden="true"></div>
               <p>Simple Browser</p>
-              <span>Drop a ZIP or folder — it replaces the workspace and opens here. Tailwind/Vite/Next subset preview.</span>
+              <span>Run the project or drop a folder to preview. Tailwind utilities compile here after npm install tailwindcss.</span>
             </div>
           </div>
         </aside>
@@ -325,6 +336,7 @@
         </div>
         <div class="status-right">
           <span class="status-item" id="status-cursor">Ln 1, Col 1</span>
+          <span class="status-item">LF</span>
           <span class="status-item">Spaces: 2</span>
           <span class="status-item">UTF-8</span>
           <span class="status-item" id="status-lang">JavaScript</span>

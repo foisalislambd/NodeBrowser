@@ -42,10 +42,13 @@ export function quickInput({ title, value = '', placeholder = '', hint = '' }) {
     hintEl.textContent = hint;
     field.value = value;
     field.placeholder = placeholder;
+    let settled = false;
     const finish = (result) => {
-      dlg.close();
+      if (settled) return;
+      settled = true;
       dlg.removeEventListener('close', onCancel);
       field.removeEventListener('keydown', onKey);
+      if (dlg.open) dlg.close();
       resolve(result);
     };
     const onCancel = () => finish(null);
@@ -78,11 +81,14 @@ export function quickConfirm(message, { ok = 'OK', danger = false } = {}) {
     msg.textContent = message;
     btnOk.textContent = ok;
     btnOk.classList.toggle('danger', !!danger);
+    let settled = false;
     const finish = (result) => {
-      dlg.close();
+      if (settled) return;
+      settled = true;
       btnOk.onclick = null;
       btnCancel.onclick = null;
       dlg.removeEventListener('close', onCancel);
+      if (dlg.open) dlg.close();
       resolve(result);
     };
     const onCancel = () => finish(false);

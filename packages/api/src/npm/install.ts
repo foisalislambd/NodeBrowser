@@ -49,7 +49,7 @@ const MAX_DEPTH = 32;
 const FETCH_CONCURRENCY = 8;
 const LIFECYCLE_ALLOW = new Set(['true', 'echo', 'node']);
 const SKIP_OPTIONAL =
-  /^(fsevents$|@esbuild\/|@rollup\/rollup-|@swc\/core-|@img\/sharp|esbuild$|nice-napi$)/;
+  /^(fsevents$|@esbuild\/|@rollup\/rollup-|@swc\/core-|@img\/sharp|esbuild$|nice-napi$|lightningcss(-|$)|@tailwindcss\/oxide)/;
 
 const metaCache = new Map<string, RegistryMeta>();
 

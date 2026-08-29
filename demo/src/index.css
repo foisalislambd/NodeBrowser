@@ -77,6 +77,8 @@
   html,
   body {
     @apply m-0 h-full min-h-dvh overflow-hidden bg-wb font-ui text-[13px] text-wb-fg;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "liga" 1, "calt" 1;
   }
 
   button,
@@ -434,10 +436,10 @@
     @apply flex min-h-0 flex-1 bg-wb;
   }
   .gutter {
-    @apply m-0 min-w-12 overflow-hidden border-r border-transparent bg-wb py-3 pr-2 pl-3 text-right font-mono text-sm leading-[1.55] text-wb-gutter select-none;
+    @apply m-0 min-w-[48px] overflow-hidden border-r border-transparent bg-wb py-[9px] pr-3 pl-2 text-right font-mono text-[13px] leading-[22px] text-wb-gutter select-none;
   }
   #editor {
-    @apply min-h-0 w-full flex-1 resize-none overflow-auto border-0 bg-wb py-3 pr-4 pl-2.5 font-mono text-sm leading-[1.55] text-wb-editor whitespace-pre outline-none;
+    @apply min-h-0 w-full flex-1 resize-none overflow-auto border-0 bg-wb py-[9px] pr-4 pl-2.5 font-mono text-[13px] leading-[22px] text-wb-editor whitespace-pre outline-none;
     tab-size: 2;
     caret-color: #aeafad;
   }
@@ -470,13 +472,19 @@
     @apply flex min-h-[35px] items-center bg-wb px-1.5;
   }
   .panel-tab {
-    @apply cursor-pointer border-0 border-b border-transparent bg-transparent px-2.5 py-2 text-[11px] tracking-[0.08em] text-wb-muted;
+    @apply cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-2.5 py-2 text-[11px] font-medium tracking-[0.04em] text-wb-muted;
   }
   .panel-tab:hover {
     @apply text-wb-fg;
   }
   .panel-tab.active {
-    @apply border-b-wb-fg text-wb-fg;
+    @apply border-b-white text-white;
+  }
+  .problems-empty {
+    @apply flex min-h-0 flex-1 items-center justify-center px-6 text-[13px] text-wb-muted;
+  }
+  .problems-empty p {
+    @apply m-0;
   }
   .panel-spacer {
     @apply flex-1;
@@ -512,7 +520,7 @@
     @apply flex items-center gap-1.5 border-t border-wb-border-soft bg-[#181818] px-3 py-1;
   }
   .term-input-row .prompt {
-    @apply font-mono text-[13px] text-wb-success;
+    @apply font-mono text-[13px] text-[#cccccc];
   }
   #term-input,
   #term-input-2 {

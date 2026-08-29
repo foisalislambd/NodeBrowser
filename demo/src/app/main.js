@@ -1,7 +1,7 @@
 import { mountXterm, getTerm, fitAllTerms } from './term.js';
 import { fileIconEl, langFromPath, tabBadge } from './icons.js';
 import { publicBase, publicHref, publicPath } from './paths.js';
-import { hideSplash, toast } from './ui.js';
+import { hideSplash, toast, quickInput } from './ui.js';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
 
@@ -547,9 +547,12 @@ async function boot() {
   if (ss) ss.textContent = bn.sabStdio ? 'on' : 'off';
   const sp = $('set-persist');
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
-  appendTerm('NodeBrowser ready — VFS file manager + in-tab npm/run.\n');
-  appendTerm('Type `npm install lodash` below — packages land in /home/project/node_modules and print in this terminal.\n');
-  appendTerm('Then require() the package from a .js file and press Run File.\n');
+  appendTerm('NodeBrowser  —  WASM kernel ready\n');
+  appendTerm('\nGet started:\n');
+  appendTerm('  npm install lodash\n');
+  appendTerm('  npm install tailwindcss @tailwindcss/browser\n');
+  appendTerm('  npx tailwindcss -i ./src/input.css -o ./dist/output.css\n');
+  appendTerm('\n');
   hideSplash();
   autoStartWorkspace().catch((e) => appendTerm(String(e) + '\n'));
   const termHistory = [];
@@ -614,15 +617,11 @@ async function autoStartWorkspace() {
   expandProjectTree(root);
   selectedPath = root;
   if (await isDefaultWorkspace()) {
-    appendTerm('auto-run HTTP demo …\n');
-    toast('HTTP demo', 'ok');
-    await httpDemo();
+    toast('Workspace ready', 'ok');
     return;
   }
   await openBestProjectFile(root);
-  appendTerm('auto-run workspace …\n');
-  toast('Starting project', 'info');
-  await runCurrentProject();
+  toast('Workspace ready', 'ok');
 }
 
 async function runShellLine(line) {
@@ -668,9 +667,37 @@ async function runNode() {
 
 async function installPkg() {
   if (!bn) return;
-  const spec = prompt('npm package to install into the project (like a PC)', 'lodash');
+  const spec = (await quickInput({
+    title: 'npm install',
+    value: 'lodash',
+    placeholder: 'package name',
+    hint: 'Installs into /home/project/node_modules like a PC',
+  }))?.trim();
   if (!spec) return;
   await runShellLine('npm install ' + spec);
+}
+
+async function installTailwind() {
+  $('workbench')?.classList.remove('panel-hidden');
+  setPanelTab('term');
+  await runShellLine('npm install tailwindcss @tailwindcss/browser');
+}
+
+async function compileTailwindCss() {
+  $('workbench')?.classList.remove('panel-hidden');
+  setPanelTab('term');
+  await runShellLine('npx tailwindcss -i ./src/input.css -o ./dist/output.css');
+}
+
+function showWelcome() {
+  $('workbench')?.classList.remove('panel-hidden');
+  setPanelTab('term');
+  appendTerm('Welcome to NodeBrowser\n');
+  appendTerm('A VS Code–style workbench over a WASM Node kernel.\n\n');
+  appendTerm('  npm install lodash\n');
+  appendTerm('  npm install tailwindcss @tailwindcss/browser\n');
+  appendTerm('  npx tailwindcss -i ./src/input.css -o ./dist/output.css\n');
+  appendTerm('  node index.js\n\n');
 }
 
 async function httpDemo() {
@@ -1001,6 +1028,8 @@ async function runCurrentProject() {
 $('btn-save')?.addEventListener('click', () => saveFile().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-run').addEventListener('click', () => runNode().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-install').addEventListener('click', () => installPkg().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-tailwind')?.addEventListener('click', () => installTailwind().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-tailwind-build')?.addEventListener('click', () => compileTailwindCss().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-http').addEventListener('click', () => httpDemo().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-bundle')?.addEventListener('click', () => bundleDemo().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-fs-refresh')?.addEventListener('click', () => refreshTree().catch((e) => appendTerm(String(e) + '\n')));
@@ -1089,31 +1118,35 @@ async function searchFiles(q) {
 }
 
 function setTermTab(which) {
-  window.__bn_active_term = which === 2 ? 'term-2' : 'term';
-  const w1 = $('term-wrap-1');
-  const w2 = $('term-wrap-2');
-  const log = $('net-log');
-  if (w1) w1.hidden = which === 2;
-  if (w2) w2.hidden = which !== 2;
-  if (log) log.hidden = true;
-  $('tab-term-1')?.classList.toggle('active', which === 1);
-  $('tab-term-2')?.classList.toggle('active', which === 2);
-  $('tab-output')?.classList.remove('active');
+  setPanelTab(which === 2 ? 'debug' : 'term');
 }
 
-$('tab-term-1')?.addEventListener('click', () => setTermTab(1));
-$('tab-term-2')?.addEventListener('click', () => setTermTab(2));
-$('tab-output')?.addEventListener('click', () => {
+function setPanelTab(which) {
   const w1 = $('term-wrap-1');
   const w2 = $('term-wrap-2');
   const log = $('net-log');
-  if (w1) w1.hidden = true;
-  if (w2) w2.hidden = true;
-  if (log) log.hidden = false;
-  $('tab-term-1')?.classList.remove('active');
-  $('tab-term-2')?.classList.remove('active');
-  $('tab-output')?.classList.add('active');
-});
+  const problems = $('problems-empty');
+  const isTerm = which === 'term' || which === 1;
+  const isDebug = which === 'debug' || which === 2;
+  const isOut = which === 'output';
+  const isProblems = which === 'problems';
+  if (isTerm) window.__bn_active_term = 'term';
+  if (isDebug) window.__bn_active_term = 'term-2';
+  if (w1) w1.hidden = !isTerm;
+  if (w2) w2.hidden = !isDebug;
+  if (log) log.hidden = !isOut;
+  if (problems) problems.hidden = !isProblems;
+  $('tab-term-1')?.classList.toggle('active', isTerm);
+  $('tab-term-2')?.classList.toggle('active', isDebug);
+  $('tab-output')?.classList.toggle('active', isOut);
+  $('tab-problems')?.classList.toggle('active', isProblems);
+  if (isTerm || isDebug) requestAnimationFrame(() => fitAllTerms());
+}
+
+$('tab-term-1')?.addEventListener('click', () => setPanelTab('term'));
+$('tab-term-2')?.addEventListener('click', () => setPanelTab('debug'));
+$('tab-output')?.addEventListener('click', () => setPanelTab('output'));
+$('tab-problems')?.addEventListener('click', () => setPanelTab('problems'));
 
 $('term-input-2')?.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -1126,9 +1159,12 @@ $('term-input-2')?.addEventListener('keydown', (e) => {
 });
 
 const PALETTE = [
+  ['Welcome', '', () => showWelcome()],
   ['Run File', 'F5', () => runNode()],
   ['Save', 'Ctrl+S', () => saveFile()],
   ['Install Package…', '', () => installPkg()],
+  ['Install Tailwind CSS', '', () => installTailwind()],
+  ['Compile Tailwind', '', () => compileTailwindCss()],
   ['HTTP Demo', '', () => httpDemo()],
   ['Vite Preview', '', () => vitePreview()],
   ['Next Preview', '', () => nextPreview()],
@@ -1235,6 +1271,9 @@ function runCmd(cmd) {
     'toggle-panel': () => togglePanel(),
     run: () => runNode(),
     install: () => installPkg(),
+    tailwind: () => installTailwind(),
+    'tailwind-build': () => compileTailwindCss(),
+    welcome: () => showWelcome(),
     http: () => httpDemo(),
     bundle: () => bundleDemo(),
     'preview-project': () => runCurrentProject(),
