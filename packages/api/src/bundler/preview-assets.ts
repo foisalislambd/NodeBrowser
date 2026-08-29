@@ -28,10 +28,44 @@ export function looksLikeTailwind(css: string): boolean {
   return /@import\s+["']tailwindcss|@tailwind\s|@theme\b/.test(css);
 }
 
+export async function collectCssUnder(bn: NodeBrowser, dir: string, max = 40): Promise<string> {
+  const parts: string[] = [];
+  async function walk(d: string, depth: number): Promise<void> {
+    if (parts.length >= max || depth > 8) return;
+    let names: string[] = [];
+    try {
+      names = await bn.fs.readdir(d);
+    } catch {
+      return;
+    }
+    names.sort();
+    for (const n of names) {
+      if (n === 'node_modules' || n === '.git' || n === 'dist' || n === '.next' || n === '.turbo') continue;
+      const p = join(d, n);
+      let isDir = false;
+      try {
+        isDir = (await bn.fs.stat(p)).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) {
+        await walk(p, depth + 1);
+        continue;
+      }
+      if (!n.endsWith('.css')) continue;
+      const chunk = await readUtf8(bn, p);
+      if (chunk) parts.push(chunk);
+    }
+  }
+  await walk(dir, 0);
+  return parts.join('\n');
+}
+
 export async function copyPublicInto(bn: NodeBrowser, cwd: string, outDir: string): Promise<void> {
   for (const name of ['public', 'static']) {
     await copyTree(bn, join(cwd, name), outDir);
   }
+  await copyTree(bn, join(cwd, 'src/assets'), join(outDir, 'src/assets'));
 }
 
 async function copyTree(bn: NodeBrowser, from: string, to: string): Promise<void> {

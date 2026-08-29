@@ -6,7 +6,7 @@
 
 import type { NodeBrowser } from '../host/node-browser.js';
 import { bundleWithEsbuild } from './esbuild.js';
-import { copyPublicInto, looksLikeTailwind, stripTailwindImport, TW_BROWSER_VFS } from './preview-assets.js';
+import { copyPublicInto, looksLikeTailwind, stripTailwindImport, TW_BROWSER_VFS, collectCssUnder } from './preview-assets.js';
 
 const HMR_CLIENT = `(() => {
   let g = '';
@@ -41,11 +41,21 @@ async function readUtf8(bn: NodeBrowser, path: string): Promise<string | null> {
 }
 
 function parseHtmlEntry(html: string, cwd: string): string | null {
-  const m = html.match(/<script[^>]+src=["']([^"']+)["']/i);
-  if (!m) return null;
-  const src = m[1]!;
-  if (src.startsWith('/')) return join(cwd, src);
-  return join(cwd, src.replace(/^\.\//, ''));
+  const re = /<script[^>]*src=["']([^"']+)["'][^>]*>/gi;
+  const srcs: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const src = m[1]!;
+    if (/^https?:/i.test(src) || src.startsWith('//')) continue;
+    srcs.push(src);
+  }
+  const pick =
+    srcs.find((s) => /src\/main\./i.test(s)) ||
+    srcs.find((s) => /\/src\//i.test(s) || s.startsWith('src/') || s.startsWith('./src/')) ||
+    srcs[0];
+  if (!pick) return null;
+  const rel = pick.replace(/^\.\//, '');
+  return join(cwd, rel);
 }
 
 function pluginHint(code: string): string | null {
@@ -72,28 +82,49 @@ export async function viteBuild(bn: NodeBrowser, cwd: string, opts?: { outDir?: 
 
   let entry = parseHtmlEntry(html, cwd);
   if (!entry) {
-    for (const c of ['src/main.jsx', 'src/main.tsx', 'src/main.js', 'src/index.jsx', 'src/index.js']) {
+    for (const c of [
+      'src/main.tsx',
+      'src/main.jsx',
+      'src/main.ts',
+      'src/main.js',
+      'src/index.tsx',
+      'src/index.jsx',
+      'src/index.ts',
+      'src/index.js',
+      'src/App.tsx',
+      'src/App.jsx',
+    ]) {
       if (await readUtf8(bn, join(cwd, c))) {
         entry = join(cwd, c);
         break;
       }
     }
   }
-  if (!entry) throw new Error('vite: no entry (index.html script or src/main.*)');
+  if (!entry) throw new Error('vite: no entry (index.html script or src/main.* / src/index.*)');
 
   const outfile = join(outDir, 'bundle.js');
-  await bundleWithEsbuild(bn.fs, {
-    entry,
-    outfile,
-    format: 'iife',
-    jsx: 'automatic',
-  });
+  try {
+    await bundleWithEsbuild(bn.fs, {
+      entry,
+      outfile,
+      format: 'iife',
+      jsx: 'automatic',
+      projectRoot: cwd,
+    });
+  } catch (err) {
+    const msg = String((err as Error)?.message || err);
+    throw new Error(
+      `vite preview failed: ${msg}. Zip the project source (index.html + src/), omit node_modules/.git. Vue/Svelte SFCs are not compiled in-tab.`,
+    );
+  }
 
   const cssParts: string[] = [];
   for (const rel of ['src/index.css', 'src/App.css', 'src/app.css', 'index.css']) {
     const chunk = await readUtf8(bn, join(cwd, rel));
     if (chunk) cssParts.push(chunk);
   }
+  const walked = await collectCssUnder(bn, join(cwd, 'src'));
+  if (walked) cssParts.push(walked);
   const css = cssParts.join('\n');
   await copyPublicInto(bn, cwd, outDir);
 

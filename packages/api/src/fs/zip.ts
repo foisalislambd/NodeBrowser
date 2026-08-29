@@ -60,9 +60,10 @@ export async function unzip(bytes: Uint8Array): Promise<Record<string, Uint8Arra
   const eocd = findEocd(bytes);
   const cdOff = u32(bytes, eocd + 16);
   const cdEntries = u16(bytes, eocd + 10);
-  if (cdEntries > MAX_FILES) throw new Error(`zip: too many files (${cdEntries})`);
+  if (cdEntries > 200_000) throw new Error(`zip: too many central-directory entries (${cdEntries})`);
   const out: Record<string, Uint8Array> = {};
   let total = 0;
+  let written = 0;
   let p = cdOff;
   for (let n = 0; n < cdEntries; n++) {
     if (p + 46 > bytes.length || u32(bytes, p) !== SIG_CD) throw new Error('zip: corrupt central directory');
@@ -79,8 +80,11 @@ export async function unzip(bytes: Uint8Array): Promise<Record<string, Uint8Arra
     p += 46 + nameLen + extraLen + commentLen;
     const name = sanitizeArchiveName(rawName);
     if (!name) continue;
+    if (written >= MAX_FILES) {
+      throw new Error('zip: too many project files (8000). Zip the source folder without node_modules/.git/.next.');
+    }
     if (uncompSize > MAX_BYTES || (total += uncompSize) > MAX_BYTES) {
-      throw new Error('zip: uncompressed size exceeds 80 MiB limit');
+      throw new Error('zip: uncompressed size exceeds 80 MiB limit (omit node_modules / build output)');
     }
     const nameOff = localOff + 30;
     const locNameLen = u16(bytes, localOff + 26);
@@ -92,6 +96,7 @@ export async function unzip(bytes: Uint8Array): Promise<Record<string, Uint8Arra
     else if (method === 8) raw = await inflateRaw(compressed);
     else throw new Error(`zip: unsupported compression method ${method} (${name})`);
     out[name] = raw;
+    written++;
   }
   return out;
 }
@@ -135,6 +140,20 @@ export async function extractArchive(bytes: Uint8Array): Promise<Record<string, 
   throw new Error('unsupported archive (use .zip or .tar.gz)');
 }
 
+function looksLikeProjectKeys(keys: string[]): boolean {
+  return keys.some(
+    (k) =>
+      k === 'package.json' ||
+      k === 'index.html' ||
+      k === 'index.htm' ||
+      k.startsWith('src/') ||
+      k.startsWith('app/') ||
+      k.startsWith('pages/') ||
+      /^vite\.config\./.test(k) ||
+      /^next\.config\./.test(k),
+  );
+}
+
 /** If every path is under a single top folder, strip it. */
 export function stripSingleRoot(files: Record<string, Uint8Array>): Record<string, Uint8Array> {
   const keys = Object.keys(files).filter((k) => k && k !== '.');
@@ -148,6 +167,22 @@ export function stripSingleRoot(files: Record<string, Uint8Array>): Record<strin
     if (rest) out[rest] = v;
   }
   return Object.keys(out).length ? out : files;
+}
+
+/**
+ * Explorer zips often wrap `Desktop/vscode/vite/…`. Peel wrappers until the
+ * archive looks like a project (package.json / index.html / src / app).
+ */
+export function stripNestedWrappers(files: Record<string, Uint8Array>, max = 8): Record<string, Uint8Array> {
+  let cur = files;
+  for (let i = 0; i < max; i++) {
+    const keys = Object.keys(cur);
+    if (looksLikeProjectKeys(keys)) return cur;
+    const next = stripSingleRoot(cur);
+    if (next === cur) return cur;
+    cur = next;
+  }
+  return cur;
 }
 
 export function joinArchivePath(root: string, ...relParts: string[]): string {

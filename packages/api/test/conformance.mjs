@@ -419,7 +419,56 @@ async function main() {
   const nestedBuilt = await bn.nextBuild('/nested/my-app');
   assert((await bn.fs.readFile(nestedBuilt.outDir + '/index.html', 'utf8')).includes('bundle.js'), 'nested next html');
 
-  const { makeStoredZip } = await import('../dist/fs/zip.js');
+  await bn.fs.mkdir('/deep/vscode/vite/src', { recursive: true });
+  await bn.fs.writeFile('/deep/vscode/vite/package.json', JSON.stringify({ dependencies: { vite: '6.0.0', react: '19.0.0' } }));
+  await bn.fs.writeFile('/deep/vscode/vite/index.html', '<div id="root"></div><script type="module" src="/src/main.tsx"></script>');
+  await bn.fs.writeFile(
+    '/deep/vscode/vite/src/main.tsx',
+    'import { createRoot } from "react-dom/client";\nimport App from "./App";\ncreateRoot(document.getElementById("root")).render(<App/>);\n',
+  );
+  await bn.fs.writeFile('/deep/vscode/vite/src/App.tsx', 'export default function App(){ return <h1>deep-vite-ok</h1>; }\n');
+  await bn.fs.writeFile('/deep/vscode/vite/src/index.css', '@import "./theme.css";\nbody{margin:0}');
+  await bn.fs.writeFile('/deep/vscode/vite/src/theme.css', 'h1{color:red}');
+  assert((await resolveProjectRoot(bn, '/deep')) === '/deep/vscode/vite', 'resolve vscode/vite nest');
+  assert((await detectProjectKind(bn, '/deep/vscode/vite')) === 'vite', 'deep vite detect');
+  const deepVite = await bn.viteBuild('/deep/vscode/vite');
+  const deepJs = await bn.fs.readFile(deepVite.outfile, 'utf8');
+  assert(deepJs.includes('deep-vite-ok') || deepJs.length > 50, 'deep vite bundle');
+  const deepCss = await bn.fs.readFile(deepVite.outDir + '/index.css', 'utf8');
+  assert(deepCss.includes('margin') || deepCss.includes('theme'), 'vite css collected');
+
+  const { makeStoredZip, stripNestedWrappers, extractArchive } = await import('../dist/fs/zip.js');
+  const nestedZip = makeStoredZip({
+    'Desktop/vscode/vite/package.json': JSON.stringify({ dependencies: { vite: '6.0.0' } }),
+    'Desktop/vscode/vite/index.html': '<div id="root"></div><script type="module" src="/src/main.jsx"></script>',
+    'Desktop/vscode/vite/src/main.jsx':
+      'import { createRoot } from "react-dom/client";\nfunction App(){ return <h1>zip-vite-ok</h1>; }\ncreateRoot(document.getElementById("root")).render(<App/>);\n',
+    'Desktop/vscode/vite/node_modules/react/index.js': 'module.exports={}',
+  });
+  const peeled = stripNestedWrappers(await extractArchive(nestedZip));
+  assert(peeled['package.json'] && peeled['src/main.jsx'], 'strip Desktop/vscode/vite wrappers');
+  assert(!Object.keys(peeled).some((k) => k.includes('node_modules')), 'zip skips node_modules');
+  const zipVite = await bn.importZip(nestedZip, '/home/uploads/fromzip');
+  assert(zipVite.files >= 3, 'zip vite file count');
+  assert((await bn.fs.readFile('/home/uploads/fromzip/src/main.jsx', 'utf8')).includes('zip-vite-ok'));
+  assert(!(await bn.fs.exists('/home/uploads/fromzip/node_modules/react/index.js')), 'node_modules not imported');
+  const zipViteBuilt = await bn.viteBuild('/home/uploads/fromzip');
+  assert((await bn.fs.readFile(zipViteBuilt.outfile, 'utf8')).length > 50, 'zip vite builds');
+
+  const nextZip = makeStoredZip({
+    'my-next/package.json': JSON.stringify({ dependencies: { next: '15.0.0', react: '19.0.0' } }),
+    'my-next/src/app/layout.tsx':
+      'export default function RootLayout({ children }: { children: any }) { return <html><body>{children}</body></html>; }\n',
+    'my-next/src/app/page.tsx': 'export default function Page(){ return <h1>zip-next-ok</h1>; }\n',
+    'my-next/src/app/globals.css': 'body{font-family:sans-serif}',
+    'my-next/public/next.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
+  });
+  await bn.importZip(nextZip, '/home/uploads/nextzip');
+  assert((await detectProjectKind(bn, '/home/uploads/nextzip')) === 'next', 'zip next detect');
+  const zipNext = await bn.nextBuild('/home/uploads/nextzip');
+  assert((await bn.fs.readFile(zipNext.outDir + '/index.html', 'utf8')).includes('bundle.js'), 'zip next html');
+  assert((await bn.fs.readFile(zipNext.outDir + '/next.svg', 'utf8')).includes('svg'), 'zip next public asset');
+
   const zip = makeStoredZip({
     'site/index.html': '<!doctype html><h1>zip-ok</h1>',
     'site/app.js': 'console.log(1)',

@@ -7,6 +7,8 @@ export type BundleOptions = {
   entry: string;
   outfile?: string;
   format?: 'esm' | 'cjs' | 'iife';
+  /** Project folder — `/src/foo` and `/vite.svg` resolve here, not VFS `/`. */
+  projectRoot?: string;
   /** esbuild jsx mode — default transform for Vite/Next demos */
   jsx?: 'transform' | 'preserve' | 'automatic';
   jsxFactory?: string;
@@ -57,6 +59,7 @@ export async function bundleWithEsbuild(
   const esbuild = await ensureEsbuild();
   const outfile = opts.outfile || '/dist/bundle.js';
   const entry = opts.entry;
+  const projectRoot = opts.projectRoot || guessProjectRoot(entry);
 
   const result = await esbuild.build({
     entryPoints: [entry],
@@ -69,34 +72,45 @@ export async function bundleWithEsbuild(
     jsx: opts.jsx || 'automatic',
     jsxFactory: opts.jsxFactory,
     jsxFragment: opts.jsxFragment,
+    define: {
+      'process.env.NODE_ENV': '"development"',
+      'import.meta.env.MODE': '"development"',
+      'import.meta.env.DEV': 'true',
+      'import.meta.env.PROD': 'false',
+      'import.meta.env.SSR': 'false',
+      'import.meta.env.BASE_URL': '"/"',
+      'import.meta.hot': 'undefined',
+    },
     plugins: [
       {
         name: 'browsernode-vfs',
         setup(build) {
           build.onResolve({ filter: /.*/ }, async (args) => {
             if (args.kind === 'entry-point') {
-              return { path: args.path, namespace: 'bnvfs' };
+              return { path: splitQuery(args.path).bare, namespace: 'bnvfs' };
             }
-            const req = args.path;
+            const { bare, query } = splitQuery(args.path);
+            const req = bare;
             if (isShimSpec(req)) {
               return { path: req, namespace: 'bnshim' };
             }
             if (req.startsWith('@/')) {
               const rest = req.slice(2);
-              const root = dirname(entry);
               const hit = await firstReadable(fs, [
-                join(join(root, 'src'), rest),
-                join(root, rest),
+                join(join(projectRoot, 'src'), rest),
+                join(projectRoot, rest),
               ]);
-              return { path: hit || join(join(root, 'src'), rest), namespace: 'bnvfs' };
+              return { path: (hit || join(join(projectRoot, 'src'), rest)) + query, namespace: 'bnvfs' };
             }
-            if (req.startsWith('./') || req.startsWith('../') || req.startsWith('/')) {
-              const base = args.resolveDir || dirname(args.importer || entry);
+            if (req.startsWith('/') && !req.startsWith('//')) {
+              return { path: resolveAbsImport(projectRoot, req) + query, namespace: 'bnvfs' };
+            }
+            if (req.startsWith('./') || req.startsWith('../')) {
+              const base = args.resolveDir || dirname(splitQuery(args.importer || entry).bare);
               const resolved = normalize(join(base, req));
-              return { path: resolved, namespace: 'bnvfs' };
+              return { path: resolved + query, namespace: 'bnvfs' };
             }
-            const root = dirname(entry);
-            return { path: join(join(root, 'node_modules'), req), namespace: 'bnvfs' };
+            return { path: join(join(projectRoot, 'node_modules'), req) + query, namespace: 'bnvfs' };
           });
 
           build.onLoad({ filter: /.*/, namespace: 'bnshim' }, (args) => {
@@ -104,21 +118,18 @@ export async function bundleWithEsbuild(
           });
 
           build.onLoad({ filter: /.*/, namespace: 'bnvfs' }, async (args) => {
-            if (/\.(css)$/.test(args.path)) {
-              let text = '';
-              try {
-                text = String(await fs.readFile(args.path, 'utf8'));
-              } catch {
-                text = '';
+            const { bare, query } = splitQuery(args.path);
+            const q = query.toLowerCase();
+            if (/\.(css)$/i.test(bare)) {
+              const text = await loadCssGraph(fs, bare, projectRoot, new Set());
+              if (q.includes('raw')) {
+                return { contents: 'export default ' + JSON.stringify(text), loader: 'js' };
               }
-              text = text
-                .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["']\s*;?/g, '')
-                .replace(/@import\s+["']tailwindcss["']\s*;?/g, '');
               const inject =
                 'var s=document.createElement("style");s.textContent=' +
                 JSON.stringify(text) +
                 ';document.head.appendChild(s);';
-              if (args.path.includes('.module.')) {
+              if (bare.includes('.module.')) {
                 return {
                   contents:
                     inject +
@@ -128,22 +139,42 @@ export async function bundleWithEsbuild(
               }
               return { contents: inject + 'export default {};', loader: 'js' };
             }
-            if (/\.(svg|png|jpe?g|gif|webp|ico)$/i.test(args.path)) {
-              return { contents: 'export default ' + JSON.stringify(await assetDataUrl(fs, args.path)), loader: 'js' };
+            if (q.includes('raw')) {
+              let text = '';
+              try {
+                text = String(await fs.readFile(bare, 'utf8'));
+              } catch {
+                text = '';
+              }
+              return { contents: 'export default ' + JSON.stringify(text), loader: 'js' };
+            }
+            if (/\.(svg|png|jpe?g|gif|webp|ico)$/i.test(bare)) {
+              return { contents: 'export default ' + JSON.stringify(await assetDataUrl(fs, bare)), loader: 'js' };
+            }
+            if (/\.json$/i.test(bare)) {
+              let text = '{}';
+              try {
+                text = String(await fs.readFile(bare, 'utf8'));
+              } catch {
+                /* */
+              }
+              return { contents: text, loader: 'json' };
             }
             const candidates = [
-              args.path,
-              args.path + '.js',
-              args.path + '.ts',
-              args.path + '.tsx',
-              args.path + '.jsx',
-              join(args.path, 'index.js'),
-              join(args.path, 'index.ts'),
-              join(args.path, 'index.tsx'),
-              join(args.path, 'index.jsx'),
+              bare,
+              bare + '.js',
+              bare + '.ts',
+              bare + '.tsx',
+              bare + '.jsx',
+              bare + '.mjs',
+              bare + '.mts',
+              join(bare, 'index.js'),
+              join(bare, 'index.ts'),
+              join(bare, 'index.tsx'),
+              join(bare, 'index.jsx'),
             ];
             let text: string | null = null;
-            let pathUsed = args.path;
+            let pathUsed = bare;
             for (const c of candidates) {
               try {
                 const got = await fs.readFile(c, 'utf8');
@@ -154,12 +185,12 @@ export async function bundleWithEsbuild(
                 /* try next */
               }
             }
-            if (text == null) throw new Error(`bnvfs ENOENT: ${args.path}`);
+            if (text == null) throw new Error(`bnvfs ENOENT: ${bare}`);
             let loader: 'js' | 'jsx' | 'ts' | 'tsx' = 'js';
-            if (pathUsed.endsWith('.ts')) loader = 'ts';
+            if (pathUsed.endsWith('.ts') || pathUsed.endsWith('.mts')) loader = 'ts';
             else if (pathUsed.endsWith('.tsx')) loader = 'tsx';
             else if (pathUsed.endsWith('.jsx')) loader = 'jsx';
-            else if (pathUsed.endsWith('.js') && /<[A-Za-z]/.test(text)) loader = 'jsx';
+            else if ((pathUsed.endsWith('.js') || pathUsed.endsWith('.mjs')) && /<[A-Za-z]/.test(text)) loader = 'jsx';
             return { contents: text, loader, resolveDir: dirname(pathUsed) };
           });
         },
@@ -225,7 +256,12 @@ function isShimSpec(req: string): boolean {
     req === 'next/head' ||
     req === 'next/font' ||
     req.startsWith('next/font/') ||
-    req.startsWith('geist/font')
+    req.startsWith('geist/font') ||
+    req === 'next/dynamic' ||
+    req === 'next/script' ||
+    req === 'vite/client' ||
+    req === 'vite/preload-helper' ||
+    req.startsWith('virtual:')
   );
 }
 
@@ -300,6 +336,15 @@ function shimFor(spec: string): string {
       'export function localFont(opts){ return font(opts); }',
       'export default new Proxy(function(){ return font({}); }, { get: function(_, k){ if(k==="then") return undefined; return font; } });',
     ].join('\n');
+  }
+  if (spec === 'next/dynamic') {
+    return 'export default function dynamic(){ return function Dyn(){ return null; }; }';
+  }
+  if (spec === 'next/script') {
+    return 'export default function Script(p){ p=p||{}; return { type:"script", props:{ src:p.src, children:p.children } }; }';
+  }
+  if (spec === 'vite/client' || spec === 'vite/preload-helper' || spec.startsWith('virtual:')) {
+    return 'export default {};';
   }
   return REACT_SHIM;
 }
@@ -382,6 +427,21 @@ function join(a: string, b: string): string {
   return normalize(a + '/' + b);
 }
 
+function joinUnder(root: string, rel: string): string {
+  const stripped = rel.replace(/^\/+/, '');
+  if (root === '/') return normalize('/' + stripped);
+  return normalize(root + '/' + stripped);
+}
+
+/** `/src/x` is site-root; `/home/project/src/x` is already a VFS path. */
+function resolveAbsImport(projectRoot: string, req: string): string {
+  const n = normalize(req);
+  const root = projectRoot.replace(/\/+$/, '') || '/';
+  if (root === '/') return n;
+  if (n === root || n.startsWith(root + '/')) return n;
+  return joinUnder(root, req);
+}
+
 function normalize(path: string): string {
   const parts: string[] = [];
   for (const p of path.split('/')) {
@@ -390,4 +450,45 @@ function normalize(path: string): string {
     else parts.push(p);
   }
   return '/' + parts.join('/');
+}
+
+function splitQuery(spec: string): { bare: string; query: string } {
+  const i = spec.indexOf('?');
+  if (i < 0) return { bare: spec, query: '' };
+  return { bare: spec.slice(0, i), query: spec.slice(i) };
+}
+
+function guessProjectRoot(entry: string): string {
+  const dir = dirname(entry);
+  if (dir.endsWith('/src') || dir.endsWith('/app') || dir.endsWith('/pages')) return dirname(dir);
+  return dir;
+}
+
+async function loadCssGraph(fs: FsLike, path: string, projectRoot: string, seen: Set<string>): Promise<string> {
+  const norm = splitQuery(path).bare;
+  if (seen.has(norm)) return '';
+  seen.add(norm);
+  let text = '';
+  try {
+    text = String(await fs.readFile(norm, 'utf8'));
+  } catch {
+    return '';
+  }
+  text = text
+    .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["']\s*;?/g, '')
+    .replace(/@import\s+["']tailwindcss["']\s*;?/g, '');
+  const re = /@import\s+(?:url\(\s*)?['"]([^'"]+)['"]\s*\)?\s*;/g;
+  const chunks: string[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const spec = m[1]!;
+    if (/^https?:/i.test(spec) || spec.startsWith('tailwindcss')) continue;
+    chunks.push(text.slice(last, m.index));
+    last = m.index + m[0].length;
+    const resolved = spec.startsWith('/') ? joinUnder(projectRoot, spec) : join(dirname(norm), spec);
+    chunks.push(await loadCssGraph(fs, resolved, projectRoot, seen));
+  }
+  chunks.push(text.slice(last));
+  return chunks.join('\n');
 }

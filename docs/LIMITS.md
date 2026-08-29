@@ -25,7 +25,7 @@ Native packages **install** (JS stub or skip) and **fail clearly at run**: `esbu
 | Heavy / ESM-first | `zod`, `semver` (current QuickJS) | Stack overflow / WASM OOB |
 | Express-class | `express` | Node-only patterns (`depd` `getStack`, etc.) |
 | Native addons | `fsevents`, `esbuild` .node, sharp | Cannot load in QuickJS |
-| Full Vite 8 / `next start` | — | In-tab **subset** (esbuild-wasm + shims) |
+| Full Vite 8 / `next start` | — | In-tab **subset** (esbuild-wasm + shims). ZIP the **source** folder; `node_modules` / `.next` / `.git` are skipped. |
 | Scoped `@types/*` extract | `@types/ms` | Extra nest (`…/@types/ms/ms/`) — hoist bug |
 
 ## Out of scope on purpose

@@ -36,6 +36,22 @@ export function resolveUnderRoot(root: string, rel: string): string {
   return candidate;
 }
 
+const SKIP_ARCHIVE_SEGMENTS = new Set([
+  'node_modules',
+  '.git',
+  '.next',
+  '.turbo',
+  '.cache',
+  'coverage',
+  '__macosx',
+  '.ds_store',
+]);
+
+/** True when a zip/tar member is install/cache junk (omit from VFS). */
+export function isSkippedArchivePath(rel: string): boolean {
+  return rel.split('/').some((p) => SKIP_ARCHIVE_SEGMENTS.has(p.toLowerCase()));
+}
+
 /** Strip zip/tar junk and reject names that normalize above the archive root. */
 export function sanitizeArchiveName(name: string): string | null {
   let n = name.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -43,6 +59,7 @@ export function sanitizeArchiveName(name: string): string | null {
   if (n.startsWith('__MACOSX/') || n.includes('/__MACOSX/') || /(^|\/)\.DS_Store$/.test(n)) return null;
   n = n.replace(/^\/+/, '');
   if (!n || n.includes('\0')) return null;
+  if (isSkippedArchivePath(n)) return null;
   try {
     const abs = resolveUnderRoot('/__bn_archive', n);
     const rel = abs.slice('/__bn_archive'.length).replace(/^\//, '');

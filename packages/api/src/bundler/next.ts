@@ -6,7 +6,7 @@
 
 import type { NodeBrowser } from '../host/node-browser.js';
 import { bundleWithEsbuild } from './esbuild.js';
-import { copyPublicInto, writePreviewHtml } from './preview-assets.js';
+import { copyPublicInto, writePreviewHtml, collectCssUnder } from './preview-assets.js';
 
 function join(...parts: string[]): string {
   return parts
@@ -116,18 +116,28 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
     const layout = await firstExisting(bn, appDir, LAYOUT_FILES);
     const wrapper = join(cwd, '.bn-next-entry.jsx');
     await bn.fs.writeFile(wrapper, wrapperSource(home.file, layout));
-    await bundleWithEsbuild(bn.fs, {
-      entry: wrapper,
-      outfile: join(outDir, 'bundle.js'),
-      format: 'iife',
-      jsx: 'automatic',
-    });
+    try {
+      await bundleWithEsbuild(bn.fs, {
+        entry: wrapper,
+        outfile: join(outDir, 'bundle.js'),
+        format: 'iife',
+        jsx: 'automatic',
+        projectRoot: cwd,
+      });
+    } catch (err) {
+      const msg = String((err as Error)?.message || err);
+      throw new Error(
+        `next preview failed: ${msg}. Zip the app folder (app/page.* or src/app/page.*), omit node_modules/.next.`,
+      );
+    }
 
     const cssParts: string[] = [];
     for (const rel of ['globals.css', 'global.css', 'page.module.css']) {
       const chunk = await readUtf8(bn, join(appDir, rel));
       if (chunk) cssParts.push(chunk);
     }
+    const walked = await collectCssUnder(bn, appDir);
+    if (walked) cssParts.push(walked);
     const css = cssParts.join('\n');
     await copyPublicInto(bn, cwd, outDir);
     await writePreviewHtml(bn, outDir, join(outDir, 'index.html'), {
@@ -147,6 +157,7 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
         outfile: join(destDir, 'bundle.js'),
         format: 'iife',
         jsx: 'automatic',
+        projectRoot: cwd,
       });
       const up = extra.route.split('/').map(() => '..').join('/');
       await writePreviewHtml(bn, outDir, join(destDir, 'index.html'), {
@@ -180,6 +191,7 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
       outfile: join(outDir, 'bundle.js'),
       format: 'iife',
       jsx: 'automatic',
+      projectRoot: cwd,
     });
     await copyPublicInto(bn, cwd, outDir);
     await writePreviewHtml(bn, outDir, join(outDir, 'index.html'), { title: 'Next preview', css: '' });

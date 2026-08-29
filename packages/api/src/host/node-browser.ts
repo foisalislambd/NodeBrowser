@@ -16,7 +16,7 @@ import {
   opfsAvailable,
 } from '../fs/opfs.js';
 import { zlibPureSync } from '../compress/zlib.js';
-import { extractArchive, stripSingleRoot, joinArchivePath } from '../fs/zip.js';
+import { extractArchive, stripNestedWrappers, joinArchivePath } from '../fs/zip.js';
 import { resolveUnderRoot } from '../fs/paths.js';
 import { compileTailwind, syncTailwindBrowser } from '../bundler/tailwind.js';
 import { previewProject, resolveProjectRoot, type PreviewResult } from '../bundler/preview.js';
@@ -310,9 +310,13 @@ export class NodeBrowser {
    * Strips a single top-level folder. Returns dest + file count.
    */
   async importZip(bytes: Uint8Array, dest = '/home/project'): Promise<{ dest: string; files: number }> {
-    const extracted = stripSingleRoot(await extractArchive(bytes));
+    const extracted = stripNestedWrappers(await extractArchive(bytes));
     const names = Object.keys(extracted);
-    if (!names.length) throw new Error('archive is empty');
+    if (!names.length) {
+      throw new Error(
+        'archive is empty after skipping node_modules/.git/.next — zip the Vite/Next source folder, not node_modules',
+      );
+    }
     await this.fs.mkdir(dest, { recursive: true });
     for (const rel of names) {
       const path = joinArchivePath(dest, rel);
