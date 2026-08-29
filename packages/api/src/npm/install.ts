@@ -508,7 +508,15 @@ function fmtSec(ms: number): string {
 }
 
 function looksLikeRange(v: string): boolean {
-  return /^[\^~><=*]/.test(v) || v.includes('||') || v.includes('x') || v.includes('X') || v.includes(' ');
+  return (
+    /^[\^~><=*]/.test(v) ||
+    v.includes('||') ||
+    v.includes('x') ||
+    v.includes('X') ||
+    v.includes(' ') ||
+    /^\d+$/.test(v) ||
+    /^\d+\.\d+$/.test(v)
+  );
 }
 
 function isUnsupportedSpec(v: string): boolean {
@@ -565,6 +573,11 @@ function oneRangeSatisfied(p: [number, number, number], range: string): boolean 
   }
   const exact = parseSemver(r);
   if (exact) return cmpSemver(p, exact) === 0;
+  if (/^\d+$/.test(r)) return p[0] === Number(r);
+  if (/^\d+\.\d+$/.test(r)) {
+    const [maj, min] = r.split('.').map(Number);
+    return p[0] === maj && p[1] === min;
+  }
   return r === `${p[0]}.${p[1]}.${p[2]}`;
 }
 

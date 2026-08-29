@@ -6,7 +6,11 @@ No. The runtime executes in the browser tab (C++/WASM + QuickJS). `npm run dev` 
 
 ## Where do npm packages install?
 
-Into the in-memory **VFS** (e.g. `/home/project/node_modules`), not your host disk `node_modules` (except the real apps under `demo/templates/` when you run host Vite/Next).
+Into the in-memory **VFS** (e.g. `/home/project/node_modules`), not your host disk `node_modules` (except the real apps under `demo/templates/` when you run host Vite/Next). Terminal `npm install` is the same installer (`bn.install`). Full walkthrough: [User guide in the README](../README.md#user-guide).
+
+## Does Tailwind work like on a PC?
+
+**Install:** yes — `npm install tailwindcss @tailwindcss/browser` writes into the project VFS. **CLI:** `npx tailwindcss -i … -o …` is intercepted on the host (native oxide/lightningcss cannot run in WASM). **Utilities:** applied in Simple Browser via `@tailwindcss/browser`, not as a full prebuilt utility file on disk. Details: [README — Tailwind](../README.md#5-tailwind-css--no-separate-tailwind-product).
 
 ## Can it run full Next.js / Vite today?
 

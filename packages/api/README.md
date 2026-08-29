@@ -166,6 +166,7 @@ bn.teardown();
 | npm install | `bn.install(packages, cwd)` |
 | `npm run` | `bn.runScript(name, cwd)` |
 | `npx` | `bn.npx(pkg, args, cwd)` |
+| Tailwind CLI shape | `bn.compileTailwind(cwd, args)` or `spawn('npx', ['tailwindcss', '-i', …])` |
 | ZIP / tar.gz → VFS | `bn.importZip(bytes, dest?)` |
 | Snapshot `/home` | `bn.exportSnapshot()` / `bn.importSnapshot(bytes)` |
 | Persist `/home` | `boot({ persist: true })` (OPFS) |

@@ -50,7 +50,7 @@
 | `compress/` | gzip/inflate helper |
 | `index.ts` / `compat.ts` | public barrels (`dist/index.js`, `dist/compat.js`) |
 
-See **Language law** in [`ROADMAP.md`](../ROADMAP.md).
+See **Language law** in [`ROADMAP.md`](../ROADMAP.md). End-user walkthrough (demo, npm, Tailwind): [`README.md` User guide](../README.md#user-guide).
 
 ## Why QuickJS (not full Node C++ port)
 
