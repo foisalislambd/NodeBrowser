@@ -278,33 +278,35 @@ async function htmlForSimpleBrowser(port, html, baseHref) {
     return `<style>\n${r.body || ''}\n</style>`;
   });
 
-  html = await replaceAsync(html, /\b(?:src|href)=["']([^"']+)["']/gi, async (m) => {
-    const raw = m[1];
-    const path = previewAssetPath(raw);
-    if (!path || /\.(js|mjs)(\?|$)/i.test(path)) return m[0];
-    const r = await load(path);
-    if (r.status >= 400 || r.body == null) return m[0];
-    const mime = String((r.headers && (r.headers['Content-Type'] || r.headers['content-type'])) || '');
-    const attr = m[0].startsWith('href') ? 'href' : 'src';
-    const hash = raw.includes('#') ? raw.slice(raw.indexOf('#')) : '';
-    if (hash && (mime.includes('svg') || /\.svg$/i.test(path))) return m[0];
-    if (mime.includes('svg') || /\.svg$/i.test(path)) {
-      return `${attr}="data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.body)}${hash}"`;
-    }
-    if (/^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|ico)$/i.test(path)) {
-      let b64 = '';
-      try {
-        b64 = btoa(r.body);
-      } catch {
-        return m[0];
+  const chunks = html.split(/(<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>)/gi);
+  for (let i = 0; i < chunks.length; i++) {
+    if (i % 2 === 1) continue;
+    chunks[i] = await replaceAsync(chunks[i], /\b(?:src|href)=["']([^"']+)["']/gi, async (m) => {
+      const raw = m[1];
+      const path = previewAssetPath(raw);
+      if (!path || /\.(js|mjs)(\?|$)/i.test(path)) return m[0];
+      const r = await load(path);
+      if (r.status >= 400 || r.body == null) return m[0];
+      const mime = String((r.headers && (r.headers['Content-Type'] || r.headers['content-type'])) || '');
+      const attr = m[0].toLowerCase().startsWith('href') ? 'href' : 'src';
+      const hash = raw.includes('#') ? raw.slice(raw.indexOf('#')) : '';
+      if (hash && (mime.includes('svg') || /\.svg$/i.test(path))) return m[0];
+      if (mime.includes('svg') || /\.svg$/i.test(path)) {
+        return `${attr}="data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.body)}"`;
       }
-      const ct = mime.split(';')[0] || 'image/png';
-      return `${attr}="data:${ct};base64,${b64}"`;
-    }
-    return m[0];
-  });
-
-  return html;
+      if (/^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|ico)$/i.test(path)) {
+        try {
+          const b64 = btoa(r.body);
+          const ct = mime.split(';')[0] || 'image/png';
+          return `${attr}="data:${ct};base64,${b64}"`;
+        } catch {
+          return m[0];
+        }
+      }
+      return m[0];
+    });
+  }
+  return chunks.join('');
 }
 
 function setPreviewChrome(url) {
