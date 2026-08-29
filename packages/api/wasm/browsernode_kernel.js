@@ -28,7 +28,7 @@ var readyPromise = new Promise((resolve, reject) => {
   readyPromiseResolve = resolve;
   readyPromiseReject = reject;
 });
-["_bn_kernel_create","_bn_kernel_destroy","_bn_vfs_mkdir","_bn_vfs_write_text","_bn_vfs_write_bytes","_bn_vfs_read_text","_bn_vfs_read_bytes","_bn_vfs_unlink","_bn_vfs_rmdir","_bn_vfs_rename","_bn_vfs_readdir_json","_bn_vfs_exists","_bn_vfs_stat_json","_bn_vfs_lstat_json","_bn_vfs_symlink","_bn_vfs_readlink","_bn_spawn","_bn_wait","_bn_kill","_bn_pump","_bn_vfs_extract_tar","_bn_vfs_usage","_bn_read_stdout","_bn_read_stderr","_bn_write_stdin","_bn_http_dispatch","_bn_register_builtins","_bn_free","_malloc","_free","_memory","___indirect_function_table","_main","onRuntimeInitialized"].forEach((prop) => {
+["_bn_kernel_create","_bn_kernel_destroy","_bn_vfs_mkdir","_bn_vfs_write_text","_bn_vfs_write_bytes","_bn_vfs_read_text","_bn_vfs_read_bytes","_bn_vfs_unlink","_bn_vfs_rmdir","_bn_vfs_rename","_bn_vfs_readdir_json","_bn_vfs_exists","_bn_vfs_stat_json","_bn_vfs_lstat_json","_bn_vfs_symlink","_bn_vfs_readlink","_bn_spawn","_bn_wait","_bn_kill","_bn_pump","_bn_vfs_extract_tar","_bn_vfs_usage","_bn_read_stdout","_bn_read_stderr","_bn_write_stdin","_bn_write_stdout","_bn_write_stderr","_bn_complete","_bn_http_dispatch","_bn_register_builtins","_bn_free","_malloc","_free","_memory","___indirect_function_table","_main","onRuntimeInitialized"].forEach((prop) => {
   if (!Object.getOwnPropertyDescriptor(readyPromise, prop)) {
     Object.defineProperty(readyPromise, prop, {
       get: () => abort('You are getting ' + prop + ' on the Promise object, instead of the instance. Use .then() to get called back with the instance, see the MODULARIZE docs in src/settings.js'),
@@ -913,11 +913,11 @@ function dbg(...args) {
 // === Body ===
 
 var ASM_CONSTS = {
-  4420840: ($0, $1, $2) => { var tool = UTF8ToString($0); var cwd = UTF8ToString($1); var mode = UTF8ToString($2); if (typeof globalThis.__bn_on_tool === 'function') { globalThis.__bn_on_tool(tool, cwd, mode); } },  
- 4421027: ($0, $1, $2, $3) => { var cwd = UTF8ToString($0); var action = UTF8ToString($1); var payload = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npm === 'function') { globalThis.__bn_on_npm(cwd, action, payload, pid); } },  
- 4421241: ($0, $1, $2, $3) => { var pkg = UTF8ToString($0); var rest = UTF8ToString($1); var cwd = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npx === 'function') { globalThis.__bn_on_npx(pkg, rest, cwd, pid); } },  
- 4421443: ($0) => { if (typeof globalThis.__bn_on_server_ready === 'function') { globalThis.__bn_on_server_ready($0); } },  
- 4421547: ($0, $1, $2, $3, $4) => { try { if (typeof globalThis.__bn_wasm_http_dispatch !== 'function') return 0; var method = UTF8ToString($0); var path = UTF8ToString($1); var headers = UTF8ToString($2); var body = UTF8ToString($3); var port = $4; var out = globalThis.__bn_wasm_http_dispatch(port, method, path, headers, body); if (out == null) return 0; var s = String(out); var len = lengthBytesUTF8(s) + 1; var ptr = _malloc(len); stringToUTF8(s, ptr, len); return ptr; } catch (e) { return 0; } }
+  4424952: ($0, $1, $2) => { var tool = UTF8ToString($0); var cwd = UTF8ToString($1); var mode = UTF8ToString($2); if (typeof globalThis.__bn_on_tool === 'function') { globalThis.__bn_on_tool(tool, cwd, mode); } },  
+ 4425139: ($0, $1, $2, $3) => { var cwd = UTF8ToString($0); var action = UTF8ToString($1); var payload = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npm === 'function') { globalThis.__bn_on_npm(cwd, action, payload, pid); } },  
+ 4425353: ($0, $1, $2, $3) => { var pkg = UTF8ToString($0); var rest = UTF8ToString($1); var cwd = UTF8ToString($2); var pid = $3; if (typeof globalThis.__bn_on_npx === 'function') { globalThis.__bn_on_npx(pkg, rest, cwd, pid); } },  
+ 4425555: ($0) => { if (typeof globalThis.__bn_on_server_ready === 'function') { globalThis.__bn_on_server_ready($0); } },  
+ 4425659: ($0, $1, $2, $3, $4) => { try { if (typeof globalThis.__bn_wasm_http_dispatch !== 'function') return 0; var method = UTF8ToString($0); var path = UTF8ToString($1); var headers = UTF8ToString($2); var body = UTF8ToString($3); var port = $4; var out = globalThis.__bn_wasm_http_dispatch(port, method, path, headers, body); if (out == null) return 0; var s = String(out); var len = lengthBytesUTF8(s) + 1; var ptr = _malloc(len); stringToUTF8(s, ptr, len); return ptr; } catch (e) { return 0; } }
 };
 
 // end include: preamble.js
@@ -1804,6 +1804,9 @@ var _bn_kill = Module['_bn_kill'] = createExportWrapper('bn_kill', 2);
 var _bn_read_stdout = Module['_bn_read_stdout'] = createExportWrapper('bn_read_stdout', 4);
 var _bn_read_stderr = Module['_bn_read_stderr'] = createExportWrapper('bn_read_stderr', 4);
 var _bn_write_stdin = Module['_bn_write_stdin'] = createExportWrapper('bn_write_stdin', 4);
+var _bn_write_stdout = Module['_bn_write_stdout'] = createExportWrapper('bn_write_stdout', 4);
+var _bn_write_stderr = Module['_bn_write_stderr'] = createExportWrapper('bn_write_stderr', 4);
+var _bn_complete = Module['_bn_complete'] = createExportWrapper('bn_complete', 3);
 var _bn_register_builtins = Module['_bn_register_builtins'] = createExportWrapper('bn_register_builtins', 1);
 var _fflush = createExportWrapper('fflush', 1);
 var _malloc = Module['_malloc'] = createExportWrapper('malloc', 1);
