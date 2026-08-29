@@ -269,11 +269,10 @@ void Kernel::forward_child_stdio() {
       auto pit = procs_.find(child->parent_pid);
       if (pit == procs_.end() || !pit->second) continue;
       const auto& pcmd = pit->second->cmd;
-      // Only shell parents: draining into `node` would steal child_process pipes.
+      // Only live keep-alive children of a shell. Draining exited `echo` here
+      // races sh redirection (`echo hi > file`) which reads the child's stdout.
       if (pcmd != "sh" && pcmd != "bash") continue;
-      if (child->state != ProcessState::Running && child->stdout_buf.data.empty() &&
-          child->stderr_buf.data.empty())
-        continue;
+      if (child->state != ProcessState::Running || !child->keep_alive) continue;
       pairs.push_back({child->pid, child->parent_pid});
     }
   }
