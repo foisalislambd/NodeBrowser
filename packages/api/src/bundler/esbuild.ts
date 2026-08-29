@@ -475,9 +475,9 @@ async function loadCssGraph(fs: FsLike, path: string, projectRoot: string, seen:
     return '';
   }
   text = text
-    .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["']\s*;?/g, '')
-    .replace(/@import\s+["']tailwindcss["']\s*;?/g, '');
-  const re = /@import\s+(?:url\(\s*)?['"]([^'"]+)['"]\s*\)?\s*;/g;
+    .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["'][^;]*;?/g, '')
+    .replace(/@import\s+["']tailwindcss["'][^;]*;?/g, '');
+  const re = /@import\s+(?:url\(\s*)?['"]([^'"]+)['"](?:\s*\)\s*)?[^;]*;/g;
   const chunks: string[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -486,7 +486,7 @@ async function loadCssGraph(fs: FsLike, path: string, projectRoot: string, seen:
     if (/^https?:/i.test(spec) || spec.startsWith('tailwindcss')) continue;
     chunks.push(text.slice(last, m.index));
     last = m.index + m[0].length;
-    const resolved = spec.startsWith('/') ? joinUnder(projectRoot, spec) : join(dirname(norm), spec);
+    const resolved = spec.startsWith('/') ? resolveAbsImport(projectRoot, spec) : join(dirname(norm), spec);
     chunks.push(await loadCssGraph(fs, resolved, projectRoot, seen));
   }
   chunks.push(text.slice(last));

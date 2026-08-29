@@ -20,11 +20,19 @@ export type PreviewResult = {
 };
 
 const NEXT_CONFIG = ['next.config.js', 'next.config.mjs', 'next.config.cjs', 'next.config.ts', 'next.config.mts'];
-const VITE_CONFIG = ['vite.config.js', 'vite.config.ts', 'vite.config.mjs'];
+const VITE_CONFIG = ['vite.config.js', 'vite.config.ts', 'vite.config.mjs', 'vite.config.mts'];
+
+async function fileExists(bn: NodeBrowser, path: string): Promise<boolean> {
+  try {
+    return !(await bn.fs.stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 async function hasAny(bn: NodeBrowser, root: string, names: string[]): Promise<boolean> {
   for (const n of names) {
-    if (await readUtf8(bn, `${root}/${n}`)) return true;
+    if (await fileExists(bn, `${root}/${n}`)) return true;
   }
   return false;
 }
@@ -43,11 +51,11 @@ const VITE_ENTRIES = [
 ];
 
 async function looksLikeProject(bn: NodeBrowser, root: string): Promise<boolean> {
-  if (await readUtf8(bn, `${root}/package.json`)) return true;
+  if (await fileExists(bn, `${root}/package.json`)) return true;
   if (await findAppDir(bn, root)) return true;
   if (await hasAny(bn, root, NEXT_CONFIG)) return true;
   if (await hasAny(bn, root, VITE_CONFIG)) return true;
-  if (await readUtf8(bn, `${root}/index.html`)) return true;
+  if (await fileExists(bn, `${root}/index.html`) || (await fileExists(bn, `${root}/index.htm`))) return true;
   if (await hasAny(bn, root, VITE_ENTRIES)) return true;
   return false;
 }
@@ -139,8 +147,8 @@ export async function detectProjectKind(bn: NodeBrowser, root: string): Promise<
   ) {
     return 'vite';
   }
-  if ((await readUtf8(bn, `${root}/index.html`)) || (await readUtf8(bn, `${root}/index.htm`))) return 'static';
-  if ((await readUtf8(bn, `${root}/index.js`)) || (await readUtf8(bn, `${root}/server.js`))) return 'node';
+  if ((await fileExists(bn, `${root}/index.html`)) || (await fileExists(bn, `${root}/index.htm`))) return 'static';
+  if ((await fileExists(bn, `${root}/index.js`)) || (await fileExists(bn, `${root}/server.js`))) return 'node';
   return 'unknown';
 }
 

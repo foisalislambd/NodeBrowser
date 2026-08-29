@@ -435,7 +435,7 @@ async function main() {
   const deepJs = await bn.fs.readFile(deepVite.outfile, 'utf8');
   assert(deepJs.includes('deep-vite-ok') || deepJs.length > 50, 'deep vite bundle');
   const deepCss = await bn.fs.readFile(deepVite.outDir + '/index.css', 'utf8');
-  assert(deepCss.includes('margin') || deepCss.includes('theme'), 'vite css collected');
+  assert(deepCss.includes('color:red') || deepCss.includes('color: red'), 'vite css @import inlined into dist');
 
   const { makeStoredZip, stripNestedWrappers, extractArchive } = await import('../dist/fs/zip.js');
   const nestedZip = makeStoredZip({

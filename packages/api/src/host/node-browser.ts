@@ -307,7 +307,7 @@ export class NodeBrowser {
 
   /**
    * Unpack a .zip or .tar.gz into dest (default `/home/project`).
-   * Strips a single top-level folder. Returns dest + file count.
+   * Skips node_modules/.git/.next and peels nested wrappers (`Desktop/vscode/vite`).
    */
   async importZip(bytes: Uint8Array, dest = '/home/project'): Promise<{ dest: string; files: number }> {
     const extracted = stripNestedWrappers(await extractArchive(bytes));

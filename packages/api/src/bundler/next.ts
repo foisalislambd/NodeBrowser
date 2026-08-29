@@ -30,7 +30,11 @@ const INDEX_FILES = ['index.tsx', 'index.jsx', 'index.ts', 'index.js'];
 async function firstExisting(bn: NodeBrowser, dir: string, names: string[]): Promise<string | null> {
   for (const n of names) {
     const p = join(dir, n);
-    if (await readUtf8(bn, p)) return p;
+    try {
+      if (!(await bn.fs.stat(p)).isDirectory()) return p;
+    } catch {
+      /* */
+    }
   }
   return null;
 }

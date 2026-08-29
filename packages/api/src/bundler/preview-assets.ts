@@ -20,8 +20,13 @@ async function readUtf8(bn: NodeBrowser, path: string): Promise<string | null> {
 
 export function stripTailwindImport(css: string): string {
   return css
-    .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["']\s*;?/g, '')
-    .replace(/@import\s+["']tailwindcss["']\s*;?/g, '');
+    .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["'][^;]*;?/g, '')
+    .replace(/@import\s+["']tailwindcss["'][^;]*;?/g, '');
+}
+
+/** Drop local `@import "./x.css"` after those files were already concatenated. Keep http(s) imports. */
+export function stripLocalCssImports(css: string): string {
+  return css.replace(/@import\s+(?:url\(\s*)?['"](?!https?:)[^'"]+['"](?:\s*\)\s*)?[^;]*;/g, '');
 }
 
 export function looksLikeTailwind(css: string): boolean {
@@ -134,5 +139,5 @@ ${twBlock}
 </html>`;
   const destDir = destFile.slice(0, destFile.lastIndexOf('/')) || outDir;
   await bn.fs.writeFile(destFile, html);
-  await bn.fs.writeFile(join(destDir, 'index.css'), stripTailwindImport(css));
+  await bn.fs.writeFile(join(destDir, 'index.css'), stripLocalCssImports(stripTailwindImport(css)));
 }

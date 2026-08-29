@@ -6,7 +6,7 @@
 
 import type { NodeBrowser } from '../host/node-browser.js';
 import { bundleWithEsbuild } from './esbuild.js';
-import { copyPublicInto, looksLikeTailwind, stripTailwindImport, TW_BROWSER_VFS, collectCssUnder } from './preview-assets.js';
+import { copyPublicInto, looksLikeTailwind, stripTailwindImport, stripLocalCssImports, TW_BROWSER_VFS, collectCssUnder } from './preview-assets.js';
 
 const HMR_CLIENT = `(() => {
   let g = '';
@@ -148,7 +148,7 @@ export async function viteBuild(bn: NodeBrowser, cwd: string, opts?: { outDir?: 
     }
   }
   if (css) {
-    await bn.fs.writeFile(join(outDir, 'index.css'), stripTailwindImport(css));
+    await bn.fs.writeFile(join(outDir, 'index.css'), stripLocalCssImports(stripTailwindImport(css)));
     if (!/href=["'][^"']*index\.css["']/i.test(outHtml)) {
       if (outHtml.includes('</head>')) {
         outHtml = outHtml.replace('</head>', '<link rel="stylesheet" href="./index.css"/></head>');
