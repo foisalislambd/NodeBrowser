@@ -114,17 +114,19 @@ export async function bundleWithEsbuild(
               text = text
                 .replace(/@import\s+["']tailwindcss(?:\/[^"']*)?["']\s*;?/g, '')
                 .replace(/@import\s+["']tailwindcss["']\s*;?/g, '');
+              const inject =
+                'var s=document.createElement("style");s.textContent=' +
+                JSON.stringify(text) +
+                ';document.head.appendChild(s);';
               if (args.path.includes('.module.')) {
                 return {
-                  contents: 'export default new Proxy({}, { get: function(_, k) { return k; } });',
+                  contents:
+                    inject +
+                    'export default new Proxy({}, { get: function(_, k) { return k; } });',
                   loader: 'js',
                 };
               }
-              const js =
-                'var s=document.createElement("style");s.textContent=' +
-                JSON.stringify(text) +
-                ';document.head.appendChild(s);export default {};';
-              return { contents: js, loader: 'js' };
+              return { contents: inject + 'export default {};', loader: 'js' };
             }
             if (/\.(svg|png|jpe?g|gif|webp|ico)$/i.test(args.path)) {
               return { contents: 'export default ' + JSON.stringify(await assetDataUrl(fs, args.path)), loader: 'js' };
@@ -264,7 +266,15 @@ function shimFor(spec: string): string {
     return REACT_DOM_SHIM;
   }
   if (spec === 'next/image') {
-    return 'export default function Image(p){ p=p||{}; var src=p.src||""; if(typeof src==="string" && src.charAt(0)==="/" && src.charAt(1)!=="/") src="."+src; return { type:"img", props:{ src:src, alt:p.alt||"", width:p.width, height:p.height, className:p.className } }; }';
+    return [
+      'export default function Image(p){',
+      '  p=p||{};',
+      '  var src=p.src||"";',
+      '  if(src && typeof src==="object") src=src.src||src.default||"";',
+      '  if(typeof src==="string" && src.charAt(0)==="/" && src.charAt(1)!=="/") src="."+src;',
+      '  return { type:"img", props:{ src:src, alt:p.alt||"", width:p.width, height:p.height, className:p.className, style:p.style } };',
+      '}',
+    ].join('\n');
   }
   if (spec === 'next/link') {
     return 'export default function Link(p){ p=p||{}; return { type:"a", props:{ href:p.href||"#", children:p.children, className:p.className } }; }';

@@ -238,7 +238,7 @@ async function replaceAsync(input, re, fn) {
 }
 
 /** iframe src=__bn_preview is often blank under COEP; srcdoc + inlined assets always paints. */
-async function htmlForSimpleBrowser(port, html) {
+async function htmlForSimpleBrowser(port, html, baseHref) {
   const cache = new Map();
   const load = async (path) => {
     const p = path.startsWith('/') ? path : '/' + path;
@@ -247,6 +247,12 @@ async function htmlForSimpleBrowser(port, html) {
     cache.set(p, r);
     return r;
   };
+
+  if (baseHref) {
+    const base = `<base href="${String(baseHref).replace(/"/g, '')}"/>`;
+    if (/<head[^>]*>/i.test(html)) html = html.replace(/<head[^>]*>/i, (h) => h + base);
+    else html = base + html;
+  }
 
   html = await replaceAsync(html, /<script\b([^>]*)>([\s\S]*?)<\/script>/gi, async (m) => {
     const attrs = m[1] || '';
@@ -272,14 +278,28 @@ async function htmlForSimpleBrowser(port, html) {
     return `<style>\n${r.body || ''}\n</style>`;
   });
 
-  html = await replaceAsync(html, /\bsrc=["']([^"']+)["']/gi, async (m) => {
-    const path = previewAssetPath(m[1]);
+  html = await replaceAsync(html, /\b(?:src|href)=["']([^"']+)["']/gi, async (m) => {
+    const raw = m[1];
+    const path = previewAssetPath(raw);
     if (!path || /\.(js|mjs)(\?|$)/i.test(path)) return m[0];
     const r = await load(path);
     if (r.status >= 400 || r.body == null) return m[0];
-    const mime = (r.headers && (r.headers['Content-Type'] || r.headers['content-type'])) || '';
-    if (String(mime).includes('svg') || /\.svg$/i.test(path)) {
-      return `src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.body)}"`;
+    const mime = String((r.headers && (r.headers['Content-Type'] || r.headers['content-type'])) || '');
+    const attr = m[0].startsWith('href') ? 'href' : 'src';
+    const hash = raw.includes('#') ? raw.slice(raw.indexOf('#')) : '';
+    if (hash && (mime.includes('svg') || /\.svg$/i.test(path))) return m[0];
+    if (mime.includes('svg') || /\.svg$/i.test(path)) {
+      return `${attr}="data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.body)}${hash}"`;
+    }
+    if (/^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|ico)$/i.test(path)) {
+      let b64 = '';
+      try {
+        b64 = btoa(r.body);
+      } catch {
+        return m[0];
+      }
+      const ct = mime.split(';')[0] || 'image/png';
+      return `${attr}="data:${ct};base64,${b64}"`;
     }
     return m[0];
   });
@@ -307,7 +327,7 @@ async function showPreview(port, url, opts = {}) {
     try {
       const page = await fetchPreviewPath(port, '/');
       if (page.status >= 200 && page.status < 400 && page.body) {
-        const html = await htmlForSimpleBrowser(port, page.body);
+        const html = await htmlForSimpleBrowser(port, page.body, url || lastPreview.url);
         iframe.removeAttribute('src');
         iframe.srcdoc = html;
         if (empty) empty.classList.add('hidden');

@@ -29,7 +29,7 @@
     "test:e2e": "npx playwright test --project=chromium",
     "bench": "node scripts/bench.mjs",
     "bakeoff": "node scripts/bakeoff.mjs",
-    "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md','GOVERNANCE.md','ROADMAP.md','SUPPORT.md','AUTHORS.md','NOTICE','docs/ARCHITECTURE.md','docs/FAQ.md']) require('fs').accessSync(f)\""
+    "lint:docs": "node -e \"for (const f of ['README.md','LICENSE','CONTRIBUTING.md','CODE_OF_CONDUCT.md','SECURITY.md','CHANGELOG.md','GOVERNANCE.md','ROADMAP.md','SUPPORT.md','AUTHORS.md','NOTICE','docs/README.md','docs/GUIDE.md','docs/API.md','docs/DEMO.md','docs/NPM.md','docs/TAILWIND.md','docs/LIMITS.md','docs/ARCHITECTURE.md','docs/FAQ.md']) require('fs').accessSync(f)\""
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

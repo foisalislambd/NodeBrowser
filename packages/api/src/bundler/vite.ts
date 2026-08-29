@@ -6,7 +6,7 @@
 
 import type { NodeBrowser } from '../host/node-browser.js';
 import { bundleWithEsbuild } from './esbuild.js';
-import { copyPublicInto, stripTailwindImport, TW_BROWSER_VFS } from './preview-assets.js';
+import { copyPublicInto, looksLikeTailwind, stripTailwindImport, TW_BROWSER_VFS } from './preview-assets.js';
 
 const HMR_CLIENT = `(() => {
   let g = '';
@@ -105,20 +105,20 @@ export async function viteBuild(bn: NodeBrowser, cwd: string, opts?: { outDir?: 
     }
   }
   outHtml = outHtml.replace(/\b(href|src)=["']\/(?!\/)([^"']*)["']/gi, (_, attr, rest) => `${attr}="./${rest}"`);
+  outHtml = outHtml.replace(/\bhref=["'](?:\.\/)?src\/[^"']+\.css["']/gi, 'href="./index.css"');
   const twSrc = await readUtf8(bn, TW_BROWSER_VFS);
-  if (twSrc) {
-    await bn.fs.writeFile(join(outDir, '__tw_browser.js'), twSrc);
+  const useTw = !!(twSrc && looksLikeTailwind(css));
+  if (useTw) {
+    await bn.fs.writeFile(join(outDir, '__tw_browser.js'), twSrc!);
     if (!outHtml.includes('__tw_browser.js')) {
-      const twTag = css
-        ? `<style type="text/tailwindcss">${css.replace(/<\/style/gi, '<\\/style')}</style><script src="./__tw_browser.js"></script>`
-        : `<script src="./__tw_browser.js"></script>`;
+      const twTag = `<style type="text/tailwindcss">${css.replace(/<\/style/gi, '<\\/style')}</style><script src="./__tw_browser.js"></script>`;
       if (outHtml.includes('</head>')) outHtml = outHtml.replace('</head>', twTag + '</head>');
       else outHtml = twTag + outHtml;
     }
   }
   if (css) {
     await bn.fs.writeFile(join(outDir, 'index.css'), stripTailwindImport(css));
-    if (!outHtml.includes('index.css')) {
+    if (!/href=["'][^"']*index\.css["']/i.test(outHtml)) {
       if (outHtml.includes('</head>')) {
         outHtml = outHtml.replace('</head>', '<link rel="stylesheet" href="./index.css"/></head>');
       } else {

@@ -78,10 +78,11 @@ export async function writePreviewHtml(
   }
   const twHref = opts.twHref || './__tw_browser.js';
   const css = opts.css || '';
-  const twStyle = css
+  const useTw = !!(twSrc && looksLikeTailwind(css));
+  const twStyle = useTw
     ? `<style type="text/tailwindcss">${css.replace(/<\/style/gi, '<\\/style')}</style>\n`
     : '';
-  const twBlock = twSrc ? `${twStyle}<script src="${twHref}"></script>\n` : '';
+  const twBlock = useTw ? `${twStyle}<script src="${twHref}"></script>\n` : '';
   const linkCss = `<link rel="stylesheet" href="./index.css"/>`;
   const html = `<!doctype html>
 <html lang="en" class="h-full antialiased">

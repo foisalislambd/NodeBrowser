@@ -73,7 +73,10 @@ Prefer short, imperative subjects:
 
 ## Documentation
 
-- User-facing behavior → `README.md`
+- Index → [`docs/README.md`](./docs/README.md)
+- API → [`docs/API.md`](./docs/API.md)
+- User / demo / npm / Tailwind / limits → `docs/GUIDE.md`, `DEMO.md`, `NPM.md`, `TAILWIND.md`, `LIMITS.md`
+- Short README → [`README.md`](./README.md)
 - Roadmap → `ROADMAP.md`
 - Architecture → `docs/ARCHITECTURE.md`
 - Node module matrix → `runtime/node/MODULES.md` (if present)

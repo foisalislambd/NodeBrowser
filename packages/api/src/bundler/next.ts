@@ -123,11 +123,12 @@ export async function nextBuild(bn: NodeBrowser, cwd: string): Promise<NextResul
       jsx: 'automatic',
     });
 
-    const css =
-      (await readUtf8(bn, join(appDir, 'globals.css'))) ||
-      (await readUtf8(bn, join(appDir, 'page.module.css'))) ||
-      (await readUtf8(bn, join(appDir, 'global.css'))) ||
-      '';
+    const cssParts: string[] = [];
+    for (const rel of ['globals.css', 'global.css', 'page.module.css']) {
+      const chunk = await readUtf8(bn, join(appDir, rel));
+      if (chunk) cssParts.push(chunk);
+    }
+    const css = cssParts.join('\n');
     await copyPublicInto(bn, cwd, outDir);
     await writePreviewHtml(bn, outDir, join(outDir, 'index.html'), {
       title: 'Next preview',

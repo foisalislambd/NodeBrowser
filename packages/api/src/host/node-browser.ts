@@ -650,20 +650,35 @@ export class NodeBrowser {
         return;
       }
       try {
-        const body = await this.fs.readFile(filePath, 'utf8');
-        res.writeHead(200, {
-          'Content-Type': contentTypeFor(filePath),
-          'Cross-Origin-Resource-Policy': 'same-origin',
-          'Cross-Origin-Embedder-Policy': 'require-corp',
-        });
-        res.end(body);
+        if (isTextFile(filePath)) {
+          const text = await this.fs.readFile(filePath, 'utf8');
+          res.writeHead(200, {
+            'Content-Type': contentTypeFor(filePath),
+            'Cross-Origin-Resource-Policy': 'same-origin',
+            'Cross-Origin-Embedder-Policy': 'require-corp',
+          });
+          res.end(text);
+        } else {
+          const buf = await this.fs.readFile(filePath, 'buffer');
+          res.writeHead(200, {
+            'Content-Type': contentTypeFor(filePath),
+            'Cross-Origin-Resource-Policy': 'same-origin',
+            'Cross-Origin-Embedder-Policy': 'require-corp',
+          });
+          res.end(buf);
+        }
       } catch {
+        if (isStaticAssetPath(rel)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end(`Not found: ${filePath}`);
+          return;
+        }
         // SPA fallback → index.html
         try {
           const idx = `${root}/${indexName}`.replace(/\/+/g, '/');
-          const body = await this.fs.readFile(idx, 'utf8');
+          const html = await this.fs.readFile(idx, 'utf8');
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(body);
+          res.end(html);
         } catch {
           res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
           res.end(`Not found: ${filePath}`);
@@ -1169,12 +1184,29 @@ function formatNpmLine(p: {
   return '';
 }
 
+function isTextFile(filePath: string): boolean {
+  return /\.(html?|css|js|mjs|cjs|map|json|svg|txt|xml|webmanifest|md)$/i.test(filePath);
+}
+
+function isStaticAssetPath(rel: string): boolean {
+  return /\.(css|js|mjs|cjs|map|json|png|jpe?g|gif|webp|ico|svg|woff2?|ttf|eot|wasm|txt)$/i.test(rel);
+}
+
 function contentTypeFor(filePath: string): string {
-  if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) return 'application/javascript; charset=utf-8';
-  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
-  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
-  if (filePath.endsWith('.svg')) return 'image/svg+xml';
-  if (filePath.endsWith('.html') || filePath.endsWith('.htm')) return 'text/html; charset=utf-8';
+  const p = filePath.toLowerCase();
+  if (p.endsWith('.js') || p.endsWith('.mjs') || p.endsWith('.cjs')) return 'application/javascript; charset=utf-8';
+  if (p.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (p.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (p.endsWith('.svg')) return 'image/svg+xml';
+  if (p.endsWith('.html') || p.endsWith('.htm')) return 'text/html; charset=utf-8';
+  if (p.endsWith('.png')) return 'image/png';
+  if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg';
+  if (p.endsWith('.gif')) return 'image/gif';
+  if (p.endsWith('.webp')) return 'image/webp';
+  if (p.endsWith('.ico')) return 'image/x-icon';
+  if (p.endsWith('.woff')) return 'font/woff';
+  if (p.endsWith('.woff2')) return 'font/woff2';
+  if (p.endsWith('.wasm')) return 'application/wasm';
   return 'application/octet-stream';
 }
 

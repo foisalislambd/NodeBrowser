@@ -33,12 +33,11 @@ for await (const chunk of proc.output) console.log(chunk);
 
 | Section | What it covers |
 |---------|----------------|
+| [Docs](./docs/README.md) | User guide, **API**, demo, npm, Tailwind, limits |
 | [What is this](#what-is-this-in-plain-words) | Product in one page |
-| [User guide](#user-guide) | Demo as VS Code, terminal, npm, Tailwind, preview |
-| [How the pieces fit](#how-the-pieces-fit) | Kernel vs host vs demo |
-| [What works / what does not](#what-works-today) | Honest capability table |
+| [What works](#what-works-today) | Honest capability table |
 | [Run from source](#run-the-demo-from-source) | Clone, WASM, native tests |
-| [npm package](#use-the-npm-package) | `@foisal/nodebrowser` API pointer |
+| [How the pieces fit](#how-the-pieces-fit) | Kernel vs host vs demo |
 
 ---
 
@@ -74,178 +73,21 @@ What we are **not** trying to be on day one: bit-identical Node, native `.node` 
 
 ---
 
-## User guide
+## Documentation
 
-This is the practical guide: how a person (or an agent) should use NodeBrowser, what happens under the hood, and where it deliberately differs from a PC.
+Step-by-step and API live under **[`docs/`](./docs/README.md)** — not only this README:
 
-### 1. Open the workbench (demo)
+| Doc | Contents |
+|-----|----------|
+| [User guide](./docs/GUIDE.md) | VFS, language law, terminal, persist |
+| [API reference](./docs/API.md) | Every `@foisal/nodebrowser` method, events, RPC |
+| [Demo](./docs/DEMO.md) | VS Code–style workbench and keys |
+| [npm](./docs/NPM.md) | Install into VFS, intercepts, lockfile |
+| [Tailwind](./docs/TAILWIND.md) | Same npm packages + CLI shape |
+| [Limits](./docs/LIMITS.md) | Which packages actually `require()` |
+| [Architecture](./docs/ARCHITECTURE.md) / [FAQ](./docs/FAQ.md) | Design and short answers |
 
-The `demo/` app is a **VS Code Dark+–style workbench**, not a custom “cloud IDE” chrome:
-
-- Title bar: File / Edit / View / Run / Terminal / Help, command center (`Ctrl+K`)
-- Activity bar: Explorer, Search, Run and Debug, Templates, Simple Browser, Settings
-- Sidebar: **PROJECT** tree over the virtual disk (`/home`, `/usr`, …)
-- Editor: open file, breadcrumbs, dirty dot, `Ctrl+S` save
-- Panel: **PROBLEMS** / **TERMINAL** / **OUTPUT** / **DEBUG CONSOLE**
-- Status bar: WASM ready, cwd, line/col, LF, UTF-8
-- Right pane: **Simple Browser** (preview iframe + virtual `localhost`)
-
-Boot sequence: splash → WASM kernel → optional OPFS restore of `/home` → welcome text in the terminal. The demo does **not** auto-run an HTTP server on an empty starter workspace; you run files yourself (F5 / Run File), like VS Code.
-
-Local: `npm run dev` → [http://localhost:5173](http://localhost:5173) (COOP/COEP headers required for Worker + SharedArrayBuffer stdio).
-
-### 2. Where files actually live
-
-| Path you type | Where it is |
-|---------------|-------------|
-| `/home/project/index.js` | Kernel **VFS** (RAM). Optional persist: browser **OPFS** for `/home` |
-| `node_modules/` after `npm install` | Same VFS: `/home/project/node_modules` |
-| This git repo’s `node_modules/` | Host machine only (Vite, Emscripten, tests) — **not** the guest |
-
-Explorer, Save, Upload ZIP, and the terminal all talk to the **same VFS**. Export snapshot / import ZIP copy bytes in and out of that disk.
-
-### 3. Language law (who is allowed to implement Node)
-
-| Layer | Language | Allowed to implement |
-|-------|----------|----------------------|
-| Guest Node (`fs`, `http`, `require`, `child_process`, …) | **C++ + QuickJS** in `kernel/` and `kernel/embed/guest_modules.js` | Yes |
-| Host package `@foisal/nodebrowser` | **TypeScript** | WASM load, npm **fetch**, OPFS, Service Worker, esbuild-wasm / preview shims — **not** a second Node |
-| Demo UI | **JavaScript** in `demo/src` | Workbench only |
-
-New core modules go in the kernel embed, then regenerate (`scripts/gen-guest-modules.sh`). Do not add a fake `fs` in the demo.
-
-### 4. Terminal: same commands as a PC (subset)
-
-Type in the panel like a shell. The demo runs `spawn('sh', ['-c', line], { cwd })`.
-
-**Node**
-
-```bash
-node index.js
-node /home/project/server.js
-```
-
-Guest JS is **QuickJS inside WASM**, not Chromium’s V8 and not your laptop Node.
-
-**npm (host installer, packages still land in the VFS)**
-
-The workbench intercepts `npm` / `sh -c 'npm …'` on the **host** so install logs stream to the terminal and the old WASM keep-alive/kill-137 path is avoided. Behavior is meant to feel like a PC:
-
-```bash
-npm install
-npm install lodash
-npm install tailwindcss @tailwindcss/browser
-npm install -D typescript
-npm uninstall lodash
-npm ls
-npm run <script>
-```
-
-What that means:
-
-- Tarballs come from the **npm registry** (HTTPS allowlist).
-- Extract + hoist into **`/home/project/node_modules`** (you see them in Explorer).
-- `package.json` and a lockfile are updated.
-- Dependencies are fetched in parallel; exact versions already present are skipped.
-- **Native / optional platform packages are skipped** (e.g. `esbuild`, `fsevents`, `lightningcss-*`, `@tailwindcss/oxide*`) because they are `.node` binaries. The JS package still installs when it is pure JS.
-- Peer deps are **not** auto-installed (npm-like warning, not silent install).
-- Empty `npm install` installs `package.json` dependencies.
-
-Command parsing uses the **first positional** as the subcommand (`npm install ls` is install of a package named `ls`, not `npm ls`).
-
-**npx / local bins**
-
-```bash
-npx tailwindcss -i ./src/input.css -o ./dist/output.css
-```
-
-`node_modules/.bin` shims exist after install. Some CLIs are intercepted on the host when the real binary cannot run in WASM (Tailwind, npm). Others run as `node path/to/cli.js` in QuickJS when that JS is compatible.
-
-Pipes and `&&` / `;` in one `sh -c` string are **not** rewritten by the host intercept (too easy to mis-parse). Prefer one command per line.
-
-### 5. Tailwind CSS — no separate Tailwind product
-
-Goal: **install Tailwind like a PC, compile with the same CLI shape**, without a second “in-browser Tailwind engine” product beside npm.
-
-**Install (same as PC)**
-
-```bash
-npm install tailwindcss @tailwindcss/browser
-```
-
-or the Run sidebar: **Install Tailwind CSS**. Packages go into the project `node_modules`.
-
-**Compile (same CLI people already type)**
-
-```bash
-npx tailwindcss -i ./src/input.css -o ./dist/output.css
-```
-
-or **Compile Tailwind** in Run and Debug. Flags `-y` / `--yes` / `tailwindcss@4` are accepted. If `-i` is missing, the host looks for `src/input.css`, `src/index.css`, `input.css`, … and creates `src/input.css` when needed.
-
-What actually happens (honest):
-
-1. Host intercepts `tailwindcss` / `npx tailwindcss` (not the native Rust/oxide CLI).
-2. Native **lightningcss** / **@tailwindcss/oxide** are skipped on install — they cannot run in WASM.
-3. `@tailwindcss/browser` (the official browser compiler) is copied from VFS `node_modules` into `/usr/share/nodebrowser/tailwind-browser.js` when `index.global.js` exists. The demo also ships a vendor copy of that IIFE for first paint.
-4. `dist/output.css` is your source CSS **minus** `@import "tailwindcss"` (plus a short header). It is **not** a full pre-generated utility dump like native `lightningcss`.
-5. **Utilities apply in Simple Browser**: preview HTML injects `<style type="text/tailwindcss">` and the browser compiler, same as Tailwind’s documented browser path.
-
-So: same **packages**, same **commands**, same **files in the project**. Not bit-identical to `tailwindcss` on Linux with oxide. Do not expect `output.css` on disk to contain every `flex`/`pt-4` class; the preview engine generates those in the iframe.
-
-The **demo workbench’s own CSS** uses Tailwind via Vite (`@tailwindcss/vite` in `demo/`). That only styles the VS Code chrome. Guest apps do not use that pipeline.
-
-### 6. Run, debug, preview
-
-- **Run File (F5)** — `node` on the open `.js` (or writes `index.js`).
-- **HTTP Demo** — sample `http` server; Simple Browser maps `localhost:3000` through the Service Worker.
-- **Preview Project** — detects Vite / Next / static / Node and starts the in-tab subset.
-- **Bundle (esbuild-wasm)** — host bundler, files still in VFS.
-- **Templates** — load Vite / Next / Express trees into `/home/project`, then preview.
-
-When guest code `listen()`s, the host fires `server-ready` and the iframe loads `/__bn_preview/<port>/`.
-
-### 7. Keyboard (demo)
-
-| Keys | Action |
-|------|--------|
-| `Ctrl+K` | Command palette |
-| `Ctrl+S` | Save |
-| `Ctrl+N` | New file |
-| `Ctrl+J` | Toggle panel |
-| `` Ctrl+` `` | Focus terminal |
-| `Ctrl+Shift+E` / `F` / `D` | Explorer / Search / Run |
-| `F5` | Run file |
-
-**Install Package…** uses a VS Code-style quick input (Enter confirms, Escape cancels), not `window.prompt`.
-
-### 8. Persist and share
-
-- `boot({ persist: true })` (demo default): `/home` survives reloads via OPFS.
-- Export snapshot / Upload ZIP: move a project in or out of the tab.
-- Clearing the workspace wipes VFS `/home` (and OPFS when persist is on).
-
-### 9. Use it from your own app (no demo UI)
-
-Full API: [`packages/api/README.md`](./packages/api/README.md).
-
-```ts
-const bn = await NodeBrowser.boot({ persist: true, previewBase: '/__bn_preview' });
-bn.attachServiceWorkerBridge('/__bn_preview');
-bn.on('install-progress', (p) => console.log(p.message ?? p.phase));
-await bn.install(['lodash'], '/home/project');
-await bn.spawn('node', ['index.js'], { cwd: '/home/project' });
-await bn.compileTailwind('/home/project', ['-i', './src/input.css', '-o', './dist/output.css']);
-```
-
-Serve the page with:
-
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-`NodeBrowser.boot()` **throws** if `browsernode_kernel.wasm` is missing. There is no JavaScript guest Node fallback.
+npm package blurb (what the registry shows): [`packages/api/README.md`](./packages/api/README.md).
 
 ---
 
@@ -266,7 +108,7 @@ Cross-Origin-Embedder-Policy: require-corp
 | Native `.node` addons, bit-identical Node, full Vite 8 / `next start` | ❌ |
 | Raw TCP to the public internet from guest | ❌ (virtual HTTP / allowlisted fetch) |
 
-Design: [`ROADMAP.md`](./ROADMAP.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md).
+Design: [`ROADMAP.md`](./ROADMAP.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md). API: [`docs/API.md`](./docs/API.md).
 
 ---
 
@@ -276,7 +118,7 @@ Design: [`ROADMAP.md`](./ROADMAP.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTU
 npm install @foisal/nodebrowser
 ```
 
-Install, boot, VFS, npm, preview, and API map: **[`packages/api/README.md`](./packages/api/README.md)** (this is also what npm shows).
+Quick start on npm: **[`packages/api/README.md`](./packages/api/README.md). Full method list: [`docs/API.md`](./docs/API.md).
 
 ---
 
@@ -350,7 +192,7 @@ Browser tab (ideally COOP + COEP)
 | `packages/api/src/npm/` | Registry install into VFS |
 | `packages/api/src/bundler/tailwind.ts` | `npx tailwindcss` host path + `@tailwindcss/browser` sync |
 | `demo/` | VS Code–like playground + templates |
-| `docs/` | Architecture, publishing, FAQ |
+| `docs/` | [Guides index](./docs/README.md) — API, demo, npm, Tailwind, architecture |
 | `scripts/` | WASM build, guest-module codegen, toolchain, release helpers |
 
 ---

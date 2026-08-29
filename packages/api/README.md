@@ -24,7 +24,7 @@ for await (const chunk of proc.output) console.log(chunk);
 bn.teardown();
 ```
 
-[Live demo](https://foisalislambd.github.io/NodeBrowser/) · [GitHub](https://github.com/foisalislambd/NodeBrowser) · [Why this exists](https://github.com/foisalislambd/NodeBrowser#readme)
+[Live demo](https://foisalislambd.github.io/NodeBrowser/) · [GitHub](https://github.com/foisalislambd/NodeBrowser) · **[API reference](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/API.md)** · [Docs index](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/README.md)
 
 ---
 
@@ -220,7 +220,7 @@ Repo example: [`examples/headless.mjs`](https://github.com/foisalislambd/NodeBro
 - Isolation is **best-effort** for demos and tooling — not a hardened multi-tenant sandbox. See [SECURITY.md](https://github.com/foisalislambd/NodeBrowser/blob/main/SECURITY.md).
 - `npm install` talks to the **public npm registry** over HTTPS. Yarn/pnpm lockfiles are detected but **not executed**.
 
-Deeper FAQ: [docs/FAQ.md](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/FAQ.md).
+Full API: [docs/API.md](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/API.md). Limits: [docs/LIMITS.md](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/LIMITS.md). FAQ: [docs/FAQ.md](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/FAQ.md).
 
 ---
 

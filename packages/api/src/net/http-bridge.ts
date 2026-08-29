@@ -18,6 +18,21 @@ export interface OutgoingHttpResponse {
   body: string;
 }
 
+function bytesToBinaryString(bytes: Uint8Array): string {
+  let s = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    s += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return s;
+}
+
+function chunkToBody(chunk: string | Uint8Array | undefined | null): string {
+  if (chunk == null) return '';
+  if (chunk instanceof Uint8Array) return bytesToBinaryString(chunk);
+  return String(chunk);
+}
+
 type Handler = (
   req: { method: string; url: string; headers: Record<string, string>; body?: string },
   res: {
@@ -25,8 +40,8 @@ type Handler = (
     headers: Record<string, string>;
     writeHead: (code: number, headers?: Record<string, string>) => void;
     setHeader: (k: string, v: string) => void;
-    write: (chunk: string) => void;
-    end: (chunk?: string) => void;
+    write: (chunk: string | Uint8Array) => void;
+    end: (chunk?: string | Uint8Array) => void;
   },
 ) => void;
 
@@ -104,11 +119,11 @@ export class HttpBridge {
         setHeader(k: string, v: string) {
           headers[k] = v;
         },
-        write(chunk: string) {
-          body += String(chunk ?? '');
+        write(chunk: string | Uint8Array) {
+          body += chunkToBody(chunk);
         },
-        end(chunk?: string) {
-          if (chunk != null) body += String(chunk);
+        end(chunk?: string | Uint8Array) {
+          if (chunk != null) body += chunkToBody(chunk);
           finish();
         },
       };
