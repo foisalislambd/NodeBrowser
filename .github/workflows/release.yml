@@ -73,7 +73,7 @@ jobs:
         run: npm run build:demo
 
       - name: Upload WASM artifacts (for publish job)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cpp-wasm-kernel
           path: packages/api/wasm/
