@@ -118,7 +118,7 @@ jobs:
           echo "Next version: $NEXT"
 
       - name: Download C++/WASM kernel from build job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: cpp-wasm-kernel
           path: packages/api/wasm
