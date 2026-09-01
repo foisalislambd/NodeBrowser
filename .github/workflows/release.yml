@@ -52,7 +52,7 @@ jobs:
         run: npm run build:native
 
       - name: Setup Emscripten
-        uses: emscripten-core/setup-emsdk@v15
+        uses: emscripten-core/setup-emsdk@v16
         with:
           version: ${{ env.EM_VERSION }}
           actions-cache-folder: emsdk-cache
