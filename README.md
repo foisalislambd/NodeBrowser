@@ -36,6 +36,7 @@ for await (const chunk of proc.output) console.log(chunk);
 | [Docs](./docs/README.md) | User guide, **API**, demo, npm, Tailwind, limits |
 | [What is this](#what-is-this-in-plain-words) | Product in one page |
 | [What works](#what-works-today) | Honest capability table |
+| [Benchmark](#benchmark) | Timings on one machine |
 | [Run from source](#run-the-demo-from-source) | Clone, WASM, native tests |
 | [How the pieces fit](#how-the-pieces-fit) | Kernel vs host vs demo |
 
@@ -113,6 +114,35 @@ npm package blurb (what the registry shows): [`packages/api/README.md`](./packag
 | Raw TCP to the public internet from guest | ❌ (virtual HTTP / allowlisted fetch) |
 
 Design: [`ROADMAP.md`](./ROADMAP.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/FAQ.md`](./docs/FAQ.md). API: [`docs/API.md`](./docs/API.md).
+
+---
+
+## Benchmark
+
+Measured on **9 Nov 2026** with the committed C++/WASM kernel (2,369,166 bytes) loaded inside **Node v26.13.0** on Linux, AMD Ryzen 7 7700 (8 cores, 9.6 GiB RAM). Same kernel the browser tab loads. This is not a cold page load and not a WebContainers comparison.
+
+Every check passed. Times are the median of 5 rounds after one warmup (boot is the median of 3 cold boots).
+
+| Check | Result | Median |
+|-------|--------|--------|
+| Boot the WASM kernel | ok | 11.3 ms |
+| `node -e` printing `ok` | ok | 29.6 ms |
+| Write then read a 64 KiB file | ok | 8.3 ms |
+| Write 100 small files | ok | 6.6 ms |
+| `require` a local module (`42`) | ok | 20.3 ms |
+| 1,000,000-iteration loop, guest `node` | ok, checksum `6` | 221.7 ms |
+| Same loop, a host Node process | ok, same checksum | 87.2 ms |
+| Same loop, V8 in this process | ok, same checksum | 5.0 ms |
+
+Starting a guest `node` for that loop took about **2.5×** starting a real Node process (222 ms vs 87 ms). The arithmetic itself is much cheaper on V8: **5.0 ms** in-process. Most of the guest time is spinning up QuickJS inside WASM, not the loop body.
+
+Reproduce after the API is compiled (`npx tsc -p packages/api/tsconfig.json`):
+
+```bash
+npm run bench
+```
+
+Source: [`scripts/bench.mjs`](./scripts/bench.mjs).
 
 ---
 
