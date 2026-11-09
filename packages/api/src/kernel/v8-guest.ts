@@ -1,11 +1,47 @@
 /**
  * Guest `node` on the host JavaScript engine (V8 in Chromium and in Node).
- * The C++/WASM kernel still owns the filesystem. QuickJS stays for the shell
- * until this path covers it.
+ * The program is the same bootstrap + guest modules QuickJS evaluates.
+ * The C++/WASM kernel still owns the filesystem, and QuickJS still runs the shell.
  */
 import type { KernelHandle, KernelModule } from './load.js';
+import { GUEST_BOOTSTRAP, GUEST_MODULES } from './guest_bundle.js';
 
-export type V8RunResult = { code: number; stdout: string; stderr: string };
+export type V8RunResult = {
+  code: number;
+  stdout: string;
+  stderr: string;
+  /** Keeps growing after return while guest timers or servers are still live. */
+  io: { stdout: string; stderr: string; timers: number; servers: number };
+};
+
+type HttpHandler = (req: {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+}) => { status: number; headers: Record<string, string>; body: string };
+
+type GuestFn = (req: { method?: string; url?: string; headers?: Record<string, string> }, res: GuestRes) => void;
+
+type GuestRes = {
+  statusCode: number;
+  setHeader: (k: string, v: unknown) => void;
+  writeHead: (code: number, h?: Record<string, string>) => void;
+  write: (c: unknown) => boolean;
+  end: (c?: unknown) => void;
+};
+
+type Sandbox = {
+  globalThis: Sandbox;
+  __bn: BnShim;
+  process?: { argv: unknown[]; env: Record<string, string>; exitCode?: number };
+  __bn_runMain?: (filename: string) => number;
+  __bn_fire_timer?: (id: number, interval: number) => void;
+};
+
+type BnShim = Record<string, unknown>;
+
+type SpawnResult = { pid: number; stdout: string; stderr: string; running: boolean; code: number };
 
 function isPromise(v: unknown): v is Promise<unknown> {
   return !!v && typeof (v as Promise<unknown>).then === 'function';
@@ -66,84 +102,67 @@ export function nodeArgsFromSpawn(cmd: string, args: string[]): string[] | null 
   return null;
 }
 
-function normalize(p: string): string {
-  const parts: string[] = [];
-  for (const seg of p.split('/')) {
-    if (!seg || seg === '.') continue;
-    if (seg === '..') parts.pop();
-    else parts.push(seg);
-  }
-  return '/' + parts.join('/');
-}
-
-function joinPath(dir: string, name: string): string {
-  if (!name) return dir || '/';
-  if (name.startsWith('/')) return normalize(name);
-  const base = dir === '/' ? '' : dir.replace(/\/+$/, '');
-  return normalize(`${base}/${name}`);
-}
-
-function dirname(p: string): string {
-  const i = p.lastIndexOf('/');
-  if (i <= 0) return '/';
-  return p.slice(0, i);
-}
-
-function isFile(mod: KernelModule, k: KernelHandle, path: string): boolean {
-  if (!sync(mod.exists(k, path))) return false;
-  if (mod.lstatKind) return sync(mod.lstatKind(k, path)) === 'file';
-  return sync(mod.readText(k, path)) !== null;
-}
-
-function isDir(mod: KernelModule, k: KernelHandle, path: string): boolean {
-  if (path === '/' || path === '') return true;
-  if (!sync(mod.exists(k, path))) return false;
-  if (mod.lstatKind) return sync(mod.lstatKind(k, path)) === 'directory';
-  return sync(mod.readText(k, path)) === null;
-}
-
-function resolveFile(mod: KernelModule, k: KernelHandle, request: string, fromDir: string): string | null {
-  const candidates: string[] = [];
-  const raw = request.startsWith('.') || request.startsWith('/') ? joinPath(request.startsWith('/') ? '/' : fromDir, request.startsWith('/') ? request.slice(1) : request) : '';
-  if (raw) {
-    candidates.push(raw, raw + '.js', raw + '.json', joinPath(raw, 'index.js'));
-  } else {
-    let dir = fromDir;
-    for (;;) {
-      const base = joinPath(dir, 'node_modules/' + request);
-      candidates.push(base + '.js', joinPath(base, 'index.js'));
-      const pkg = joinPath(base, 'package.json');
-      if (isFile(mod, k, pkg)) {
-        try {
-          const meta = JSON.parse(sync(mod.readText(k, pkg)) || '{}') as { main?: string };
-          if (meta.main) candidates.push(joinPath(base, meta.main), joinPath(base, meta.main) + '.js');
-        } catch {
-          /* ignore bad package.json */
-        }
-      }
-      if (dir === '/' || dir === '') break;
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-  }
-  for (const c of candidates) {
-    if (isFile(mod, k, c)) return c;
-  }
-  return null;
-}
-
-type HttpHandler = (req: {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  body?: string;
-}) => { status: number; headers: Record<string, string>; body: string };
-
 function httpHandlers(): Map<number, HttpHandler> {
   const g = globalThis as unknown as { __bn_wasm_http_handlers?: Map<number, HttpHandler> };
   if (!g.__bn_wasm_http_handlers) g.__bn_wasm_http_handlers = new Map();
   return g.__bn_wasm_http_handlers;
+}
+
+function joinPath(dir: string, name: string): string {
+  if (!name) return dir || '/';
+  if (name.startsWith('/')) return name;
+  if (dir === '/' || dir === '') return '/' + name;
+  return dir.replace(/\/+$/, '') + '/' + name;
+}
+
+let guestRunner: ((sandbox: Sandbox, bn: BnShim) => (filename: string) => number) | null = null;
+
+function guestRunMainFactory(): (sandbox: Sandbox, bn: BnShim) => (filename: string) => number {
+  if (!guestRunner) {
+    guestRunner = new Function(
+      'globalThis',
+      '__bn',
+      `${GUEST_BOOTSTRAP}\n${GUEST_MODULES}\nvar console = globalThis.console;\nvar setTimeout = globalThis.setTimeout;\nvar setInterval = globalThis.setInterval;\nvar clearTimeout = globalThis.clearTimeout;\nvar clearInterval = globalThis.clearInterval;\nreturn globalThis.__bn_runMain;\n`,
+    ) as (sandbox: Sandbox, bn: BnShim) => (filename: string) => number;
+  }
+  return guestRunner;
+}
+
+function invokeGuest(handler: GuestFn, req: { method?: string; url?: string; headers?: Record<string, string>; body?: string }) {
+  let status = 200;
+  const headers: Record<string, string> = {};
+  let body = '';
+  const res: GuestRes = {
+    statusCode: 200,
+    setHeader(key, value) {
+      headers[String(key)] = String(value);
+    },
+    writeHead(code, h) {
+      status = code | 0;
+      this.statusCode = status;
+      if (h) {
+        for (const key of Object.keys(h)) headers[key] = String(h[key]);
+      }
+    },
+    write(chunk) {
+      body += chunk == null ? '' : String(chunk);
+      return true;
+    },
+    end(chunk) {
+      if (chunk != null) body += String(chunk);
+    },
+  };
+  handler({ method: req.method || 'GET', url: req.url || '/', headers: req.headers || {} }, res);
+  return { status, headers, body };
+}
+
+function asEnv(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!value || typeof value !== 'object') return out;
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (item != null) out[key] = String(item);
+  }
+  return out;
 }
 
 export function runNodeOnV8(
@@ -153,250 +172,204 @@ export function runNodeOnV8(
   cwd: string,
   env: Record<string, string> | undefined,
 ): V8RunResult {
-  let stdout = '';
-  let stderr = '';
-  const writeOut = (s: string) => {
-    stdout += s;
-  };
-  const writeErr = (s: string) => {
-    stderr += s;
-  };
+  const io = { stdout: '', stderr: '', timers: 0, servers: 0 };
+  const work = cwd && cwd !== '' ? cwd : '/';
 
-  let code = '';
-  let filename = joinPath(cwd, 'eval.js');
-  if (args[0] === '-e' || args[0] === '--eval') {
-    code = args[1] ?? '';
-    filename = joinPath(cwd, '[eval].js');
-  } else {
-    const rel = args[0];
-    if (!rel) return { code: 1, stdout, stderr: stderr + 'node: missing script\n' };
-    filename = rel.startsWith('/') ? rel : joinPath(cwd, rel);
-    const text = sync(mod.readText(k, filename));
-    if (text == null) return { code: 1, stdout, stderr: stderr + `ENOENT: ${filename}\n` };
-    code = text;
-  }
+  const text = (parts: unknown[]) => parts.map((p) => (p == null ? '' : String(p))).join(' ');
 
-  const cache = new Map<string, { exports: Record<string, unknown> }>();
-  const builtins = new Set(['fs', 'path', 'http', 'events', 'module', 'url']);
+  const sandbox = {} as Sandbox;
+  const timers = new Map<number, { handle: ReturnType<typeof setTimeout>; interval: boolean }>();
+  let nextTimer = 1;
 
-  function makeRequire(fromFile: string): (id: string) => unknown {
-    const fromDir = dirname(fromFile);
-    return function require(id: string): unknown {
-      const name = id.startsWith('node:') ? id.slice(5) : id;
-      if (builtins.has(name)) return loadBuiltin(name, fromFile);
-      const resolved = resolveFile(mod, k, name, fromDir);
-      if (!resolved) {
-        const err = new Error(`Cannot find module '${id}'`) as Error & { code?: string };
-        err.code = 'MODULE_NOT_FOUND';
-        throw err;
-      }
-      if (cache.has(resolved)) return cache.get(resolved)!.exports;
-      const src = sync(mod.readText(k, resolved));
-      if (src == null) throw new Error(`ENOENT: ${resolved}`);
-      if (resolved.endsWith('.json')) {
-        const exp = { exports: JSON.parse(src) as Record<string, unknown> };
-        cache.set(resolved, exp);
-        return exp.exports;
-      }
-      const exp = { exports: {} as Record<string, unknown> };
-      cache.set(resolved, exp);
-      const fn = new Function(
-        'exports',
-        'require',
-        'module',
-        '__filename',
-        '__dirname',
-        'process',
-        'Buffer',
-        'console',
-        src,
-      );
-      fn(exp.exports, makeRequire(resolved), exp, resolved, dirname(resolved), processObj, bufferObj, consoleObj);
-      return exp.exports;
-    };
-  }
-
-  const bufferObj = createBuffer();
-  const processObj = {
-    cwd: () => cwd,
-    argv: ['node', filename, ...args.slice(filename.endsWith('[eval].js') ? 2 : 1)],
-    env: { ...(env || {}) },
-    exitCode: 0,
-    platform: 'linux',
-    arch: 'wasm',
-    pid: 1,
-    version: 'v20.18.0',
-    versions: { node: '20.18.0', v8: '12.4.0' },
-    stdout: { write: (s: string) => writeOut(String(s)), isTTY: false },
-    stderr: { write: (s: string) => writeErr(String(s)), isTTY: false },
-    nextTick(fn: (...a: unknown[]) => void, ...rest: unknown[]) {
-      queueMicrotask(() => fn(...rest));
+  const bn: BnShim = {
+    cwd: () => work,
+    print: (...parts: unknown[]) => {
+      io.stdout += text(parts) + '\n';
     },
-    exit(n?: number) {
-      const err = new Error('process.exit') as Error & { __bn_exit?: number };
-      err.__bn_exit = n == null ? 0 : n | 0;
-      throw err;
+    eprint: (...parts: unknown[]) => {
+      io.stderr += text(parts) + '\n';
+    },
+    writeOut: (s: unknown) => {
+      io.stdout += String(s ?? '');
+    },
+    writeErr: (s: unknown) => {
+      io.stderr += String(s ?? '');
+    },
+    readFile: (path: string) => sync(mod.readText(k, String(path))),
+    readBytes: (path: string) => {
+      if (!mod.readBytes) return null;
+      const bytes = sync(mod.readBytes(k, String(path)));
+      if (!bytes) return null;
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    },
+    writeFile: (path: string, data: unknown) => sync(mod.writeText(k, String(path), data == null ? '' : String(data))),
+    writeBytes: (path: string, data: unknown) => {
+      let bytes: Uint8Array | null = null;
+      if (data instanceof Uint8Array) bytes = data;
+      else if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
+      else if (data && typeof data === 'object' && (data as ArrayBufferView).buffer instanceof ArrayBuffer) {
+        const view = data as ArrayBufferView;
+        bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      }
+      if (!bytes) return false;
+      return sync(mod.writeBytes(k, String(path), bytes));
+    },
+    exists: (path: string) => !!sync(mod.exists(k, String(path))),
+    isFile: (path: string) => {
+      const p = String(path);
+      if (!sync(mod.exists(k, p))) return false;
+      if (mod.lstatKind) return sync(mod.lstatKind(k, p)) === 'file';
+      return sync(mod.readText(k, p)) !== null;
+    },
+    isDir: (path: string) => {
+      const p = String(path);
+      if (p === '/' || p === '') return true;
+      if (!sync(mod.exists(k, p))) return false;
+      if (mod.lstatKind) return sync(mod.lstatKind(k, p)) === 'directory';
+      return sync(mod.readText(k, p)) === null;
+    },
+    isSymlink: (path: string) => (mod.lstatKind ? sync(mod.lstatKind(k, String(path))) === 'symlink' : false),
+    lstatKind: (path: string) => (mod.lstatKind ? sync(mod.lstatKind(k, String(path))) : null),
+    readdir: (path: string) => {
+      const p = String(path);
+      if (!sync(mod.exists(k, p))) return null;
+      if (mod.lstatKind && p !== '/' && sync(mod.lstatKind(k, p)) !== 'directory') return null;
+      return sync(mod.readdir(k, p));
+    },
+    mkdir: (path: string, recursive: boolean) => sync(mod.mkdir(k, String(path), !!recursive)),
+    unlink: (path: string) => sync(mod.unlink(k, String(path))),
+    rmdir: (path: string) => (mod.rmdir ? sync(mod.rmdir(k, String(path))) : false),
+    symlink: (target: string, linkpath: string) =>
+      mod.symlink ? sync(mod.symlink(k, String(target), String(linkpath))) : false,
+    readlink: (path: string) => (mod.readlink ? sync(mod.readlink(k, String(path))) : null),
+    chmod: () => true,
+    utimes: () => true,
+    statJson: (path: string) => {
+      const p = String(path);
+      const kind = mod.lstatKind ? sync(mod.lstatKind(k, p)) : null;
+      if (!kind) return null;
+      let size = 0;
+      if (kind === 'file' && mod.readBytes) {
+        const bytes = sync(mod.readBytes(k, p));
+        size = bytes ? bytes.length : 0;
+      }
+      return {
+        kind: kind === 'directory' ? 'dir' : kind,
+        size,
+        mtimeMs: Date.now(),
+        mode: kind === 'directory' ? 0o755 : 0o644,
+      };
+    },
+    registerHttp: (port: number, handler: GuestFn) => {
+      const p = port | 0;
+      io.servers += 1;
+      httpHandlers().set(p, (req) => invokeGuest(handler, req));
+      const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
+      notify.__bn_on_server_ready?.(p);
+    },
+    serverReady: (port: number) => {
+      const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
+      notify.__bn_on_server_ready?.(port | 0);
+    },
+    httpDispatch: (port: number, method: string, path: string, headersJson: string, body: string) => {
+      const handler = httpHandlers().get(port | 0);
+      if (!handler) return '';
+      let headers: Record<string, string> = {};
+      try {
+        headers = headersJson ? (JSON.parse(headersJson) as Record<string, string>) : {};
+      } catch {
+        headers = {};
+      }
+      const out = handler({ method: String(method || 'GET'), url: String(path || '/'), headers, body: body == null ? '' : String(body) });
+      return JSON.stringify(out);
+    },
+    spawnNode: (script: string, childCwd: string, childEnv: unknown): SpawnResult => {
+      const child = runNodeOnV8(mod, k, [String(script || '')], childCwd || work, asEnv(childEnv));
+      return { pid: 0, stdout: child.stdout, stderr: child.stderr, running: false, code: child.code };
+    },
+    spawnCmd: (cmd: string, cmdArgs: unknown, childCwd: string): SpawnResult => {
+      const list = Array.isArray(cmdArgs) ? cmdArgs.map(String) : [];
+      if (cmd === 'echo') {
+        return { pid: 0, stdout: list.join(' ') + '\n', stderr: '', running: false, code: 0 };
+      }
+      if (cmd === 'true') return { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
+      if (cmd === 'false') return { pid: 0, stdout: '', stderr: '', running: false, code: 1 };
+      if (cmd === 'node') {
+        const child = runNodeOnV8(mod, k, list, childCwd || work, env);
+        return { pid: 0, stdout: child.stdout, stderr: child.stderr, running: false, code: child.code };
+      }
+      return { pid: 0, stdout: '', stderr: `sh: ${cmd}: not found\n`, running: false, code: 127 };
+    },
+    killPid: () => false,
+    waitPid: () => 0,
+    writeStdin: () => {},
+    complete: () => {},
+    evalNewContext: (code: string) => {
+      const source = String(code ?? '');
+      try {
+        const value = new Function(`"use strict"; return (${source});`)();
+        return value == null ? '' : String(value);
+      } catch {
+        new Function(`"use strict";\n${source}`)();
+        return '';
+      }
+    },
+    timerStart: (ms: number, interval: number) => {
+      const id = nextTimer++;
+      const fire = () => {
+        if (!interval) timers.delete(id);
+        try {
+          sandbox.__bn_fire_timer?.(id, interval ? 1 : 0);
+        } catch (err) {
+          io.stderr += (err instanceof Error ? err.stack || err.message : String(err)) + '\n';
+        }
+        io.timers = timers.size;
+      };
+      const handle = interval ? setInterval(fire, ms | 0) : setTimeout(fire, ms | 0);
+      timers.set(id, { handle, interval: !!interval });
+      io.timers = timers.size;
+      return id;
+    },
+    timerClear: (id: number) => {
+      const slot = timers.get(id | 0);
+      if (!slot) return;
+      if (slot.interval) clearInterval(slot.handle);
+      else clearTimeout(slot.handle);
+      timers.delete(id | 0);
+      io.timers = timers.size;
     },
   };
 
-  const consoleObj = {
-    log: (...a: unknown[]) => writeOut(a.map(String).join(' ') + '\n'),
-    error: (...a: unknown[]) => writeErr(a.map(String).join(' ') + '\n'),
-    warn: (...a: unknown[]) => writeErr(a.map(String).join(' ') + '\n'),
-    info: (...a: unknown[]) => writeOut(a.map(String).join(' ') + '\n'),
-  };
+  sandbox.globalThis = sandbox;
+  sandbox.__bn = bn;
 
-  function loadBuiltin(name: string, fromFile: string): unknown {
-    if (name === 'path') {
-      return {
-        join: (...parts: string[]) => parts.reduce((acc, p) => joinPath(acc, p), ''),
-        dirname,
-        basename: (p: string) => p.slice(p.lastIndexOf('/') + 1),
-        resolve: (...parts: string[]) => {
-          let acc = fromFile.startsWith('/') ? dirname(fromFile) : cwd;
-          for (const p of parts) acc = p.startsWith('/') ? p : joinPath(acc, p);
-          return acc;
-        },
-      };
+  let script = args[0] ?? '';
+  const finish = (code: number, extraErr = ''): V8RunResult => {
+    if (extraErr) io.stderr += extraErr;
+    return { code, stdout: io.stdout, stderr: io.stderr, io };
+  };
+  if (!script) return finish(1, 'node: missing script\n');
+  if ((script === '-e' || script === '--eval') && args.length >= 2) {
+    const tmp = joinPath(work, '.bn-eval.js');
+    if (!sync(mod.writeText(k, tmp, args[1] ?? ''))) {
+      return finish(1, 'EIO: .bn-eval.js\n');
     }
-    if (name === 'events') {
-      function EE(this: { _e?: Record<string, Function[]> }) {
-        this._e = {};
-      }
-      EE.prototype.on = function (ev: string, fn: Function) {
-        (this._e[ev] || (this._e[ev] = [])).push(fn);
-        return this;
-      };
-      EE.prototype.emit = function (ev: string, ...rest: unknown[]) {
-        for (const fn of this._e[ev] || []) fn(...rest);
-        return true;
-      };
-      return { EventEmitter: EE };
-    }
-    if (name === 'fs') {
-      return {
-        readFileSync: (p: string, enc?: string) => {
-          const abs = p.startsWith('/') ? p : joinPath(cwd, p);
-          const text = sync(mod.readText(k, abs));
-          if (text == null) {
-            const err = new Error(`ENOENT: ${abs}`) as Error & { code?: string };
-            err.code = 'ENOENT';
-            throw err;
-          }
-          if (enc) return text;
-          return bufferObj.from(text);
-        },
-        writeFileSync: (p: string, data: string | { toString: () => string }) => {
-          const abs = p.startsWith('/') ? p : joinPath(cwd, p);
-          const text = typeof data === 'string' ? data : data.toString();
-          if (!sync(mod.writeText(k, abs, text))) throw new Error(`EIO: ${abs}`);
-        },
-        existsSync: (p: string) => sync(mod.exists(k, p.startsWith('/') ? p : joinPath(cwd, p))),
-        mkdirSync: (p: string, opts?: { recursive?: boolean }) => {
-          sync(mod.mkdir(k, p.startsWith('/') ? p : joinPath(cwd, p), !!(opts && opts.recursive)));
-        },
-        readdirSync: (p: string) => sync(mod.readdir(k, p.startsWith('/') ? p : joinPath(cwd, p))),
-        statSync: (p: string) => {
-          const abs = p.startsWith('/') ? p : joinPath(cwd, p);
-          const file = isFile(mod, k, abs);
-          const dir = isDir(mod, k, abs);
-          if (!file && !dir) {
-            const err = new Error(`ENOENT: ${abs}`) as Error & { code?: string };
-            err.code = 'ENOENT';
-            throw err;
-          }
-          return { isFile: () => file, isDirectory: () => dir };
-        },
-      };
-    }
-    if (name === 'module') {
-      return { createRequire: (file: string) => makeRequire(String(file)) };
-    }
-    if (name === 'url') {
-      return {
-        fileURLToPath: (u: string) => String(u).replace(/^file:\/\//, ''),
-        pathToFileURL: (p: string) => ({ href: 'file://' + p, toString: () => 'file://' + p }),
-      };
-    }
-    if (name === 'http') {
-      return {
-        createServer(listener: (req: unknown, res: unknown) => void) {
-          return {
-            listen(port: number, cb?: () => void) {
-              const p = port | 0;
-              httpHandlers().set(p, (req) => {
-                let status = 200;
-                let headers: Record<string, string> = { 'Content-Type': 'text/plain' };
-                let body = '';
-                const res = {
-                  writeHead(code: number, h?: Record<string, string>) {
-                    status = code;
-                    if (h) headers = { ...headers, ...h };
-                  },
-                  setHeader(key: string, value: string) {
-                    headers[key] = value;
-                  },
-                  end(chunk?: string) {
-                    if (chunk != null) body = String(chunk);
-                  },
-                };
-                listener({ method: req.method, url: req.url, headers: req.headers || {} }, res);
-                return { status, headers, body };
-              });
-              const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
-              notify.__bn_on_server_ready?.(p);
-              if (cb) cb();
-              return this;
-            },
-          };
-        },
-      };
-    }
-    throw new Error(`No builtin ${name}`);
+    script = tmp;
   }
 
   try {
-    const require = makeRequire(filename);
-    const module = { exports: {} as Record<string, unknown> };
-    const fn = new Function(
-      'exports',
-      'require',
-      'module',
-      '__filename',
-      '__dirname',
-      'process',
-      'Buffer',
-      'console',
-      code,
-    );
-    fn(module.exports, require, module, filename, dirname(filename), processObj, bufferObj, consoleObj);
-    return { code: 0, stdout, stderr };
-  } catch (e) {
-    const exit = (e as { __bn_exit?: number }).__bn_exit;
-    if (typeof exit === 'number') return { code: exit, stdout, stderr };
-    const msg = e instanceof Error ? e.stack || e.message : String(e);
-    return { code: 1, stdout, stderr: stderr + msg + '\n' };
+    const runMain = guestRunMainFactory()(sandbox, bn);
+    const proc = sandbox.process;
+    if (proc) {
+      proc.argv = ['node', ...args];
+      proc.env = { ...(proc.env || {}), ...(env || {}) };
+    }
+    const code = typeof runMain === 'function' ? runMain(script) | 0 : 1;
+    return finish(code);
+  } catch (err) {
+    const exit = (err as { __bn_exit?: number }).__bn_exit;
+    if (typeof exit === 'number') return finish(exit);
+    const msg = err instanceof Error ? err.stack || err.message : String(err);
+    return finish(1, msg + '\n');
   }
-}
-
-function createBuffer(): {
-  from: (data: string, enc?: string) => { toString: (enc?: string) => string };
-  isBuffer: (v: unknown) => boolean;
-} {
-  const Native = (globalThis as { Buffer?: { from: (s: string, e?: string) => { toString: (e?: string) => string }; isBuffer: (v: unknown) => boolean } }).Buffer;
-  if (Native) return Native;
-  function Box(this: { _s: string }, s: string) {
-    this._s = s;
-  }
-  Box.prototype.toString = function (this: { _s: string }) {
-    return this._s;
-  };
-  return {
-    from(data: string) {
-      return new (Box as unknown as new (s: string) => { toString: () => string })(String(data));
-    },
-    isBuffer(v: unknown) {
-      return !!v && typeof v === 'object' && typeof (v as { toString?: unknown }).toString === 'function' && '_s' in (v as object);
-    },
-  };
 }

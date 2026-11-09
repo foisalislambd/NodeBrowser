@@ -557,10 +557,27 @@ export class NodeBrowser {
     });
     const output = new ReadableStream<string>({
       start(controller) {
-        if (result.stdout) controller.enqueue(result.stdout);
-        if (result.stderr) controller.enqueue(result.stderr);
-        controller.close();
-        exitResolve(result.code);
+        let sentOut = 0;
+        let sentErr = 0;
+        const pump = () => {
+          const out = result.io.stdout;
+          const err = result.io.stderr;
+          if (out.length > sentOut) {
+            controller.enqueue(out.slice(sentOut));
+            sentOut = out.length;
+          }
+          if (err.length > sentErr) {
+            controller.enqueue(err.slice(sentErr));
+            sentErr = err.length;
+          }
+          if (result.io.timers > 0 || result.io.servers > 0) {
+            setTimeout(pump, 16);
+            return;
+          }
+          controller.close();
+          exitResolve(result.code);
+        };
+        pump();
       },
     });
     return {
