@@ -1,19 +1,17 @@
 # Demo workbench
 
-`demo/` is a **VS Code Dark+–style** UI over the WASM kernel. It is not a second runtime.
+`demo/` is a simple workspace over the WASM kernel: files, code, one terminal, and a preview. It is not a second runtime.
 
 Local: `npm run dev` → http://localhost:5173  
 Pages: https://foisalislambd.github.io/NodeBrowser/ — [PAGES.md](./PAGES.md)
 
 ## Layout
 
-- Title bar: File / Edit / View / Run / Terminal / Help, command center (`Ctrl+K`)
-- Activity bar: Explorer, Search, Run and Debug, Templates, Simple Browser, Settings
-- Sidebar: **PROJECT** tree on the VFS (`/home`, `/usr`, …)
-- Editor: open file, breadcrumbs, dirty dot, Save
-- Panel: **PROBLEMS** / **TERMINAL** / **OUTPUT** / **DEBUG CONSOLE**
-- Status bar: WASM ready, cwd, line/col, LF, UTF-8
-- Right: **Simple Browser** (preview iframe + virtual localhost)
+- Top bar: **Run**, **Save**, **Preview**, **Commands** (`Ctrl+K`), and **More** for install, templates, zip, and GitHub
+- Left: **Files**, **Search**, **Start** (Vite / Next / Express), **About**
+- Center: the open file, with the terminal underneath
+- Right: preview
+- Narrow screens: bottom bar switches Files, Code, Terminal, and Preview
 
 Boot: splash → WASM → optional OPFS `/home` → terminal welcome. Empty starter workspaces **do not** auto-run HTTP; use F5 / Run File.
 

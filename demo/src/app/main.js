@@ -334,7 +334,7 @@ async function showPreview(port, url, opts = {}) {
         iframe.srcdoc = html;
         if (empty) empty.classList.add('hidden');
         appendTerm(`[preview] Simple Browser ← port ${port} (inlined)\n`);
-        if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
+        if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('preview');
         return;
       }
       appendTerm(`[preview] handleHttp ${page.status}: ${String(page.body).slice(0, 120)}\n`);
@@ -348,7 +348,7 @@ async function showPreview(port, url, opts = {}) {
     iframe.src = url;
     if (empty) empty.classList.add('hidden');
     appendTerm(`[preview] iframe → ${url}\n`);
-    if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('preview');
+    if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('preview');
   }
 }
 
@@ -416,7 +416,7 @@ async function onTreeClick(path, isDirectory) {
   setEditorPath(path);
   setCwd(dirname(path));
   await refreshTree();
-  if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('editor');
+  if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('editor');
 }
 
 async function saveFile() {
@@ -571,12 +571,7 @@ async function boot() {
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
   const sf = $('set-features');
   if (sf) sf.textContent = String(bn.capabilities().features.length);
-  appendTerm('NodeBrowser  —  WASM kernel ready\n');
-  appendTerm('\nGet started:\n');
-  appendTerm('  npm install lodash\n');
-  appendTerm('  npm install tailwindcss @tailwindcss/browser\n');
-  appendTerm('  npx tailwindcss -i ./src/input.css -o ./dist/output.css\n');
-  appendTerm('\n');
+  appendTerm('Ready. Press Run, or type a command below.\n');
   hideSplash();
   autoStartWorkspace().catch((e) => appendTerm(String(e) + '\n'));
   const termHistory = [];
@@ -666,7 +661,7 @@ async function runShellLine(line) {
 
 async function runNode() {
   if (!bn) return;
-  if (window.matchMedia('(max-width: 760px)').matches) setMobilePane('term');
+  if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('term');
   if (dirty) await saveFile();
   const script = openPath.endsWith('.js') || openPath.endsWith('.mjs') || openPath.endsWith('.cjs')
     ? openPath
@@ -1298,7 +1293,8 @@ function setSidebarView(name) {
     btn.classList.toggle('active', btn.dataset.view === name);
   });
   if (name === 'search') $('fs-search')?.focus();
-  if (name === 'files' || name === 'explorer') setMobilePane('files');
+  if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('files');
+  $('workbench')?.classList.remove('sidebar-hidden');
 }
 
 function togglePanel() {
@@ -1520,15 +1516,13 @@ document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
 });
 
 document.querySelectorAll('.activity-btn[data-view="explorer"]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const wb = $('workbench');
-    if (!wb) return;
-    if (!wb.classList.contains('sidebar-hidden') && wb.dataset.sidebar === 'explorer') {
-      toggleSidebar();
-      return;
-    }
-    setSidebarView('explorer');
-  });
+  btn.addEventListener('click', () => setSidebarView('explorer'));
+});
+$('start-vite')?.addEventListener('click', () => $('btn-vite-load')?.click());
+$('start-next')?.addEventListener('click', () => $('btn-next-load')?.click());
+$('start-express')?.addEventListener('click', () => $('btn-express-load')?.click());
+document.querySelector('.more-menu')?.addEventListener('click', (e) => {
+  if (e.target.closest('button')) document.querySelector('.more')?.removeAttribute('open');
 });
 
 $('activity-preview')?.addEventListener('click', () => {

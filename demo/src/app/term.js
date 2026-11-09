@@ -82,6 +82,7 @@ export async function mountXterm(el) {
     } catch {
       /* layout not ready */
     }
+    let fitTimer = 0;
     const api = {
       write(text) {
         term.write(String(text).replace(/\n/g, '\r\n'));
@@ -90,11 +91,14 @@ export async function mountXterm(el) {
         term.clear();
       },
       fit() {
-        try {
-          fit.fit();
-        } catch {
-          /* ignore */
-        }
+        clearTimeout(fitTimer);
+        fitTimer = setTimeout(() => {
+          try {
+            fit.fit();
+          } catch {
+            /* layout not ready */
+          }
+        }, 40);
       },
     };
     terms.set(el.id, api);
