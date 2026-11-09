@@ -38,7 +38,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
 
       - name: Setup Emscripten
-        uses: emscripten-core/setup-emsdk@v15
+        uses: emscripten-core/setup-emsdk@v16
         with:
           version: ${{ env.EM_VERSION }}
           actions-cache-folder: emsdk-cache
