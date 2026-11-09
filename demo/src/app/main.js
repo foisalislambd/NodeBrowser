@@ -494,7 +494,7 @@ async function boot() {
   const wasmUrl = publicHref('packages/api/wasm/browsernode_kernel.js');
   // Primary path: C++ kernel via WASM (JS only if WASM fails to load)
   try {
-    bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true, wasmUrl });
+    bn = await NodeBrowser.boot({ useWasm: true, previewBase, persist: true, wasmUrl, guestEngine: 'v8' });
   } catch (e) {
     appendTerm(String(e) + '\nWASM kernel required — npm run build:wasm\n');
     $('status').textContent = 'wasm missing';
@@ -566,7 +566,7 @@ async function boot() {
   await refreshTree();
   $('status').textContent = 'Ready';
   const sr = $('set-runtime');
-  if (sr) sr.textContent = bn.runtime;
+  if (sr) sr.textContent = bn.runtime + (bn.guestEngine === 'v8' ? ' · v8' : '');
   const sw = $('set-worker');
   if (sw) sw.textContent = bn.worker ? 'on' : 'off';
   const ss = $('set-sab');

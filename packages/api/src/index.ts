@@ -22,6 +22,7 @@ export type {
   FileSystemTree,
   FileNode,
   SpawnOptions,
+  GuestEngine,
   BrowserNodeProcess,
   BrowserNodeEventMap,
   BundleOptions,

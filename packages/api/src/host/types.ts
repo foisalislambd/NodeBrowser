@@ -5,6 +5,9 @@ export type FileNode =
 
 export type FileSystemTree = Record<string, FileNode>;
 
+/** `quickjs` runs inside the WASM kernel. `v8` runs `node` on the browser or Node V8. */
+export type GuestEngine = 'quickjs' | 'v8';
+
 export interface SpawnOptions {
   cwd?: string;
   env?: Record<string, string>;

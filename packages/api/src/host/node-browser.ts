@@ -1,4 +1,4 @@
-import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
+import type { FileSystemTree, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap, GuestEngine } from './types.js';
 import { loadKernel, type KernelModule, type KernelHandle, type LoadKernelOptions } from '../kernel/load.js';
 import { flattenTree } from '../fs/tree.js';
 import { installMany, uninstallPackages, listInstalled, parseSpec } from '../npm/install.js';
@@ -36,6 +36,7 @@ import { inspectProject, workspaceDirs, type ProjectInfo } from '../project/insp
 import { applyNpmrc, configureNpm, npmConfig, resetNpmConfig } from '../npm/registry.js';
 import { readResolvedPins } from '../npm/lockfiles.js';
 import { importRepository as importGithubRepo, type ImportRepositoryOptions } from './github.js';
+import { kernelCallsAreSync, nodeArgsFromSpawn, runNodeOnV8 } from '../kernel/v8-guest.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -61,12 +62,15 @@ export class NodeBrowser {
   readonly worker: boolean;
   /** True when stdout/stdin use SharedArrayBuffer rings (Worker + COOP/COEP). */
   readonly sabStdio: boolean;
+  /** Where `node` scripts run. The shell stays on QuickJS until it moves too. */
+  readonly guestEngine: GuestEngine;
 
   private constructor(
     mod: KernelModule,
     k: KernelHandle,
     previewBase: string,
     persist: boolean,
+    guestEngine: GuestEngine,
   ) {
     this.#mod = mod;
     this.#k = k;
@@ -75,6 +79,7 @@ export class NodeBrowser {
     this.runtime = mod.runtime === 'wasm' ? 'wasm' : 'js';
     this.worker = !!mod.worker;
     this.sabStdio = !!mod.worker && sabStdioAvailable() && typeof mod.attachStdio === 'function';
+    this.guestEngine = guestEngine;
     this.#wireHttp();
     this.#wireFsChange();
     if (persist) {
@@ -88,10 +93,13 @@ export class NodeBrowser {
       previewBase?: string;
       /** Persist `/home` to Origin Private File System (browser). Default false. */
       persist?: boolean;
+      /** Run `node` on V8 (this JS engine) instead of QuickJS. Default `quickjs`. */
+      guestEngine?: GuestEngine;
     } & LoadKernelOptions,
   ): Promise<NodeBrowser> {
     const useWasm = options?.useWasm === undefined ? true : options.useWasm;
     const persist = !!options?.persist;
+    const guestEngine: GuestEngine = options?.guestEngine === 'v8' ? 'v8' : 'quickjs';
     const mod = await loadKernel(options?.wasmUrl, { useWasm });
     const k = await asy(mod.create());
     await asy(mod.registerBuiltins(k));
@@ -103,7 +111,7 @@ export class NodeBrowser {
             typeof document !== 'undefined' && document.baseURI ? document.baseURI : location.href,
           ).href.replace(/\/$/, '')
         : 'http://localhost/__bn_preview');
-    const bn = new NodeBrowser(mod, k, previewBase, persist);
+    const bn = new NodeBrowser(mod, k, previewBase, persist, guestEngine);
     if (persist && opfsAvailable()) {
       await hydrateFromOpfs(bn.fs);
     }
@@ -524,6 +532,7 @@ export class NodeBrowser {
         'tailwind',
         'opfs',
         'rpc',
+        'v8-guest',
       ],
     };
   }
@@ -538,6 +547,29 @@ export class NodeBrowser {
       await this.#opfsFlusher?.clearHome();
       await this.#opfsFlusher?.flush();
     }
+  }
+
+  #finishV8Node(args: string[], cwd: string, env?: Record<string, string>): BrowserNodeProcess {
+    const result = runNodeOnV8(this.#mod, this.#k, args, cwd, env);
+    let exitResolve!: (code: number) => void;
+    const exit = new Promise<number>((resolve) => {
+      exitResolve = resolve;
+    });
+    const output = new ReadableStream<string>({
+      start(controller) {
+        if (result.stdout) controller.enqueue(result.stdout);
+        if (result.stderr) controller.enqueue(result.stderr);
+        controller.close();
+        exitResolve(result.code);
+      },
+    });
+    return {
+      pid: 0,
+      exit,
+      output,
+      kill() {},
+      write() {},
+    };
   }
 
   async spawn(cmd: string, args: string[] = [], opts: SpawnOptions = {}): Promise<BrowserNodeProcess> {
@@ -643,6 +675,10 @@ export class NodeBrowser {
     if (opts.loadEnv) {
       const fileEnv = await readDotenv(this.fs, cwd);
       env = { ...fileEnv, ...opts.env };
+    }
+    const v8Args = this.guestEngine === 'v8' ? nodeArgsFromSpawn(cmd, args) : null;
+    if (v8Args && kernelCallsAreSync(this.#mod, this.#k)) {
+      return this.#finishV8Node(v8Args, cwd, env);
     }
     const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, env));
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
@@ -1429,7 +1465,7 @@ function joinFsPath(...parts: string[]): string {
 
 export { handleAgentRpc } from './json-rpc.js';
 export type { AgentRpcRequest, AgentRpcResponse } from './json-rpc.js';
-export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
+export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap, GuestEngine } from './types.js';
 export type { SearchHit } from '../fs/toolkit.js';
 export type { ProjectInfo } from '../project/inspect.js';
 export type { ImportRepositoryOptions } from './github.js';
