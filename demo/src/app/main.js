@@ -1,4 +1,4 @@
-import { mountXterm, getTerm, fitAllTerms } from './term.js';
+import { mountXterm, getTerm, fitAllTerms, bindLineEditor } from './term.js';
 import { fileIconEl, langFromPath, tabBadge } from './icons.js';
 import { publicBase, publicHref, publicPath } from './paths.js';
 import { hideSplash, toast, quickInput } from './ui.js';
@@ -49,8 +49,15 @@ function $(id) {
   return document.getElementById(id);
 }
 
+let shell = null;
+let currentProc = null;
+
 function appendTerm(text, which) {
   const id = which || window.__bn_active_term || 'term';
+  if (shell && id === 'term') {
+    shell.write(text);
+    return;
+  }
   const api = getTerm(id);
   if (api) {
     api.write(text);
@@ -504,6 +511,18 @@ async function boot() {
   }
   await mountXterm($('term'));
   await mountXterm($('term-2'));
+  const termApi = getTerm('term');
+  if (termApi) {
+    shell = bindLineEditor(termApi, {
+      getCwd: () => projectCwd || '/home/project',
+      onSubmit: (line) => runShellLine(line, { interactive: true }),
+      onInterrupt: () => currentProc?.kill(),
+    });
+  }
+  $('bottom-panel')?.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, input')) return;
+    shell?.focus();
+  });
   appendTerm(
     `runtime=${bn.runtime}${bn.runtime === 'wasm' ? ' (C++/WASM kernel)' : ' (JS fallback — WASM unavailable)'}` +
       `${bn.worker ? ' worker=true (WASM off UI thread)' : bn.runtime === 'wasm' ? ' worker=false (same-thread WASM)' : ''}` +
@@ -571,37 +590,11 @@ async function boot() {
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
   const sf = $('set-features');
   if (sf) sf.textContent = String(bn.capabilities().features.length);
-  appendTerm('Ready. Press Run, or type a command below.\n');
+  appendTerm('Ready. Type a command and press Enter.\n');
+  shell?.end();
+  shell?.focus();
   hideSplash();
   autoStartWorkspace().catch((e) => appendTerm(String(e) + '\n'));
-  const termHistory = [];
-  let termHistIdx = 0;
-  const termInput = $('term-input');
-  if (termInput) {
-    termInput.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (!termHistory.length) return;
-        termHistIdx = Math.max(0, termHistIdx - 1);
-        termInput.value = termHistory[termHistIdx] || '';
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        termHistIdx = Math.min(termHistory.length, termHistIdx + 1);
-        termInput.value = termHistIdx >= termHistory.length ? '' : termHistory[termHistIdx] || '';
-        return;
-      }
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const line = termInput.value.trim();
-      if (!line) return;
-      termHistory.push(line);
-      termHistIdx = termHistory.length;
-      termInput.value = '';
-      runShellLine(line).catch((err) => appendTerm(String(err) + '\n'));
-    });
-  }
 }
 
 const IGNORE_WORKSPACE = new Set(['hello.txt', 'hello.copy.txt', '.next-preview', 'dist', '.ds_store']);
@@ -643,20 +636,28 @@ async function autoStartWorkspace() {
   toast('Workspace ready', 'ok');
 }
 
-async function runShellLine(line) {
+async function runShellLine(line, opts = {}) {
   if (!bn) return;
-  const cwd = projectCwd || '/home/project';
-  appendTerm(`$ ${line}\n`);
-  const proc = await bn.spawn('sh', ['-c', line], { cwd });
-  const reader = proc.output.getReader();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    appendTerm(value);
+  const owned = !opts.interactive;
+  if (owned) shell?.begin();
+  try {
+    const cwd = projectCwd || '/home/project';
+    if (owned) appendTerm(`$ ${line}\n`);
+    const proc = await bn.spawn('sh', ['-c', line], { cwd });
+    currentProc = proc;
+    const reader = proc.output.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      appendTerm(value);
+    }
+    const code = await proc.exit;
+    if (code !== 0) appendTerm(`[exit ${code}]\n`);
+    await refreshTree();
+  } finally {
+    currentProc = null;
+    if (owned) shell?.end();
   }
-  const code = await proc.exit;
-  appendTerm(`\n[exit ${code}]\n`);
-  await refreshTree();
 }
 
 async function runNode() {
@@ -670,18 +671,25 @@ async function runNode() {
     await bn.fs.writeFile(script, editor.value);
   }
   const cwd = projectCwd || dirname(script);
-  getTerm('term')?.clear();
-  appendTerm(`$ node ${script}\n`);
-  const proc = await bn.spawn('node', [script], { cwd });
-  const reader = proc.output.getReader();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    appendTerm(value);
+  shell?.begin();
+  try {
+    getTerm('term')?.clear();
+    appendTerm(`$ node ${script}\n`);
+    const proc = await bn.spawn('node', [script], { cwd });
+    currentProc = proc;
+    const reader = proc.output.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      appendTerm(value);
+    }
+    const code = await proc.exit;
+    if (code !== 0) appendTerm(`[exit ${code}]\n`);
+    await refreshTree();
+  } finally {
+    currentProc = null;
+    shell?.end();
   }
-  const code = await proc.exit;
-  appendTerm(`\n[exit ${code}]\n`);
-  await refreshTree();
 }
 
 async function installPkg() {
@@ -1345,7 +1353,7 @@ function runCmd(cmd) {
     'focus-term': () => {
       $('workbench')?.classList.remove('panel-hidden');
       setTermTab(1);
-      $('term-input')?.focus();
+      shell?.focus();
     },
     'clear-term': () => clearTerm(),
     'term-2': () => {
@@ -1509,6 +1517,7 @@ function setMobilePane(name) {
   document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.pane === name);
   });
+  if (name === 'term') requestAnimationFrame(() => shell?.focus());
 }
 
 document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {

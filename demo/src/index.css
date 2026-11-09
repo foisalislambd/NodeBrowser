@@ -265,8 +265,20 @@ button { cursor: pointer; }
 .term-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .term-wrap[hidden] { display: none; }
 .term, .xterm-host { flex: 1; min-height: 0; max-width: 100%; }
-.xterm-host { padding: 4px 4px 0; overflow: hidden; }
-.term-input-row { display: flex; align-items: center; gap: 8px; padding: 8px; border-top: 1px solid var(--line); }
+.xterm-host { height: 100%; padding: 0; overflow: hidden; background: #0d0f14; cursor: text; }
+.xterm-host .xterm { height: 100%; padding: 8px 10px 4px; }
+.plain-term {
+  height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  cursor: text;
+}
+.term-input-row { display: none; }
 .prompt { color: var(--good); font-family: var(--mono); }
 .log { margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; }
 
