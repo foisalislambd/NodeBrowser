@@ -3,8 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 
 ## [Unreleased]
 
@@ -17,7 +17,7 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 - Installed **tsc** / **vite** CLIs run in QuickJS when the module graph fits; Vite still uses host esbuild-wasm as the fast path
 - `@xterm/xterm` in the demo; SAB/Atomics stdio rings (Worker ↔ UI); Playwright Chromium bake-off (`e2e/`, WC placeholder)
 - Automated release on `main`: npm Trusted Publisher (OIDC), GitHub Packages, GitHub Release
-- Version scheme `1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`
+- Releases publish the version in `VERSION.md` only when it is higher than the latest release
 - GitHub Pages demo deploy (self-contained `demo/dist`, base path `/NodeBrowser/`)
 - Release/Pages CI builds **C++ → WASM** with Emscripten before npm publish / demo deploy
 - **Phases 13–20:** WASM spawn `env` + `read_bytes`; streams/util/timers; zlib + crypto hashes; symlink/`fs.watch`/`fs-change`; `child_process`; ESM + `exports`; OPFS `persist` + snapshot export/import; `net`/`https`; WASM HTTP keep-alive via retained QuickJS handlers

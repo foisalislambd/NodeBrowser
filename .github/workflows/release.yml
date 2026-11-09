@@ -1,8 +1,8 @@
 name: Release
 
-# Push to main → native C++ tests → C++/WASM (Emscripten) → npm → GitHub Packages → Release.
-# Version: 1.0.0 → 1.0.1 → … → 1.0.9 → 1.1.0 (patch/minor roll at 9).
-# Skip with commit message containing [skip release].
+# Push to main → native C++ tests → C++/WASM (Emscripten) → publish when VERSION.md is higher.
+# The version is the X.Y.Z line in VERSION.md. Same or lower than the latest vX.Y.Z release skips publish.
+# Skip the whole workflow with a commit message containing [skip release].
 
 on:
   push:
@@ -110,20 +110,21 @@ jobs:
       - name: Install npm deps
         run: npm install --no-fund --no-audit
 
-      - name: Resolve next version
+      - name: Read VERSION.md
         id: ver
-        run: |
-          NEXT=$(node scripts/next-version.mjs --set)
-          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "Next version: $NEXT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-version.mjs --apply
 
       - name: Download C++/WASM kernel from build job
+        if: steps.ver.outputs.decision == 'release'
         uses: actions/download-artifact@v4
         with:
           name: cpp-wasm-kernel
           path: packages/api/wasm
 
       - name: Build TypeScript API (uses CI-built WASM)
+        if: steps.ver.outputs.decision == 'release'
         run: |
           set -euo pipefail
           ls -la packages/api/wasm/
@@ -136,6 +137,7 @@ jobs:
 
       - name: Publish to npm (Trusted Publisher / OIDC)
         id: npm_publish
+        if: steps.ver.outputs.decision == 'release'
         run: |
           set -euo pipefail
           VER="${{ steps.ver.outputs.version }}"
@@ -150,6 +152,7 @@ jobs:
           NPM_CONFIG_PROVENANCE: true
 
       - name: Publish to GitHub Packages
+        if: steps.ver.outputs.decision == 'release'
         env:
           OWNER: ${{ github.repository_owner }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,6 +160,7 @@ jobs:
         run: node scripts/publish-github-packages.mjs
 
       - name: Create GitHub Release
+        if: steps.ver.outputs.decision == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
@@ -202,17 +206,6 @@ jobs:
           fi
           rm -f "$NOTES_FILE"
 
-      - name: Commit version bump + WASM binaries
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/api/package.json package.json
-          # Published kernel binary (may be gitignored historically — force-add)
-          git add -f packages/api/wasm/browsernode_kernel.js packages/api/wasm/browsernode_kernel.wasm
-          if git diff --staged --quiet; then
-            echo "No version/WASM changes to commit"
-          else
-            git commit -m "chore(release): v${{ steps.ver.outputs.version }} [skip release]"
-            git push
-          fi
+      - name: Version is not newer
+        if: steps.ver.outputs.decision != 'release'
+        run: echo "VERSION.md is ${{ steps.ver.outputs.version }} and the latest release is ${{ steps.ver.outputs.latest }}. No release."

@@ -41,11 +41,10 @@ On every push to `main` (unless the commit message contains `[skip release]`):
 
 1. **C++ → WASM** via Emscripten (`scripts/ci-build-cpp-wasm.sh`) + native C++ tests
 2. TypeScript API + demo + conformance
-3. Resolve next version (`1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0`; patch/minor roll at **9**)
+3. Read [`VERSION.md`](../VERSION.md). Publish only when that `X.Y.Z` is higher than the latest `vX.Y.Z` release. The same or a lower number skips the release.
 4. Publish to **npm** via **Trusted Publisher (OIDC)** — tarball includes freshly built `wasm/`
 5. Publish to **GitHub Packages**
 6. Tag `vX.Y.Z` + **GitHub Release**
-7. Commit version bump + WASM binaries (`[skip release]`)
 
 ### One-time npm Trusted Publisher setup
 
