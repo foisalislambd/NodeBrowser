@@ -1,30 +1,18 @@
 import { mountXterm, getTerm, fitAllTerms, bindLineEditor } from './term.js';
 import { fileIconEl, langFromPath, tabBadge } from './icons.js';
 import { publicBase, publicHref, publicPath } from './paths.js';
-import { hideSplash, toast, quickInput } from './ui.js';
+import { hideSplash, toast, quickInput, quickConfirm } from './ui.js';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
 
 const DEFAULT = `const fs = require('fs');
-const crypto = require('crypto');
-const { performance } = require('perf_hooks');
-const { createRequire } = require('module');
-const { AsyncLocalStorage } = require('async_hooks');
 
-console.log('cwd =', process.cwd());
-fs.writeFileSync('/home/project/hello.txt', 'NodeBrowser VFS OK');
-console.log(fs.readFileSync('/home/project/hello.txt'));
-console.log('Buffer hex =', Buffer.from('hi').toString('hex'));
-console.log('randomBytes =', crypto.randomBytes(8).toString('hex'));
-console.log('realpath =', fs.realpathSync('/home/project/hello.txt'));
-fs.copyFileSync('/home/project/hello.txt', '/home/project/hello.copy.txt');
-console.log('copy ok', fs.existsSync('/home/project/hello.copy.txt'));
-const req = createRequire('/home/project/index.js');
-console.log('createRequire(fs).F_OK =', req('fs').constants.F_OK);
-const als = new AsyncLocalStorage();
-als.run({ n: 7 }, function() { console.log('als', als.getStore().n); });
-console.log('perf.now =', performance.now());
-process.nextTick(function() { console.log('nextTick ok'); });
+const note = 'hello from NodeBrowser';
+fs.writeFileSync('/home/project/hello.txt', note);
+
+console.log(note);
+console.log('read back:', fs.readFileSync('/home/project/hello.txt', 'utf8'));
+console.log('cwd:', process.cwd());
 `;
 
 const HTTP_DEMO = `const http = require('http');
@@ -413,7 +401,7 @@ async function onTreeClick(path, isDirectory) {
     return;
   }
   if (dirty && openPath !== path) {
-    const save = confirm(`Save changes to ${openPath}?\nOK = save, Cancel = stay on current file`);
+    const save = await quickConfirm(`Save changes to ${openPath}?`, { ok: 'Save' });
     if (!save) return;
     await saveFile();
   }
@@ -426,17 +414,21 @@ async function onTreeClick(path, isDirectory) {
   if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('editor');
 }
 
-async function saveFile() {
+async function persistOpen() {
   if (!bn || !openPath) return;
   await bn.fs.writeFile(openPath, editor.value);
   setDirty(false);
+}
+
+async function saveFile() {
+  await persistOpen();
   appendTerm(`[save] ${openPath}\n`);
   await refreshTree();
 }
 
 async function newFile() {
   if (!bn) return;
-  const name = prompt('New file name', 'untitled.js');
+  const name = (await quickInput({ title: 'New file', value: 'untitled.js', placeholder: 'name.js' }))?.trim();
   if (!name) return;
   const base = (await isDirPath(selectedPath)) ? selectedPath : dirname(selectedPath);
   const path = joinPath(base, name);
@@ -453,7 +445,7 @@ async function newFile() {
 
 async function newDir() {
   if (!bn) return;
-  const name = prompt('New folder name', 'src');
+  const name = (await quickInput({ title: 'New folder', value: 'src', placeholder: 'folder name' }))?.trim();
   if (!name) return;
   const base = (await isDirPath(selectedPath)) ? selectedPath : dirname(selectedPath);
   const path = joinPath(base, name);
@@ -476,7 +468,7 @@ async function isDirPath(path) {
 
 async function deleteSelected() {
   if (!bn || !selectedPath || selectedPath === '/') return;
-  if (!confirm(`Delete ${selectedPath}?`)) return;
+  if (!(await quickConfirm(`Delete ${selectedPath}?`, { ok: 'Delete', danger: true }))) return;
   await bn.fs.rm(selectedPath, { recursive: true });
   appendTerm(`[rm] ${selectedPath}\n`);
   if (openPath === selectedPath || openPath.startsWith(selectedPath + '/')) {
@@ -572,14 +564,7 @@ async function boot() {
   setEditorPath(openPath);
   setCwd(projectCwd);
   await refreshTree();
-  $('status').textContent =
-    bn.runtime === 'wasm'
-      ? bn.worker
-        ? bn.sabStdio
-          ? 'ready · wasm · worker · sab'
-          : 'ready · wasm · worker'
-        : 'ready · wasm'
-      : 'ready · js';
+  $('status').textContent = 'Ready';
   const sr = $('set-runtime');
   if (sr) sr.textContent = bn.runtime;
   const sw = $('set-worker');
@@ -590,7 +575,7 @@ async function boot() {
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
   const sf = $('set-features');
   if (sf) sf.textContent = String(bn.capabilities().features.length);
-  appendTerm('Ready. Type a command and press Enter.\n');
+  appendTerm('Ready. Type a command, or press Run.\n');
   shell?.end();
   shell?.focus();
   hideSplash();
@@ -615,7 +600,7 @@ async function isDefaultWorkspace() {
   if (!onlyStarter) return false;
   try {
     const idx = await bn.fs.readFile('/home/project/index.js', 'utf8');
-    if (idx && !idx.includes('NodeBrowser VFS OK')) return false;
+    if (idx && !idx.includes('hello from NodeBrowser') && !idx.includes('NodeBrowser VFS OK')) return false;
   } catch {
     /* no index.js */
   }
@@ -629,11 +614,29 @@ async function autoStartWorkspace() {
   expandProjectTree(root);
   selectedPath = root;
   if (await isDefaultWorkspace()) {
+    await syncStarterFile();
     toast('Workspace ready', 'ok');
     return;
   }
   await openBestProjectFile(root);
   toast('Workspace ready', 'ok');
+}
+
+async function syncStarterFile() {
+  let text = '';
+  try {
+    text = await bn.fs.readFile('/home/project/index.js', 'utf8');
+  } catch {
+    text = '';
+  }
+  const legacy = text.includes("require('perf_hooks')") && text.includes('NodeBrowser VFS OK');
+  if (!text || legacy) {
+    await bn.fs.writeFile('/home/project/index.js', DEFAULT);
+    text = DEFAULT;
+  }
+  editor.value = text;
+  setDirty(false);
+  setEditorPath('/home/project/index.js');
 }
 
 async function runShellLine(line, opts = {}) {
@@ -663,13 +666,11 @@ async function runShellLine(line, opts = {}) {
 async function runNode() {
   if (!bn) return;
   if (window.matchMedia('(max-width: 900px)').matches) setMobilePane('term');
-  if (dirty) await saveFile();
   const script = openPath.endsWith('.js') || openPath.endsWith('.mjs') || openPath.endsWith('.cjs')
     ? openPath
     : '/home/project/index.js';
-  if (script !== openPath) {
-    await bn.fs.writeFile(script, editor.value);
-  }
+  if (script === openPath) await persistOpen();
+  else await bn.fs.writeFile(script, editor.value);
   const cwd = projectCwd || dirname(script);
   shell?.begin();
   try {
@@ -717,14 +718,7 @@ async function compileTailwindCss() {
 }
 
 function showWelcome() {
-  $('workbench')?.classList.remove('panel-hidden');
-  setPanelTab('term');
-  appendTerm('Welcome to NodeBrowser\n');
-  appendTerm('A VS Code–style workbench over a WASM Node kernel.\n\n');
-  appendTerm('  npm install lodash\n');
-  appendTerm('  npm install tailwindcss @tailwindcss/browser\n');
-  appendTerm('  npx tailwindcss -i ./src/input.css -o ./dist/output.css\n');
-  appendTerm('  node index.js\n\n');
+  setSidebarView('extensions');
 }
 
 async function httpDemo() {
@@ -1066,7 +1060,7 @@ $('btn-fs-delete')?.addEventListener('click', () => deleteSelected().catch((e) =
 $('btn-fs-clear')?.addEventListener('click', () => {
   (async () => {
     if (!bn) return;
-    if (!confirm('Clear /home workspace?')) return;
+    if (!(await quickConfirm('Clear the workspace? Files under /home are removed.', { ok: 'Clear', danger: true }))) return;
     await bn.clearWorkspace();
     editor.value = DEFAULT;
     setEditorPath('/home/project/index.js');
@@ -1116,16 +1110,15 @@ async function searchFiles(q) {
   const box = $('search-results');
   if (!box || !bn) return;
   box.textContent = '';
+  const count = $('search-count');
   const needle = String(q || '');
-  if (needle.length < 2) return;
-  const hits = await bn.search(needle, { cwd: '/home', max: 80 });
-  if (!hits.length) {
-    const empty = document.createElement('p');
-    empty.className = 'run-hint';
-    empty.textContent = 'No matches under /home';
-    box.appendChild(empty);
+  if (needle.length < 2) {
+    if (count) count.textContent = '';
     return;
   }
+  const hits = await bn.search(needle, { cwd: '/home', max: 80 });
+  if (count) count.textContent = hits.length === 1 ? '1 match' : `${hits.length} matches`;
+  if (!hits.length) return;
   for (const hit of hits) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -1165,20 +1158,17 @@ async function exportProjectZip() {
 
 async function cloneGithub() {
   if (!bn) return;
-  const spec = await quickInput({
+  const raw = (await quickInput({
     title: 'Clone a public GitHub repository',
-    placeholder: 'owner/repo',
-    hint: 'Downloads the branch zip into /home/project. Private repos are not supported.',
-  });
-  if (!spec) return;
-  const ref = await quickInput({
-    title: 'Branch or tag',
-    value: 'main',
-    placeholder: 'main',
-  });
-  if (ref == null) return;
-  appendTerm(`[github] ${spec} @ ${ref || 'main'}\n`);
-  const result = await bn.importRepository(spec, { ref: ref || 'main', dest: '/home/project' });
+    placeholder: 'owner/repo or owner/repo#branch',
+    hint: 'Public repos only. The files replace /home/project.',
+  }))?.trim();
+  if (!raw) return;
+  const hash = raw.indexOf('#');
+  const spec = (hash >= 0 ? raw.slice(0, hash) : raw).trim();
+  const ref = (hash >= 0 ? raw.slice(hash + 1) : 'main').trim() || 'main';
+  appendTerm(`[github] ${spec} @ ${ref}\n`);
+  const result = await bn.importRepository(spec, { ref, dest: '/home/project' });
   appendTerm(`[github] ${result.files} files → ${result.dest}\n`);
   await refreshTree();
   toast(`Cloned ${result.owner}/${result.repo}`);
@@ -1226,10 +1216,11 @@ $('term-input-2')?.addEventListener('keydown', (e) => {
 });
 
 const PALETTE = [
-  ['Welcome', '', () => showWelcome()],
-  ['Run File', 'F5', () => runNode()],
+  ['Start here', '', () => showWelcome()],
+  ['Run file', 'F5', () => runNode()],
+  ['Hello page', '', () => httpDemo()],
   ['Save', 'Ctrl+S', () => saveFile()],
-  ['Install Package…', '', () => installPkg()],
+  ['Install package…', '', () => installPkg()],
   ['Install Tailwind CSS', '', () => installTailwind()],
   ['Compile Tailwind', '', () => compileTailwindCss()],
   ['HTTP Demo', '', () => httpDemo()],
@@ -1315,6 +1306,10 @@ function togglePanel() {
 function toggleSidebar() {
   const wb = $('workbench');
   if (!wb) return;
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    setMobilePane(wb.dataset.pane === 'files' ? paneBeforeFiles || 'editor' : 'files');
+    return;
+  }
   wb.classList.toggle('sidebar-hidden');
   document.querySelectorAll('.activity-btn[data-view="explorer"]').forEach((btn) => {
     btn.classList.toggle('active', !wb.classList.contains('sidebar-hidden') && wb.dataset.sidebar === 'explorer');
@@ -1510,9 +1505,12 @@ $('folder-pick')?.addEventListener('change', (e) => {
   });
 }
 
+let paneBeforeFiles = 'editor';
+
 function setMobilePane(name) {
   const wb = $('workbench');
   if (!wb) return;
+  if (name !== 'files') paneBeforeFiles = name;
   wb.dataset.pane = name;
   document.querySelectorAll('.mobile-nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.pane === name);
@@ -1530,6 +1528,11 @@ document.querySelectorAll('.activity-btn[data-view="explorer"]').forEach((btn) =
 $('start-vite')?.addEventListener('click', () => $('btn-vite-load')?.click());
 $('start-next')?.addEventListener('click', () => $('btn-next-load')?.click());
 $('start-express')?.addEventListener('click', () => $('btn-express-load')?.click());
+$('start-run')?.addEventListener('click', () => $('btn-run')?.click());
+$('start-http')?.addEventListener('click', () => $('btn-http')?.click());
+$('start-install')?.addEventListener('click', () => $('btn-install')?.click());
+$('preview-hello')?.addEventListener('click', () => $('btn-http')?.click());
+$('preview-run')?.addEventListener('click', () => $('btn-run')?.click());
 document.querySelector('.more-menu')?.addEventListener('click', (e) => {
   if (e.target.closest('button')) document.querySelector('.more')?.removeAttribute('open');
 });

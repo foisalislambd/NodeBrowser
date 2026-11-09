@@ -38,23 +38,14 @@
         <details class="more">
           <summary class="btn ghost">More</summary>
           <div class="more-menu">
-            <p class="more-label">File</p>
-            <button type="button" id="btn-fs-newfile">New file</button>
-            <button type="button" id="btn-fs-newdir">New folder</button>
-            <button type="button" id="btn-fs-delete">Delete</button>
+            <p class="more-label">Bring in a project</p>
             <button type="button" id="btn-fs-import">Upload zip</button>
             <button type="button" id="btn-folder-open">Open folder</button>
             <button type="button" id="btn-github">Clone GitHub repo</button>
-            <button type="button" id="btn-fs-export">Export snapshot</button>
             <button type="button" id="btn-export-zip">Export zip</button>
+            <button type="button" id="btn-fs-export">Export snapshot</button>
             <button type="button" class="danger" id="btn-fs-clear">Clear workspace</button>
-            <p class="more-label">Start from</p>
-            <button type="button" id="btn-vite-load">Vite</button>
-            <button type="button" id="btn-vite-preview">Vite preview</button>
-            <button type="button" id="btn-next-load">Next</button>
-            <button type="button" id="btn-next-preview">Next preview</button>
-            <button type="button" id="btn-express-load">Express</button>
-            <button type="button" id="btn-http">HTTP demo</button>
+            <p class="more-label">Also</p>
             <button type="button" id="btn-install">Install package</button>
             <button type="button" id="btn-tailwind">Install Tailwind</button>
             <button type="button" id="btn-tailwind-build">Compile Tailwind</button>
@@ -63,7 +54,6 @@
             <button type="button" id="btn-palette">Command palette</button>
             <button type="button" id="btn-layout-panel">Show or hide terminal</button>
             <button type="button" id="btn-term-clear">Clear terminal</button>
-            <button type="button" id="btn-fs-refresh">Refresh files</button>
           </div>
         </details>
       </header>
@@ -78,6 +68,12 @@
           </div>
 
           <div class="sidebar-view" id="view-explorer">
+            <div class="file-bar">
+              <button type="button" class="btn ghost" id="btn-fs-newfile">New file</button>
+              <button type="button" class="btn ghost" id="btn-fs-newdir">New folder</button>
+              <button type="button" class="btn ghost" id="btn-fs-refresh">Refresh</button>
+              <button type="button" class="btn ghost danger" id="btn-fs-delete">Delete</button>
+            </div>
             <div id="file-tree" class="file-tree" role="tree" aria-label="Files"></div>
             <p class="side-foot"><code id="cwd-path">/home/project</code></p>
           </div>
@@ -87,6 +83,7 @@
               <input id="fs-search" type="search" placeholder="Find in files" spellcheck="false" />
               <input id="fs-replace" type="text" placeholder="Replace with" spellcheck="false" />
               <button type="button" class="btn block" id="btn-fs-replace">Replace all</button>
+              <p class="hint" id="search-count"></p>
               <div id="search-results" class="file-tree"></div>
             </div>
           </div>
@@ -98,11 +95,32 @@
           </div>
 
           <div class="sidebar-view" id="view-extensions" hidden>
-            <div class="stack">
-              <p class="hint">Replace the project, then press Preview.</p>
-              <button type="button" class="btn block" id="start-vite">Use Vite</button>
-              <button type="button" class="btn block" id="start-next">Use Next</button>
-              <button type="button" class="btn block" id="start-express">Use Express</button>
+            <div class="stack start-list">
+              <p class="hint">Pick one. Run and Preview stay in the top bar.</p>
+              <button type="button" class="start-card" id="start-run">
+                <strong>Run this file</strong>
+                <span>Runs the open JavaScript file in the terminal.</span>
+              </button>
+              <button type="button" class="start-card" id="start-http">
+                <strong>Hello page</strong>
+                <span>Starts a small Node server and opens Preview.</span>
+              </button>
+              <button type="button" class="start-card" id="start-vite">
+                <strong>Vite app</strong>
+                <span>Loads a Vite project you can preview here.</span>
+              </button>
+              <button type="button" class="start-card" id="start-next">
+                <strong>Next app</strong>
+                <span>Loads a Next project you can preview here.</span>
+              </button>
+              <button type="button" class="start-card" id="start-express">
+                <strong>Express app</strong>
+                <span>Loads an Express server into this workspace.</span>
+              </button>
+              <button type="button" class="start-card" id="start-install">
+                <strong>Install a package</strong>
+                <span>npm install into /home/project.</span>
+              </button>
             </div>
           </div>
 
@@ -177,8 +195,12 @@
           <div class="preview-frame">
             <iframe id="preview" title="Preview" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
             <div class="preview-empty" id="preview-empty">
-              <p>No preview yet</p>
-              <span>Press Run for the open file, or Preview after you start a server.</span>
+              <p>No page yet</p>
+              <span>A server shows its page here. A script only prints in the terminal.</span>
+              <div class="preview-actions">
+                <button type="button" class="btn primary" id="preview-hello">Hello page</button>
+                <button type="button" class="btn" id="preview-run">Run file</button>
+              </div>
             </div>
           </div>
         </aside>
@@ -198,6 +220,14 @@
     <span id="open-editor-icon" hidden></span>
     <span id="open-editor-label" hidden></span>
     <button type="button" class="activity-btn" data-view="preview" id="activity-preview" hidden></button>
+    <div id="action-hosts" hidden>
+      <button type="button" id="btn-vite-load">Vite</button>
+      <button type="button" id="btn-vite-preview">Vite preview</button>
+      <button type="button" id="btn-next-load">Next</button>
+      <button type="button" id="btn-next-preview">Next preview</button>
+      <button type="button" id="btn-express-load">Express</button>
+      <button type="button" id="btn-http">HTTP demo</button>
+    </div>
     <button type="button" id="btn-zip-upload" hidden></button>
 
     <input type="file" id="zip-file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" hidden />
