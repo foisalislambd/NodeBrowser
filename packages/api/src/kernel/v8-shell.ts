@@ -26,6 +26,20 @@ const BUILTINS = new Set([
   'cd',
   'export',
   'node',
+  'grep',
+  'head',
+  'tail',
+  'wc',
+  'touch',
+  'sort',
+  'uniq',
+  'tee',
+  'basename',
+  'dirname',
+  'sleep',
+  'vite',
+  'next',
+  'tsc',
 ]);
 
 function isPromise(v: unknown): v is Promise<unknown> {
@@ -261,6 +275,106 @@ function rmTree(mod: KernelModule, k: KernelHandle, path: string): boolean {
   return sync(mod.unlink(k, path));
 }
 
+function flagSet(argv: string[]): { flags: Set<string>; rest: string[]; number: number | null } {
+  const flags = new Set<string>();
+  const rest: string[] = [];
+  let number: number | null = null;
+  for (const arg of argv) {
+    if (/^-\d+$/.test(arg)) number = Number(arg.slice(1));
+    else if (arg.startsWith('-') && arg.length > 1 && !arg.startsWith('--')) {
+      for (const ch of arg.slice(1)) flags.add(ch);
+    } else rest.push(arg);
+  }
+  return { flags, rest, number };
+}
+
+function asRegExp(pattern: string, insensitive: boolean): RegExp {
+  const flag = insensitive ? 'i' : '';
+  try {
+    return new RegExp(pattern, flag);
+  } catch {
+    return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flag);
+  }
+}
+
+function textOf(mod: KernelModule, k: KernelHandle, cwd: string, files: string[], stdin: string | null): { text: string; label: string }[] {
+  if (!files.length) return [{ text: stdin ?? '', label: '' }];
+  return files.map((file) => ({
+    text: readText(mod, k, joinPath(cwd, file)) ?? '',
+    label: file,
+  }));
+}
+
+function linesOf(text: string): string[] {
+  if (!text) return [];
+  const parts = text.split('\n');
+  if (parts.length && parts[parts.length - 1] === '') parts.pop();
+  return parts;
+}
+
+function findCli(mod: KernelModule, k: KernelHandle, cwd: string, rels: string[]): string | null {
+  for (const rel of rels) {
+    const path = joinPath(cwd, rel);
+    if (kindOf(mod, k, path) === 'file') return path;
+  }
+  return null;
+}
+
+function captureNode(
+  mod: KernelModule,
+  k: KernelHandle,
+  args: string[],
+  cwd: string,
+  env: Record<string, string>,
+  io: V8Io,
+): { code: number; out: string; err: string } {
+  const beforeOut = io.stdout.length;
+  const beforeErr = io.stderr.length;
+  const child = runNodeOnV8(mod, k, args, cwd, env, io);
+  const out = io.stdout.slice(beforeOut);
+  const err = io.stderr.slice(beforeErr);
+  io.stdout = io.stdout.slice(0, beforeOut);
+  io.stderr = io.stderr.slice(0, beforeErr);
+  return { code: child.code, out, err };
+}
+
+function runProjectTool(
+  mod: KernelModule,
+  k: KernelHandle,
+  cmd: string,
+  argv: string[],
+  cwd: string,
+  env: Record<string, string>,
+  io: V8Io,
+): { code: number; out: string; err: string } {
+  let mode = 'dev';
+  for (const arg of argv) {
+    if (arg === 'build') mode = 'build';
+    else if (arg === 'preview' || arg === 'start') mode = 'preview';
+    else if (arg === 'dev') mode = 'dev';
+  }
+  const cli =
+    cmd === 'vite'
+      ? findCli(mod, k, cwd, ['node_modules/vite/bin/vite.js', 'node_modules/vite/bin/vite.mjs', 'node_modules/.bin/vite'])
+      : cmd === 'next'
+        ? findCli(mod, k, cwd, ['node_modules/next/dist/bin/next', 'node_modules/.bin/next'])
+        : findCli(mod, k, cwd, ['node_modules/typescript/lib/tsc.js', 'node_modules/typescript/bin/tsc', 'node_modules/.bin/tsc']);
+  if (cli) {
+    const child = captureNode(mod, k, [cli, ...argv], cwd, env, io);
+    if (child.code === 0 || io.servers > 0 || io.timers > 0) return child;
+  } else if (cmd === 'tsc') {
+    return { code: 1, out: '', err: 'tsc: typescript not installed in VFS (npm install typescript)\n' };
+  }
+  const hook = (globalThis as { __bn_on_tool?: (tool: string, cwd: string, mode: string) => void }).__bn_on_tool;
+  if (cmd !== 'tsc' && typeof hook === 'function') {
+    hook(cmd, cwd, mode);
+    io.servers += 1;
+    return { code: 0, out: `${cmd} ${mode} (host esbuild-wasm subset)\n`, err: '' };
+  }
+  if (cmd === 'tsc') return { code: 1, out: '', err: 'tsc: typescript not installed in VFS (npm install typescript)\n' };
+  return { code: 0, out: `${cmd}: in-tab ${mode} uses host esbuild-wasm\n`, err: '' };
+}
+
 function runSimple(
   mod: KernelModule,
   k: KernelHandle,
@@ -268,6 +382,7 @@ function runSimple(
   cwd: string,
   env: Record<string, string>,
   io: V8Io,
+  stdin: string | null = null,
 ): Step {
   let body = line.trim();
   if (!body) return { code: 0, out: '', err: '', cwd };
@@ -368,7 +483,10 @@ function runSimple(
       else fail('ls: cannot access path\n');
     }
   } else if (cmd === 'cat') {
-    if (!argv.length) fail('cat: missing file\n');
+    if (!argv.length) {
+      if (stdin == null) fail('cat: missing file\n');
+      else out = stdin;
+    }
     for (const arg of argv) {
       const text = readText(mod, k, joinPath(cwd, arg));
       if (text == null) {
@@ -420,15 +538,93 @@ function runSimple(
   } else if (cmd === 'mv') {
     if (argv.length < 2 || !mod.rename) fail('mv: missing operand\n');
     else if (!sync(mod.rename(k, joinPath(cwd, argv[0]!), joinPath(cwd, argv[1]!)))) fail('mv: cannot rename\n');
+  } else if (cmd === 'touch') {
+    if (!argv.length) fail('touch: missing file\n');
+    for (const file of argv) {
+      const path = joinPath(cwd, file);
+      if (kindOf(mod, k, path) == null && !writeText(mod, k, path, '')) fail(`touch: cannot touch ${file}\n`);
+    }
+  } else if (cmd === 'basename' || cmd === 'dirname') {
+    const target = argv[0] || '';
+    if (!target) fail(`${cmd}: missing operand\n`);
+    else if (cmd === 'dirname') {
+      const slash = target.lastIndexOf('/');
+      out = (slash <= 0 ? '.' : target.slice(0, slash)) + '\n';
+    } else {
+      const base = target.slice(target.lastIndexOf('/') + 1);
+      const suffix = argv[1];
+      out = (suffix && base.endsWith(suffix) ? base.slice(0, -suffix.length) : base) + '\n';
+    }
+  } else if (cmd === 'sleep') {
+    code = 0;
+  } else if (cmd === 'grep') {
+    const parsed = flagSet(argv);
+    const pattern = parsed.rest[0];
+    if (!pattern) fail('grep: missing pattern\n');
+    else {
+      const match = asRegExp(pattern, parsed.flags.has('i'));
+      const files = parsed.rest.slice(1);
+      let count = 0;
+      for (const item of textOf(mod, k, cwd, files, stdin)) {
+        if (files.length && readText(mod, k, joinPath(cwd, item.label)) == null) {
+          fail(`grep: ${item.label}: No such file\n`);
+          break;
+        }
+        linesOf(item.text).forEach((lineText, index) => {
+          const hit = match.test(lineText);
+          if (parsed.flags.has('v') ? hit : !hit) return;
+          count++;
+          if (parsed.flags.has('c')) return;
+          const prefix = files.length > 1 ? `${item.label}:` : '';
+          const num = parsed.flags.has('n') ? `${index + 1}:` : '';
+          out += `${prefix}${num}${lineText}\n`;
+        });
+      }
+      if (parsed.flags.has('c')) out += `${count}\n`;
+      if (!count && code === 0) code = 1;
+    }
+  } else if (cmd === 'head' || cmd === 'tail') {
+    const parsed = flagSet(argv);
+    const count = parsed.number ?? (parsed.rest[0] && parsed.flags.has('n') ? Number(parsed.rest.shift()) : 10);
+    const files = parsed.rest;
+    const rows = linesOf(files.length ? textOf(mod, k, cwd, files, null)[0]?.text || '' : (stdin ?? ''));
+    const slice = cmd === 'head' ? rows.slice(0, count) : rows.slice(Math.max(0, rows.length - count));
+    out = slice.length ? slice.join('\n') + '\n' : '';
+  } else if (cmd === 'wc') {
+    const parsed = flagSet(argv);
+    const body = parsed.rest.length ? textOf(mod, k, cwd, parsed.rest, null)[0]?.text || '' : (stdin ?? '');
+    const lines = linesOf(body).length;
+    const words = body.trim() ? body.trim().split(/\s+/).length : 0;
+    const bytes = body.length;
+    if (parsed.flags.has('l')) out = `${lines}\n`;
+    else if (parsed.flags.has('w')) out = `${words}\n`;
+    else if (parsed.flags.has('c')) out = `${bytes}\n`;
+    else out = `${lines} ${words} ${bytes}\n`;
+  } else if (cmd === 'sort') {
+    const parsed = flagSet(argv);
+    const body = parsed.rest.length ? textOf(mod, k, cwd, parsed.rest, null)[0]?.text || '' : (stdin ?? '');
+    const rows = linesOf(body).sort((a, b) => a.localeCompare(b));
+    if (parsed.flags.has('r')) rows.reverse();
+    out = rows.length ? rows.join('\n') + '\n' : '';
+  } else if (cmd === 'uniq') {
+    const rows = linesOf(stdin != null ? stdin : argv[0] ? readText(mod, k, joinPath(cwd, argv[0])) || '' : '');
+    const kept: string[] = [];
+    for (const row of rows) if (kept[kept.length - 1] !== row) kept.push(row);
+    out = kept.length ? kept.join('\n') + '\n' : '';
+  } else if (cmd === 'tee') {
+    out = stdin ?? '';
+    if (!argv.length) fail('tee: missing file\n');
+    else if (!writeText(mod, k, joinPath(cwd, argv[0]), stdin ?? '')) fail(`tee: cannot write ${argv[0]}\n`);
+  } else if (cmd === 'vite' || cmd === 'next' || cmd === 'tsc') {
+    const ran = runProjectTool(mod, k, cmd, argv, cwd, env, io);
+    out = ran.out;
+    err = ran.err;
+    code = ran.code;
   } else if (cmd.replace(/^.*\//, '') === 'node' || kindOf(mod, k, joinPath(cwd, `node_modules/.bin/${cmd}`)) === 'file') {
     const script = cmd.replace(/^.*\//, '') === 'node' ? argv : [joinPath(cwd, `node_modules/.bin/${cmd}`), ...argv];
-    const beforeOut = io.stdout.length;
-    const beforeErr = io.stderr.length;
-    const child = runNodeOnV8(mod, k, script, cwd, env, io);
-    out = io.stdout.slice(beforeOut);
-    err = io.stderr.slice(beforeErr);
-    io.stdout = io.stdout.slice(0, beforeOut);
-    io.stderr = io.stderr.slice(0, beforeErr);
+    const child = captureNode(mod, k, script, cwd, env, io);
+    out = child.out;
+    err = child.err;
     code = child.code;
   } else {
     err = `sh: ${cmd}: not found\n`;
@@ -456,14 +652,8 @@ function runPipeline(
   if (stages.length === 1) return runSimple(mod, k, stages[0] || '', cwd, env, io);
   let last: Step = { code: 0, out: '', err: '', cwd };
   for (let i = 0; i < stages.length; i++) {
-    let line = (stages[i] || '').trim();
-    if (i > 0) {
-      const tmp = `/tmp/.bn_pipe_${i}`;
-      sync(mod.mkdir(k, '/tmp', true));
-      writeText(mod, k, tmp, last.out);
-      if (line === 'cat' || line.startsWith('cat ')) line = `cat ${tmp}`;
-    }
-    last = runSimple(mod, k, line, cwd, env, io);
+    const line = (stages[i] || '').trim();
+    last = runSimple(mod, k, line, cwd, env, io, i === 0 ? null : last.out);
   }
   return last;
 }
@@ -482,19 +672,56 @@ export function runShellOnV8(
   if (!scriptIsKnown(mod, k, work, source)) return null;
   const io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0 };
   const scope = { ...(env || {}) };
+  const chunks = splitList(source);
+  const result: V8RunResult = { code: 0, stdout: '', stderr: '', io };
+  if (!source) return result;
   let dir = work;
-  let code = 0;
-  if (!source) return { code: 0, stdout: '', stderr: '', io };
-  for (const [index, chunk] of splitList(source).entries()) {
-    if (index > 0) {
-      if (chunk.op === '&&' && code !== 0) continue;
-      if (chunk.op === '||' && code === 0) continue;
+  const proceed = (index: number, code: number) => {
+    let at = index;
+    let rc = code;
+    while (at < chunks.length) {
+      const chunk = chunks[at]!;
+      if (at > 0) {
+        if (chunk.op === '&&' && rc !== 0) {
+          at++;
+          continue;
+        }
+        if (chunk.op === '||' && rc === 0) {
+          at++;
+          continue;
+        }
+      }
+      const delay = sleepSeconds(chunk.text);
+      if (delay > 0 && !chunk.text.includes('|')) {
+        io.timers += 1;
+        const next = at + 1;
+        setTimeout(() => {
+          io.timers = Math.max(0, io.timers - 1);
+          proceed(next, 0);
+        }, Math.min(delay * 1000, 60_000));
+        result.code = rc;
+        return;
+      }
+      const step = runPipeline(mod, k, chunk.text, dir, scope, io);
+      io.stdout += step.out;
+      io.stderr += step.err;
+      dir = step.cwd;
+      rc = step.code;
+      at++;
     }
-    const step = runPipeline(mod, k, chunk.text, dir, scope, io);
-    io.stdout += step.out;
-    io.stderr += step.err;
-    dir = step.cwd;
-    code = step.code;
-  }
-  return { code, stdout: io.stdout, stderr: io.stderr, io };
+    result.code = rc;
+    result.stdout = io.stdout;
+    result.stderr = io.stderr;
+  };
+  proceed(0, 0);
+  result.stdout = io.stdout;
+  result.stderr = io.stderr;
+  return result;
+}
+
+function sleepSeconds(line: string): number {
+  const parts = tokenize(line.trim());
+  if (parts[0] !== 'sleep') return 0;
+  const seconds = Number(parts[1] || '0');
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
 }

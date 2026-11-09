@@ -163,7 +163,7 @@ var __bn_CORE_MODULES = [
   'diagnostics_channel', 'zlib', 'string_decoder', 'timers', 'timers/promises', 'child_process',
   'tty', 'readline', 'worker_threads', 'vm', 'cluster', 'dns', 'dgram', 'inspector', 'v8', 'wasi',
   'constants', 'punycode', 'sys',
-  'connect', 'ws', 'corepack', 'next/cache', 'next/headers'
+  'connect', 'ws', 'corepack', 'next/cache', 'next/headers', 'express'
 ];
 
 function resolveFile(base) {
@@ -1021,6 +1021,99 @@ function __bn_register_http(which) {
   };
 }
 
+/* Express-shaped router used when the npm package is not installed. */
+function __bn_load_express() {
+  var http = loadCore('http');
+  function matchRoute(route, url) {
+    var path = String(url || '/').split('?')[0];
+    var rp = String(route).split('/');
+    var up = path.split('/');
+    if (rp.length !== up.length) return null;
+    var params = {};
+    for (var i = 0; i < rp.length; i++) {
+      if (rp[i].charAt(0) === ':') params[rp[i].slice(1)] = up[i];
+      else if (rp[i] !== up[i]) return null;
+    }
+    return params;
+  }
+  function decorate(res) {
+    if (res.send) return res;
+    var origEnd = res.end;
+    res.end = function(body) {
+      res.headersSent = true;
+      return origEnd.call(this, body);
+    };
+    res.status = function(code) { this.statusCode = code | 0; return this; };
+    res.send = function(body) {
+      var obj = body && typeof body === 'object';
+      var text = obj ? JSON.stringify(body) : String(body == null ? '' : body);
+      this.writeHead(this.statusCode || 200, { 'Content-Type': obj ? 'application/json' : 'text/html; charset=utf-8' });
+      this.end(text);
+    };
+    res.json = function(body) {
+      this.writeHead(this.statusCode || 200, { 'Content-Type': 'application/json' });
+      this.end(JSON.stringify(body));
+    };
+    return res;
+  }
+  function App() { this._stack = []; }
+  App.prototype.use = function(fn) {
+    this._stack.push({ method: '', route: '', fn: fn });
+    return this;
+  };
+  ['get', 'post', 'put', 'patch', 'delete'].forEach(function(method) {
+    App.prototype[method] = function(route, fn) {
+      this._stack.push({ method: method, route: String(route), fn: fn });
+      return this;
+    };
+  });
+  App.prototype.handle = function(req, res) {
+    var stack = this._stack;
+    var i = 0;
+    decorate(res);
+    req.path = String(req.url || '/').split('?')[0];
+    function next(err) {
+      if (res.headersSent) return;
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end(String(err && err.message ? err.message : err));
+        return;
+      }
+      var layer = stack[i++];
+      if (!layer) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('not found');
+        return;
+      }
+      var method = String(req.method || 'GET').toLowerCase();
+      if (layer.method && layer.method !== method) return next();
+      if (layer.route) {
+        var params = matchRoute(layer.route, req.path);
+        if (!params) return next();
+        req.params = params;
+      }
+      try {
+        if (layer.fn && layer.fn.length >= 3) layer.fn(req, res, next);
+        else layer.fn(req, res);
+      } catch (e) {
+        next(e);
+      }
+      if (!res.headersSent && (!layer.fn || layer.fn.length < 3)) next();
+    }
+    next();
+  };
+  App.prototype.listen = function(port, cb) {
+    var self = this;
+    return http.createServer(function(req, res) { self.handle(req, res); }).listen(port, cb);
+  };
+  function express() { return new App(); }
+  express.json = function() { return function(req, res, next) { if (next) next(); }; };
+  express.urlencoded = express.json;
+  express.static = function() { return function(req, res, next) { if (next) next(); }; };
+  express.Router = function() { return new App(); };
+  return express;
+}
+
 /* ---- loadCore override ---- */
 function loadCore(name) {
   if (name === 'buffer') return { Buffer: Buffer };
@@ -1299,6 +1392,22 @@ function loadCore(name) {
       delimiter: ':',
       isAbsolute: function(p) { return String(p).charAt(0) === '/'; },
       normalize: function(p) { return join('/', String(p)); },
+      parse: function(p) {
+        p = String(p);
+        var slash = p.lastIndexOf('/');
+        var base = slash < 0 ? p : p.slice(slash + 1);
+        var dir = slash < 0 ? '' : (slash === 0 ? '/' : p.slice(0, slash));
+        var dot = base.lastIndexOf('.');
+        var ext = dot <= 0 ? '' : base.slice(dot);
+        return { root: p.charAt(0) === '/' ? '/' : '', dir: dir, base: base, ext: ext, name: ext ? base.slice(0, -ext.length) : base };
+      },
+      format: function(o) {
+        o = o || {};
+        var dir = o.dir || o.root || '';
+        var base = o.base || ((o.name || '') + (o.ext || ''));
+        if (!dir) return base;
+        return dir === '/' ? '/' + base : dir.replace(/\/$/, '') + '/' + base;
+      },
       relative: function(from, to) {
         var f = pathApi.resolve(from).split('/').filter(Boolean);
         var t = pathApi.resolve(to).split('/').filter(Boolean);
@@ -1335,6 +1444,14 @@ function loadCore(name) {
       return this;
     };
     EE.prototype.removeListener = EE.prototype.off;
+    EE.prototype.removeAllListeners = function(ev) {
+      if (ev == null) this._e = Object.create(null);
+      else delete this._e[ev];
+      return this;
+    };
+    EE.prototype.listenerCount = function(ev) { return (this._e[ev] || []).length; };
+    EE.prototype.listeners = function(ev) { return (this._e[ev] || []).slice(); };
+    EE.prototype.setMaxListeners = function() { return this; };
     EE.prototype.emit = function(ev) {
       var args = Array.prototype.slice.call(arguments, 1);
       var list = (this._e[ev] || []).slice();
@@ -2037,6 +2154,7 @@ function loadCore(name) {
       unstable_noStore: function() {}
     };
   }
+  if (name === 'express') return __bn_load_express();
   if (name === 'next/headers') {
     return {
       cookies: function() { return { get: function() { return undefined; }, getAll: function() { return []; } }; },
