@@ -36,7 +36,8 @@ import { inspectProject, workspaceDirs, type ProjectInfo } from '../project/insp
 import { applyNpmrc, configureNpm, npmConfig, resetNpmConfig } from '../npm/registry.js';
 import { readResolvedPins } from '../npm/lockfiles.js';
 import { importRepository as importGithubRepo, type ImportRepositoryOptions } from './github.js';
-import { kernelCallsAreSync, nodeArgsFromSpawn, runNodeOnV8 } from '../kernel/v8-guest.js';
+import { kernelCallsAreSync, nodeArgsFromSpawn, runNodeOnV8, type V8RunResult } from '../kernel/v8-guest.js';
+import { runShellOnV8, shellScriptFromSpawn } from '../kernel/v8-shell.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -550,7 +551,10 @@ export class NodeBrowser {
   }
 
   #finishV8Node(args: string[], cwd: string, env?: Record<string, string>): BrowserNodeProcess {
-    const result = runNodeOnV8(this.#mod, this.#k, args, cwd, env);
+    return this.#finishV8Result(runNodeOnV8(this.#mod, this.#k, args, cwd, env));
+  }
+
+  #finishV8Result(result: V8RunResult): BrowserNodeProcess {
     let exitResolve!: (code: number) => void;
     const exit = new Promise<number>((resolve) => {
       exitResolve = resolve;
@@ -693,9 +697,14 @@ export class NodeBrowser {
       const fileEnv = await readDotenv(this.fs, cwd);
       env = { ...fileEnv, ...opts.env };
     }
-    const v8Args = this.guestEngine === 'v8' ? nodeArgsFromSpawn(cmd, args) : null;
-    if (v8Args && kernelCallsAreSync(this.#mod, this.#k)) {
-      return this.#finishV8Node(v8Args, cwd, env);
+    if (this.guestEngine === 'v8' && kernelCallsAreSync(this.#mod, this.#k)) {
+      const v8Args = nodeArgsFromSpawn(cmd, args);
+      if (v8Args) return this.#finishV8Node(v8Args, cwd, env);
+      const script = shellScriptFromSpawn(cmd, args);
+      if (script != null) {
+        const shell = runShellOnV8(this.#mod, this.#k, script, cwd, env);
+        if (shell) return this.#finishV8Result(shell);
+      }
     }
     const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, env));
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);

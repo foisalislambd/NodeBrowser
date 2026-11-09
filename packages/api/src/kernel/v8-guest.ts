@@ -1,17 +1,25 @@
 /**
  * Guest `node` on the host JavaScript engine (V8 in Chromium and in Node).
  * The program is the same bootstrap + guest modules QuickJS evaluates.
- * The C++/WASM kernel still owns the filesystem, and QuickJS still runs the shell.
+ * The C++/WASM kernel still owns the filesystem. The shell for known commands
+ * runs in `v8-shell.ts`. QuickJS remains the fallback for anything else.
  */
 import type { KernelHandle, KernelModule } from './load.js';
 import { GUEST_BOOTSTRAP, GUEST_MODULES } from './guest_bundle.js';
+
+export type V8Io = {
+  stdout: string;
+  stderr: string;
+  timers: number;
+  servers: number;
+};
 
 export type V8RunResult = {
   code: number;
   stdout: string;
   stderr: string;
   /** Keeps growing after return while guest timers or servers are still live. */
-  io: { stdout: string; stderr: string; timers: number; servers: number };
+  io: V8Io;
 };
 
 type HttpHandler = (req: {
@@ -171,8 +179,8 @@ export function runNodeOnV8(
   args: string[],
   cwd: string,
   env: Record<string, string> | undefined,
+  io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0 },
 ): V8RunResult {
-  const io = { stdout: '', stderr: '', timers: 0, servers: 0 };
   const work = cwd && cwd !== '' ? cwd : '/';
 
   const text = (parts: unknown[]) => parts.map((p) => (p == null ? '' : String(p))).join(' ');
