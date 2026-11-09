@@ -192,6 +192,33 @@ Returns an unsubscribe function.
 
 ---
 
+## Power tools
+
+These run on the host against the kernel VFS. They skip `node_modules`, `.git`, `dist`, and `.next` unless noted.
+
+| Method | Role |
+|--------|------|
+| `glob(pattern, cwd?)` | `src/**/*.ts` style match |
+| `search(query, opts?)` | Content search → `{ path, line, text }[]` |
+| `replace(query, replacement, opts?)` | Replace across files |
+| `diff(pathA, pathB)` | Unified line diff |
+| `digest(dir?)` | Text fingerprint `hex:count` |
+| `exportZip(dir?)` | Stored zip of a project directory |
+| `importRepository(spec, opts?)` | Public `owner/repo` zipball from GitHub into the VFS |
+| `inspect(cwd?)` | Scripts, dependencies, workspaces, lockfile kind |
+| `workspaces(cwd?)` | Workspace directories |
+| `installWorkspaces(cwd?, opts?)` | `npm install` at the root and each workspace |
+| `lockPins(cwd?)` | Exact versions from `package-lock.json`, else `yarn.lock`, else `pnpm-lock.yaml` |
+| `readEnv(cwd?)` | `.env`, `.env.local`, `.env.development` |
+| `exec(cmd, args?, opts?)` | Spawn and collect `{ pid, code, output }` |
+| `watch(prefix, fn)` | `fs-change` under a path; returns unsubscribe |
+| `configureRegistry` / `loadNpmrc` / `resetRegistry` | Private registry + token (memory only, sent only to that host) |
+| `capabilities()` | Runtime flags and feature names |
+
+`spawn` options also accept `timeoutMs` and `loadEnv` (explicit `env` wins over `.env`). `install(..., { peers: true })` installs `peerDependencies`. Empty `install([])` pins ranges to the lockfile version when one is present. Yarn and pnpm are not executed; their lockfiles only supply versions, and tarballs still come from the npm registry.
+
+GitHub fetch is allowlisted only for `importRepository` (`codeload.github.com`). It is not added to the default npm egress list.
+
 ## Snapshots, ZIP, workspace
 
 | Method | Role |
@@ -235,6 +262,14 @@ JSON-RPC 2.0 over the host (`handleAgentRpc`). Methods:
 | `spawn` | `{ cmd, args, cwd }` or `[cmd, args, cwd]` | `{ pid }` |
 | `install` | `{ packages, cwd }` | `true` |
 | `killTree` | `{ pid }` | `boolean` |
+| `capabilities` | — | runtime + feature list |
+| `fs.glob` | `{ pattern, cwd }` | `string[]` |
+| `fs.search` | `{ query, cwd, glob?, max? }` | search hits |
+| `fs.replace` | `{ query, replacement, cwd, glob? }` | `{ files, replacements }` |
+| `exec` | `{ cmd, args, cwd, timeoutMs? }` | `{ pid, code, output }` |
+| `inspect` | `{ cwd }` | project info |
+| `lockPins` | `{ cwd }` | `{ [name]: version }` |
+| `readEnv` | `{ cwd }` | env object |
 
 Unknown method → JSON-RPC `-32601`.
 

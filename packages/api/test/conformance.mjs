@@ -585,6 +585,121 @@ async function main() {
   const rr = await bn.rpc({ method: 'fs.readFile', params: { path: '/rpc.txt' } });
   assert(rr.result === 'rpc-ok', 'rpc read');
 
+  await bn.fs.mkdir('/home/project/src', { recursive: true });
+  await bn.fs.writeFile('/home/project/src/app.ts', 'export const marker = "alpha-needle";\n');
+  await bn.fs.writeFile('/home/project/src/other.ts', 'export const marker = "beta";\n');
+  const globbed = await bn.glob('src/**/*.ts', '/home/project');
+  assert(globbed.length === 2, 'glob ' + globbed.join(','));
+  const hits = await bn.search('alpha-needle', { cwd: '/home/project' });
+  assert(hits.length === 1 && hits[0].line === 1, 'search ' + JSON.stringify(hits));
+  const replaced = await bn.replace('alpha-needle', 'alpha-done', { cwd: '/home/project', glob: 'src/**/*.ts' });
+  assert(replaced.replacements === 1, 'replace');
+  assert((await bn.fs.readFile('/home/project/src/app.ts', 'utf8')).includes('alpha-done'));
+  const diff = await bn.diff('/home/project/src/app.ts', '/home/project/src/other.ts');
+  assert(diff.includes('-') && diff.includes('+'), 'diff');
+  const digest = await bn.digest('/home/project/src');
+  assert(/^[\da-f]+:\d+$/.test(digest), 'digest ' + digest);
+
+  await bn.fs.cp('/home/project/src/app.ts', '/home/project/src/copy.ts');
+  assert((await bn.fs.readFile('/home/project/src/copy.ts', 'utf8')).includes('alpha-done'));
+  const projectZip = await bn.exportZip('/home/project/src');
+  const imported = await bn.importZip(projectZip, '/home/project/from-zip');
+  assert(imported.files >= 2, 'exportZip files ' + imported.files);
+  assert(await bn.fs.exists('/home/project/from-zip/app.ts'));
+  try {
+    await bn.fs.symlink('app.ts', '/home/project/src/app.link');
+    const link = await bn.fs.readlink('/home/project/src/app.link');
+    assert(String(link).includes('app.ts'), 'readlink ' + link);
+  } catch (e) {
+    assert(String(e).includes('ENOTSUP'), 'symlink ' + e);
+  }
+
+  await bn.fs.writeFile('/home/project/.env', 'BN_FROM_FILE=from-dotenv\n# c\nexport BN_SECOND=2\n');
+  const envFile = await bn.readEnv('/home/project');
+  assert(envFile.BN_FROM_FILE === 'from-dotenv' && envFile.BN_SECOND === '2', JSON.stringify(envFile));
+  await bn.fs.writeFile('/home/project/dotenv.js', 'console.log(process.env.BN_FROM_FILE || "missing");');
+  const dotenvRun = await bn.exec('node', ['/home/project/dotenv.js'], {
+    cwd: '/home/project',
+    loadEnv: true,
+    env: { BN_FROM_FILE: 'explicit' },
+  });
+  assert(dotenvRun.code === 0 && dotenvRun.output.includes('explicit'), 'loadEnv ' + dotenvRun.output);
+
+  await bn.fs.writeFile(
+    '/home/project/package.json',
+    JSON.stringify({
+      name: 'demo',
+      scripts: { hi: 'node -e "console.log(1)"' },
+      dependencies: { 'left-pad': '^1.3.0' },
+      workspaces: ['packages/*'],
+    }),
+  );
+  await bn.fs.mkdir('/home/project/packages/sub', { recursive: true });
+  await bn.fs.writeFile('/home/project/packages/sub/package.json', '{"name":"sub","version":"0.0.1"}\n');
+  const info = await bn.inspect('/home/project');
+  assert(info.name === 'demo' && info.scripts.hi && info.workspaces[0] === 'packages/*', JSON.stringify(info));
+  const ws = await bn.workspaces('/home/project');
+  assert(ws.some((d) => d.endsWith('/packages/sub')), 'workspaces ' + ws.join(','));
+
+  await bn.fs.mkdir('/home/pins', { recursive: true });
+  await bn.fs.mkdir('/home/yarn', { recursive: true });
+  await bn.fs.mkdir('/home/pnpm', { recursive: true });
+  await bn.fs.writeFile(
+    '/home/pins/package-lock.json',
+    JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        '': {},
+        'node_modules/left-pad': { version: '1.3.0' },
+        'node_modules/ms/node_modules/left-pad': { version: '1.1.0' },
+      },
+    }),
+  );
+  const pins = await bn.lockPins('/home/pins');
+  assert(pins['left-pad'] === '1.3.0', 'npm pin ' + pins['left-pad']);
+  await bn.fs.writeFile('/home/yarn/yarn.lock', 'left-pad@^1.3.0:\n  version "1.3.0"\n');
+  assert((await bn.lockPins('/home/yarn'))['left-pad'] === '1.3.0', 'yarn pin');
+  await bn.fs.writeFile('/home/pnpm/pnpm-lock.yaml', 'lockfileVersion: "9.0"\n\npackages:\n\n  left-pad@1.3.0:\n    resolution: {integrity: sha512-aaa}\n');
+  assert((await bn.lockPins('/home/pnpm'))['left-pad'] === '1.3.0', 'pnpm pin');
+
+  await bn.fs.writeFile('/home/project/.npmrc', 'registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=test-token\n');
+  await bn.loadNpmrc('/home/project');
+  const reg = bn.registryConfig();
+  assert(reg.hasToken === true && reg.registry.includes('registry.npmjs.org'), JSON.stringify(reg));
+  bn.resetRegistry();
+  assert(bn.registryConfig().hasToken === false, 'registry reset');
+
+  let watched = 0;
+  const stopWatch = bn.watch('/home/project/src', () => {
+    watched++;
+  });
+  await bn.fs.writeFile('/home/project/src/watched.txt', '1');
+  await new Promise((r) => setTimeout(r, 30));
+  stopWatch();
+  assert(watched >= 1, 'watch ' + watched);
+
+  const caps = bn.capabilities();
+  assert(caps.features.includes('search') && caps.features.includes('github'), 'capabilities');
+  const rpcSearch = await bn.rpc({
+    method: 'fs.search',
+    id: 7,
+    params: { query: 'alpha-done', cwd: '/home/project' },
+  });
+  assert(Array.isArray(rpcSearch.result) && rpcSearch.result.length >= 1, 'rpc search');
+
+  const { parseGithubSpec, githubZipUrl } = await import('../dist/host/github.js');
+  assert(parseGithubSpec('https://github.com/octocat/hello.git').repo === 'hello', 'github spec');
+  const zipUrl = githubZipUrl('octocat', 'hello', 'main', 'heads');
+  assert(zipUrl.startsWith('https://codeload.github.com/octocat/hello/zip/refs/heads/main'), zipUrl);
+  let ghBlocked = false;
+  try {
+    const { assertAllowedFetchUrl } = await import('../dist/net/egress.js');
+    assertAllowedFetchUrl(zipUrl);
+  } catch {
+    ghBlocked = true;
+  }
+  assert(ghBlocked, 'github stays off the default npm allowlist');
+
   console.log('Phases 13–42 MVP + zip upload: OK (runtime=%s)', bn.runtime);
 }
 

@@ -10,6 +10,8 @@ with a release roll of patch/minor at **9** (`1.0.9` → `1.1.0`).
 
 ### Added
 
+- Host power tools: content search, replace, glob, diff, watch, `exec`, project inspect, workspace install, zip export, public GitHub import
+- npm install reads exact versions from `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`; `.npmrc` registry tokens; optional peer install
 - Browser: C++/WASM kernel on a **Worker** (`bn.worker`) so long `node` does not freeze the tab; Node/tests stay same-thread
 - **Phase 13b:** deleted `js-runtime.ts`; `boot()` is WASM-only; PR CI builds C++ → WASM (Emscripten) then runs conformance
 - Installed **tsc** / **vite** CLIs run in QuickJS when the module graph fits; Vite still uses host esbuild-wasm as the fast path

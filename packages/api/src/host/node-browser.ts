@@ -22,6 +22,20 @@ import { compileTailwind, syncTailwindBrowser } from '../bundler/tailwind.js';
 import { previewProject, resolveProjectRoot, type PreviewResult } from '../bundler/preview.js';
 import { handleAgentRpc, type AgentRpcRequest, type AgentRpcResponse } from './json-rpc.js';
 import { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
+import {
+  diffLines,
+  exportDirZip,
+  globFiles,
+  readDotenv,
+  replaceInFiles,
+  searchFiles,
+  treeDigest,
+  type SearchHit,
+} from '../fs/toolkit.js';
+import { inspectProject, workspaceDirs, type ProjectInfo } from '../project/inspect.js';
+import { applyNpmrc, configureNpm, npmConfig, resetNpmConfig } from '../npm/registry.js';
+import { readResolvedPins } from '../npm/lockfiles.js';
+import { importRepository as importGithubRepo, type ImportRepositoryOptions } from './github.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -245,6 +259,25 @@ export class NodeBrowser {
           self.#opfsFlusher?.mark(to, 'write');
         }
       },
+      cp: async (from: string, to: string) => {
+        if (!(await asy(mod.exists(k, from)))) throw new Error(`ENOENT: ${from}`);
+        await copyTree(from, to);
+        if (!mod.setFsChangeListener) {
+          self.#emit('fs-change', { type: 'change', path: to });
+          self.#opfsFlusher?.mark(to, 'write');
+        }
+      },
+      symlink: async (target: string, path: string) => {
+        if (!mod.symlink) throw new Error('ENOTSUP: symlink');
+        if (!(await asy(mod.symlink(k, target, path)))) throw new Error(`EIO: symlink ${path}`);
+        if (!mod.setFsChangeListener) self.#emit('fs-change', { type: 'rename', path });
+      },
+      readlink: async (path: string) => {
+        if (!mod.readlink) throw new Error('ENOTSUP: readlink');
+        const target = await asy(mod.readlink(k, path));
+        if (target == null) throw new Error(`ENOENT: ${path}`);
+        return target;
+      },
     };
   }
 
@@ -336,6 +369,163 @@ export class NodeBrowser {
   /** Prefer a nested folder that actually contains package.json / app / src/app. */
   resolveProjectRoot(cwd: string): Promise<string> {
     return resolveProjectRoot(this, cwd);
+  }
+
+  /** Files matching a glob (`src/**\/*.ts`) under `cwd`. Skips node_modules, .git, dist. */
+  glob(pattern: string, cwd = '/'): Promise<string[]> {
+    return globFiles(this.fs, pattern, cwd);
+  }
+
+  /** Search file contents. Skips binaries, node_modules, .git, and dist. */
+  search(query: string, opts?: { cwd?: string; glob?: string; max?: number; caseSensitive?: boolean }): Promise<SearchHit[]> {
+    return searchFiles(this.fs, query, opts);
+  }
+
+  /** Replace a string across files. Returns how many files and occurrences changed. */
+  replace(
+    query: string,
+    replacement: string,
+    opts?: { cwd?: string; glob?: string; caseSensitive?: boolean },
+  ): Promise<{ files: number; replacements: number }> {
+    return replaceInFiles(this.fs, query, replacement, opts);
+  }
+
+  /** Unified line diff of two VFS files. */
+  async diff(pathA: string, pathB: string): Promise<string> {
+    const a = await this.fs.readFile(pathA, 'utf8');
+    const b = await this.fs.readFile(pathB, 'utf8');
+    return diffLines(a, b);
+  }
+
+  /** FNV fingerprint of text files under `dir` plus a file count. */
+  digest(dir = '/'): Promise<string> {
+    return treeDigest(this.fs, dir);
+  }
+
+  /** Store-method zip of a directory (skips node_modules, .git, dist). */
+  exportZip(dir = '/home/project'): Promise<Uint8Array> {
+    return exportDirZip(this.fs, dir);
+  }
+
+  /** Public GitHub `owner/repo` zipball → VFS. */
+  importRepository(spec: string, opts?: ImportRepositoryOptions) {
+    return importGithubRepo(this, spec, opts);
+  }
+
+  /** package.json scripts, deps, workspaces, and which lockfile is present. */
+  inspect(cwd = '/home/project'): Promise<ProjectInfo> {
+    return inspectProject(this.fs, cwd);
+  }
+
+  /** Workspace package directories declared on the root package.json. */
+  workspaces(cwd = '/home/project'): Promise<string[]> {
+    return workspaceDirs(this.fs, cwd);
+  }
+
+  /** Install the root and each workspace package.json (lockfile pins apply). */
+  async installWorkspaces(cwd = '/home/project', opts?: { peers?: boolean }): Promise<string[]> {
+    const dirs = [cwd, ...(await this.workspaces(cwd))];
+    for (const dir of dirs) await this.install([], dir, { peers: opts?.peers });
+    return dirs;
+  }
+
+  /** Exact versions recorded in package-lock.json, yarn.lock, or pnpm-lock.yaml. */
+  async lockPins(cwd = '/'): Promise<Record<string, string>> {
+    return Object.fromEntries(await readResolvedPins(this.fs, cwd));
+  }
+
+  /** `.env`, `.env.local`, and `.env.development` merged in that order. */
+  readEnv(cwd = '/'): Promise<Record<string, string>> {
+    return readDotenv(this.fs, cwd);
+  }
+
+  /** Memory-only npm registry, token, and scope registries. Token is sent only to that host. */
+  configureRegistry(opts: {
+    registry?: string;
+    token?: string;
+    extraHosts?: string[];
+    scopes?: Record<string, { registry: string; token?: string }>;
+  }) {
+    return configureNpm(opts);
+  }
+
+  resetRegistry() {
+    resetNpmConfig();
+  }
+
+  registryConfig() {
+    const cfg = npmConfig();
+    return { registry: cfg.registry, scopes: Object.keys(cfg.scopes), hasToken: !!cfg.token };
+  }
+
+  /** Read `cwd/.npmrc` into the registry config. */
+  async loadNpmrc(cwd = '/'): Promise<void> {
+    const path = (cwd.replace(/\/+$/, '') || '') + '/.npmrc';
+    applyNpmrc(await this.fs.readFile(path.replace(/\/+/g, '/'), 'utf8'));
+  }
+
+  /**
+   * Spawn, collect output, and wait. `timeoutMs` kills the process tree.
+   */
+  async exec(
+    cmd: string,
+    args: string[] = [],
+    opts: SpawnOptions = {},
+  ): Promise<{ pid: number; code: number; output: string }> {
+    const proc = await this.spawn(cmd, args, opts);
+    let output = '';
+    const reader = proc.output.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      output += value;
+    }
+    const code = await proc.exit;
+    return { pid: proc.pid, code, output };
+  }
+
+  /** Subscribe to `fs-change` events under `prefix`. Returns unsubscribe. */
+  watch(prefix: string, fn: (event: { type: string; path: string }) => void): () => void {
+    const root = prefix.replace(/\/+$/, '') || '/';
+    const listener = (event: { type: string; path: string }) => {
+      if (root === '/' || event.path === root || event.path.startsWith(root + '/')) fn(event);
+    };
+    this.on('fs-change', listener);
+    return () => this.off('fs-change', listener);
+  }
+
+  /** What this boot can do. Agents should read this instead of guessing. */
+  capabilities() {
+    return {
+      runtime: this.runtime,
+      worker: this.worker,
+      sabStdio: this.sabStdio,
+      persist: this.#persist,
+      features: [
+        'vfs',
+        'symlink',
+        'spawn',
+        'exec',
+        'watch',
+        'search',
+        'replace',
+        'glob',
+        'diff',
+        'zip',
+        'github',
+        'npm',
+        'lockfile-pins',
+        'npmrc',
+        'peers',
+        'workspaces',
+        'dotenv',
+        'vite',
+        'next',
+        'tailwind',
+        'opfs',
+        'rpc',
+      ],
+    };
   }
 
   /** Clear `/home` workspace (VFS + OPFS when persist). */
@@ -449,7 +639,12 @@ export class NodeBrowser {
       });
     };
 
-    const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, opts.env));
+    let env = opts.env;
+    if (opts.loadEnv) {
+      const fileEnv = await readDotenv(this.fs, cwd);
+      env = { ...fileEnv, ...opts.env };
+    }
+    const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, env));
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
 
     let exitResolve!: (code: number) => void;
@@ -515,6 +710,12 @@ export class NodeBrowser {
       },
     });
 
+    if (opts.timeoutMs && opts.timeoutMs > 0) {
+      const timer = setTimeout(() => {
+        void this.#killWithChildren(pid);
+      }, opts.timeoutMs);
+      void exit.then(() => clearTimeout(timer));
+    }
     return {
       pid,
       exit,
@@ -547,7 +748,7 @@ export class NodeBrowser {
   async install(
     packages: string[],
     cwd = '/',
-    opts?: { logPid?: number; saveDev?: boolean; onLog?: (line: string) => void },
+    opts?: { logPid?: number; saveDev?: boolean; peers?: boolean; onLog?: (line: string) => void },
   ): Promise<void> {
     const foreign = await detectForeignLockfile(this.fs, cwd);
     if (foreign) {
@@ -555,7 +756,7 @@ export class NodeBrowser {
         {
           phase: 'resolve',
           name: 'lockfile',
-          message: `${foreign} lockfile found — NodeBrowser installs with npm (corepack/yarn/pnpm not executed)`,
+          message: `${foreign} lockfile found — versions are pinned, packages still install from the npm registry`,
         },
         opts?.logPid,
         opts?.onLog,
@@ -563,6 +764,7 @@ export class NodeBrowser {
     }
     await installMany(this, packages, cwd, {
       saveDev: opts?.saveDev,
+      peers: opts?.peers,
       onProgress: (p) => this.#emitInstall(p, opts?.logPid, opts?.onLog),
     });
     if (packages.some((s) => /tailwindcss/i.test(s)) || !packages.length) {
@@ -638,7 +840,7 @@ export class NodeBrowser {
    * Serve a VFS directory on a virtual HTTP port (Vite/Next preview & static hosting).
    * Returns the preview URL.
    */
-  serveStatic(port: number, rootDir: string, opts?: { index?: string }): string {
+  serveStatic(port: number, rootDir: string, opts?: { index?: string; headers?: Record<string, string> }): string {
     const root = rootDir.replace(/\/+$/, '') || '/';
     const indexName = opts?.index || 'index.html';
     this.#http.listen(port, async (req, res) => {
@@ -660,6 +862,7 @@ export class NodeBrowser {
             'Content-Type': contentTypeFor(filePath),
             'Cross-Origin-Resource-Policy': 'same-origin',
             'Cross-Origin-Embedder-Policy': 'require-corp',
+            ...opts?.headers,
           });
           res.end(text);
         } else {
@@ -668,6 +871,7 @@ export class NodeBrowser {
             'Content-Type': contentTypeFor(filePath),
             'Cross-Origin-Resource-Policy': 'same-origin',
             'Cross-Origin-Embedder-Policy': 'require-corp',
+            ...opts?.headers,
           });
           res.end(buf);
         }
@@ -1182,14 +1386,14 @@ function formatNpmLine(p: {
   if (p.phase === 'done' && p.message && p.message.startsWith('+')) return p.message + '\n';
   if (p.phase === 'done' && p.message === 'already installed') return '';
   if (p.phase === 'lifecycle' && p.message) return `> ${p.name}\n> ${p.message}\n`;
-  if (p.phase === 'resolve' && p.message && /^(skipped|optional|peer|lockfile)/.test(p.message)) {
+  if (p.phase === 'resolve' && p.message && /^(skipped|optional|peer|lockfile)|lockfile|pinned/.test(p.message)) {
     return `npm WARN ${p.message}\n`;
   }
   return '';
 }
 
 function isTextFile(filePath: string): boolean {
-  return /\.(html?|css|js|mjs|cjs|map|json|svg|txt|xml|webmanifest|md)$/i.test(filePath);
+  return /\.(html?|css|js|mjs|cjs|jsx|ts|tsx|map|json|svg|txt|xml|webmanifest|md|ya?ml)$/i.test(filePath);
 }
 
 function isStaticAssetPath(rel: string): boolean {
@@ -1226,6 +1430,9 @@ function joinFsPath(...parts: string[]): string {
 export { handleAgentRpc } from './json-rpc.js';
 export type { AgentRpcRequest, AgentRpcResponse } from './json-rpc.js';
 export type { FileSystemTree, FileNode, SpawnOptions, BrowserNodeProcess, BrowserNodeEventMap } from './types.js';
+export type { SearchHit } from '../fs/toolkit.js';
+export type { ProjectInfo } from '../project/inspect.js';
+export type { ImportRepositoryOptions } from './github.js';
 export type { BundleOptions } from '../bundler/esbuild.js';
 export type { PreviewResult, ProjectKind } from '../bundler/preview.js';
 export { detectProjectKind, resolveProjectRoot } from '../bundler/preview.js';

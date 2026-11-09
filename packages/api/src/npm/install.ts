@@ -2,6 +2,8 @@ import type { NodeBrowser } from '../host/node-browser.js';
 import { binRelTarget, makeBinShim, parseBinField } from './bin.js';
 import { assertAllowedFetchUrl } from '../net/egress.js';
 import { parseTar } from '../fs/zip.js';
+import { readResolvedPins } from './lockfiles.js';
+import { npmEgressHosts, npmFetchHeaders, registryUrlFor } from './registry.js';
 
 export type InstallProgress = {
   phase: 'resolve' | 'fetch' | 'extract' | 'bin' | 'lifecycle' | 'done' | 'summary';
@@ -46,7 +48,7 @@ export function npmCacheStats(): { hits: number; misses: number } {
 }
 
 const MAX_DEPTH = 32;
-const FETCH_CONCURRENCY = 8;
+const FETCH_CONCURRENCY = 12;
 const LIFECYCLE_ALLOW = new Set(['true', 'echo', 'node']);
 const SKIP_OPTIONAL =
   /^(fsevents$|@esbuild\/|@rollup\/rollup-|@swc\/core-|@img\/sharp|esbuild$|nice-napi$|lightningcss(-|$)|@tailwindcss\/oxide)/;
@@ -62,6 +64,7 @@ export async function installPackage(
     withDeps?: boolean;
     signal?: AbortSignal;
     saveDev?: boolean;
+    peers?: boolean;
   },
 ): Promise<InstallResult> {
   const withDeps = opts?.withDeps !== false;
@@ -69,7 +72,7 @@ export async function installPackage(
   const seen = new Set<string>();
   const lock: Record<string, { version: string; resolved?: string }> = {};
   const added: { name: string; version: string }[] = [];
-  await installOne(bn, spec, cwd, 0, seen, withDeps, opts?.onProgress, opts?.signal, lock, added);
+  await installOne(bn, spec, cwd, 0, seen, withDeps, opts?.onProgress, opts?.signal, lock, added, !!opts?.peers);
   await writeLockfile(bn, cwd, lock);
   if (spec && spec !== '.') await saveManifestDep(bn, cwd, spec, !!opts?.saveDev);
   const elapsedMs = Date.now() - started;
@@ -89,6 +92,7 @@ export async function installMany(
     onProgress?: OnProgress;
     signal?: AbortSignal;
     saveDev?: boolean;
+    peers?: boolean;
   },
 ): Promise<InstallResult> {
   const started = Date.now();
@@ -97,6 +101,7 @@ export async function installMany(
   const added: { name: string; version: string }[] = [];
   let list = specs;
   if (!list.length) list = await manifestDeps(bn, cwd);
+  list = await pinSpecs(bn, cwd, list, opts?.onProgress);
   if (!list.length) {
     const elapsedMs = Date.now() - started;
     opts?.onProgress?.({
@@ -107,7 +112,7 @@ export async function installMany(
     return { added: 0, skipped: 0, elapsedMs, packages: [] };
   }
   for (const spec of list) {
-    await installOne(bn, spec, cwd, 0, seen, true, opts?.onProgress, opts?.signal, lock, added);
+    await installOne(bn, spec, cwd, 0, seen, true, opts?.onProgress, opts?.signal, lock, added, !!opts?.peers);
     if (specs.length) await saveManifestDep(bn, cwd, spec, !!opts?.saveDev);
   }
   await writeLockfile(bn, cwd, lock);
@@ -332,6 +337,7 @@ async function installOne(
   signal?: AbortSignal,
   lock?: Record<string, { version: string; resolved?: string }>,
   added?: { name: string; version: string }[],
+  peers = false,
 ): Promise<void> {
   if (signal?.aborted) throw new Error('install cancelled');
   if (depth > MAX_DEPTH) return;
@@ -379,7 +385,7 @@ async function installOne(
   }
 
   if (!withDeps) return;
-  await installDeps(bn, cwd, depth, seen, verMeta, onProgress, signal, lock, added);
+  await installDeps(bn, cwd, depth, seen, verMeta, onProgress, signal, lock, added, peers);
 }
 
 async function installDeps(
@@ -392,6 +398,7 @@ async function installDeps(
   signal?: AbortSignal,
   lock?: Record<string, { version: string; resolved?: string }>,
   added?: { name: string; version: string }[],
+  peers = false,
 ): Promise<void> {
   const deps: [string, string, boolean][] = [];
   for (const [dep, range] of Object.entries(verMeta.dependencies || {})) {
@@ -401,14 +408,18 @@ async function installDeps(
     deps.push([dep, range, true]);
   }
   if (verMeta.peerDependencies) {
-    onProgress?.({
-      phase: 'resolve',
-      name: Object.keys(verMeta.peerDependencies).join(','),
-      message:
-        'peer deps: ' +
-        Object.keys(verMeta.peerDependencies).join(', ') +
-        ' (not auto-installed)',
-    });
+    if (peers) {
+      for (const [dep, range] of Object.entries(verMeta.peerDependencies)) deps.push([dep, range, false]);
+    } else {
+      onProgress?.({
+        phase: 'resolve',
+        name: Object.keys(verMeta.peerDependencies).join(','),
+        message:
+          'peer deps: ' +
+          Object.keys(verMeta.peerDependencies).join(', ') +
+          ' (not auto-installed)',
+      });
+    }
   }
   await mapPool(deps, FETCH_CONCURRENCY, async ([dep, range, optional]) => {
     const skipNative = SKIP_OPTIONAL.test(dep);
@@ -417,7 +428,7 @@ async function installDeps(
       return;
     }
     try {
-      await installOne(bn, `${dep}@${range}`, cwd, depth + 1, seen, true, onProgress, signal, lock, added);
+      await installOne(bn, `${dep}@${range}`, cwd, depth + 1, seen, true, onProgress, signal, lock, added, peers);
     } catch (e) {
       if (!optional) throw e;
       onProgress?.({
@@ -615,11 +626,34 @@ export function parseSpec(spec: string): { name: string; version: string } {
 }
 
 function registryUrl(name: string): string {
-  if (name.startsWith('@')) {
-    const [scope, pkg] = name.split('/');
-    return `https://registry.npmjs.org/${scope}%2F${pkg}`;
+  return registryUrlFor(name);
+}
+
+async function pinSpecs(
+  bn: NodeBrowser,
+  cwd: string,
+  specs: string[],
+  onProgress?: OnProgress,
+): Promise<string[]> {
+  const pins = await readResolvedPins(bn.fs, cwd);
+  if (!pins.size) return specs;
+  let used = 0;
+  const next = specs.map((spec) => {
+    const { name, version } = parseSpec(spec);
+    const pin = pins.get(name);
+    if (!pin) return spec;
+    if (version !== 'latest' && version !== '*' && !/[\^~><*xX|]/.test(version)) return spec;
+    used++;
+    return `${name}@${pin}`;
+  });
+  if (used) {
+    onProgress?.({
+      phase: 'resolve',
+      name: 'lockfile',
+      message: `lockfile pinned ${used} package${used === 1 ? '' : 's'} to exact versions`,
+    });
   }
-  return `https://registry.npmjs.org/${encodeURIComponent(name)}`;
+  return next;
 }
 
 function joinPath(...parts: string[]): string {
@@ -630,8 +664,8 @@ async function fetchMeta(name: string): Promise<RegistryMeta> {
   const hit = metaCache.get(name);
   if (hit) return hit;
   const url = registryUrl(name);
-  assertAllowedFetchUrl(url);
-  const res = await fetch(url);
+  assertAllowedFetchUrl(url, { extraHosts: npmEgressHosts() });
+  const res = await fetch(url, { headers: npmFetchHeaders(url) });
   if (!res.ok) throw new Error(`npm meta failed ${url}: ${res.status}`);
   const meta = (await res.json()) as RegistryMeta;
   metaCache.set(name, meta);
@@ -639,7 +673,7 @@ async function fetchMeta(name: string): Promise<RegistryMeta> {
 }
 
 async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> {
-  assertAllowedFetchUrl(url);
+  assertAllowedFetchUrl(url, { extraHosts: npmEgressHosts() });
   if (memoryCache.has(cacheKey)) {
     npmCacheHits++;
     return memoryCache.get(cacheKey)!;
@@ -661,7 +695,7 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
   }
 
   npmCacheMisses++;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: npmFetchHeaders(url, 'application/octet-stream') });
   if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
   const ab = new Uint8Array(await res.arrayBuffer());
   memoryCache.set(cacheKey, ab);

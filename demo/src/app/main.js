@@ -569,6 +569,8 @@ async function boot() {
   if (ss) ss.textContent = bn.sabStdio ? 'on' : 'off';
   const sp = $('set-persist');
   if (sp) sp.textContent = bn.persistEnabled ? 'OPFS /home' : 'off';
+  const sf = $('set-features');
+  if (sf) sf.textContent = String(bn.capabilities().features.length);
   appendTerm('NodeBrowser  —  WASM kernel ready\n');
   appendTerm('\nGet started:\n');
   appendTerm('  npm install lodash\n');
@@ -1099,44 +1101,84 @@ $('btn-express-load')?.addEventListener('click', () => {
 
 $('activity-search')?.addEventListener('click', () => setSidebarView('search'));
 
+let searchTimer = 0;
 $('fs-search')?.addEventListener('input', () => {
-  searchFiles($('fs-search').value).catch((e) => appendTerm(String(e) + '\n'));
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchFiles($('fs-search').value).catch((e) => appendTerm(String(e) + '\n'));
+  }, 160);
 });
 
 async function searchFiles(q) {
   const box = $('search-results');
   if (!box || !bn) return;
   box.textContent = '';
-  const needle = String(q || '').toLowerCase();
+  const needle = String(q || '');
   if (needle.length < 2) return;
-  const hits = [];
-  async function walk(dir) {
-    let names = [];
-    try {
-      names = await bn.fs.readdir(dir);
-    } catch {
-      return;
-    }
-    for (const n of names) {
-      const full = joinPath(dir, n);
-      if (n.toLowerCase().includes(needle)) hits.push(full);
-      try {
-        if ((await bn.fs.stat(full)).isDirectory()) await walk(full);
-      } catch {
-        /* skip */
-      }
-      if (hits.length > 80) return;
-    }
+  const hits = await bn.search(needle, { cwd: '/home', max: 80 });
+  if (!hits.length) {
+    const empty = document.createElement('p');
+    empty.className = 'run-hint';
+    empty.textContent = 'No matches under /home';
+    box.appendChild(empty);
+    return;
   }
-  await walk('/');
-  for (const p of hits) {
+  for (const hit of hits) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'tree-item';
-    b.textContent = p;
-    b.addEventListener('click', () => onTreeClick(p, false).catch((e) => appendTerm(String(e) + '\n')));
+    b.textContent = `${hit.path}:${hit.line}  ${hit.text.trim().slice(0, 80)}`;
+    b.addEventListener('click', () => onTreeClick(hit.path, false).catch((e) => appendTerm(String(e) + '\n')));
     box.appendChild(b);
   }
+}
+
+async function replaceInProject() {
+  if (!bn) return;
+  const query = $('fs-search')?.value || '';
+  const replacement = $('fs-replace')?.value ?? '';
+  if (query.length < 2) {
+    toast('Type at least 2 characters to replace', 'err');
+    return;
+  }
+  const result = await bn.replace(query, replacement, { cwd: '/home' });
+  appendTerm(`[replace] ${result.replacements} in ${result.files} file(s)\n`);
+  toast(`Replaced ${result.replacements} in ${result.files} files`);
+  await searchFiles(query);
+  await refreshTree();
+}
+
+async function exportProjectZip() {
+  if (!bn) return;
+  const bytes = await bn.exportZip('/home/project');
+  const blob = new Blob([bytes], { type: 'application/zip' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'nodebrowser-project.zip';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  appendTerm(`[workspace] zip ${bytes.length} bytes\n`);
+}
+
+async function cloneGithub() {
+  if (!bn) return;
+  const spec = await quickInput({
+    title: 'Clone a public GitHub repository',
+    placeholder: 'owner/repo',
+    hint: 'Downloads the branch zip into /home/project. Private repos are not supported.',
+  });
+  if (!spec) return;
+  const ref = await quickInput({
+    title: 'Branch or tag',
+    value: 'main',
+    placeholder: 'main',
+  });
+  if (ref == null) return;
+  appendTerm(`[github] ${spec} @ ${ref || 'main'}\n`);
+  const result = await bn.importRepository(spec, { ref: ref || 'main', dest: '/home/project' });
+  appendTerm(`[github] ${result.files} files → ${result.dest}\n`);
+  await refreshTree();
+  toast(`Cloned ${result.owner}/${result.repo}`);
 }
 
 function setTermTab(which) {
@@ -1194,6 +1236,9 @@ const PALETTE = [
   ['Upload ZIP…', '', () => openZipPicker()],
   ['Open Folder…', '', () => openFolderPicker()],
   ['Export Snapshot', '', () => $('btn-fs-export')?.click()],
+  ['Export ZIP', '', () => exportProjectZip()],
+  ['Clone GitHub Repo…', '', () => cloneGithub()],
+  ['Search in Files', 'Ctrl+Shift+F', () => setSidebarView('search')],
   ['New File', 'Ctrl+N', () => newFile()],
   ['Toggle Terminal', 'Ctrl+J', () => togglePanel()],
   ['Command Palette', 'Ctrl+K', () => openPalette()],
@@ -1280,6 +1325,8 @@ function runCmd(cmd) {
     zip: () => openZipPicker(),
     folder: () => openFolderPicker(),
     export: () => $('btn-fs-export')?.click(),
+    'export-zip': () => exportProjectZip(),
+    github: () => cloneGithub(),
     clear: () => $('btn-fs-clear')?.click(),
     palette: () => openPalette(),
     'view-explorer': () => setSidebarView('explorer'),
@@ -1393,6 +1440,9 @@ document.addEventListener('keydown', (e) => {
     runNode().catch((err) => appendTerm(String(err) + '\n'));
   }
 });
+$('btn-fs-replace')?.addEventListener('click', () => replaceInProject().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-github')?.addEventListener('click', () => cloneGithub().catch((e) => appendTerm(String(e) + '\n')));
+$('btn-export-zip')?.addEventListener('click', () => exportProjectZip().catch((e) => appendTerm(String(e) + '\n')));
 $('btn-zip-upload')?.addEventListener('click', () => openZipPicker());
 $('btn-folder-open')?.addEventListener('click', () => openFolderPicker());
 $('btn-fs-import')?.addEventListener('click', () => openZipPicker());

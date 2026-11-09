@@ -23,7 +23,9 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 - Cooperative `worker_threads.Worker`; `vm` extra JSContext; C++ tar extract; VFS 512 MiB cap
 - Service Worker preview; demo **ports** status
 - npm install = host **allowlisted** fetch into **kernel VFS**; C++ `npm`/`npx`
-- `WebContainer` name shim; ZIP → preview
+- `WebContainer` name shim; ZIP import and ZIP export
+- Content search / replace / glob / diff / watch; public GitHub import
+- Lockfile version pins (npm, yarn.lock, pnpm-lock.yaml) with npm install; `.npmrc` token; workspace install; optional peer install
 - Host API over C ABI
 - WASM-only `boot()` (no TypeScript guest Node); PR CI builds kernel with Emscripten
 - Installed `tsc` / `vite` CLIs in QuickJS (vite falls back to esbuild-wasm when native esbuild is required)

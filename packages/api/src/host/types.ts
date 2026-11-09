@@ -8,6 +8,10 @@ export type FileSystemTree = Record<string, FileNode>;
 export interface SpawnOptions {
   cwd?: string;
   env?: Record<string, string>;
+  /** Kill the process if it is still running after this many milliseconds. */
+  timeoutMs?: number;
+  /** Merge `.env` / `.env.local` from `cwd`. Explicit `env` wins. */
+  loadEnv?: boolean;
 }
 
 export interface BrowserNodeProcess {

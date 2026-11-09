@@ -17,6 +17,10 @@ Pages: https://foisalislambd.github.io/NodeBrowser/ — [PAGES.md](./PAGES.md)
 
 Boot: splash → WASM → optional OPFS `/home` → terminal welcome. Empty starter workspaces **do not** auto-run HTTP; use F5 / Run File.
 
+## Search, zip, GitHub
+
+Search (Ctrl+Shift+F) looks through file contents under `/home`, not only filenames. Replace writes the replacement across those files. File → Export ZIP downloads `/home/project` without `node_modules`. Clone GitHub Repo takes a public `owner/repo` and a branch (default `main`).
+
 ## Keys
 
 | Keys | Action |

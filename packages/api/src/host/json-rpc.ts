@@ -72,6 +72,42 @@ export async function handleAgentRpc(bn: NodeBrowser, req: AgentRpcRequest): Pro
       case 'runtime':
         result = bn.runtime;
         break;
+      case 'capabilities':
+        result = bn.capabilities();
+        break;
+      case 'fs.glob':
+        result = await bn.glob(String(p.pattern ?? '**/*'), String(p.cwd ?? '/'));
+        break;
+      case 'fs.search':
+        result = await bn.search(String(p.query ?? ''), {
+          cwd: typeof p.cwd === 'string' ? p.cwd : '/',
+          glob: typeof p.glob === 'string' ? p.glob : undefined,
+          max: typeof p.max === 'number' ? p.max : undefined,
+        });
+        break;
+      case 'fs.replace':
+        result = await bn.replace(String(p.query ?? ''), String(p.replacement ?? ''), {
+          cwd: typeof p.cwd === 'string' ? p.cwd : '/',
+          glob: typeof p.glob === 'string' ? p.glob : undefined,
+        });
+        break;
+      case 'exec': {
+        const done = await bn.exec(String(p.cmd), Array.isArray(p.args) ? (p.args as string[]) : [], {
+          cwd: typeof p.cwd === 'string' ? p.cwd : '/',
+          timeoutMs: typeof p.timeoutMs === 'number' ? p.timeoutMs : undefined,
+        });
+        result = done;
+        break;
+      }
+      case 'inspect':
+        result = await bn.inspect(String(p.cwd ?? '/home/project'));
+        break;
+      case 'lockPins':
+        result = await bn.lockPins(String(p.cwd ?? '/'));
+        break;
+      case 'readEnv':
+        result = await bn.readEnv(String(p.cwd ?? '/'));
+        break;
       default:
         return { jsonrpc: '2.0', id, error: { code: -32601, message: `unknown method ${method}` } };
     }

@@ -102,7 +102,11 @@ npm package blurb (what the registry shows): [`packages/api/README.md`](./packag
 | Tailwind packages + browser utilities in preview | ✅ not native oxide CLI |
 | Service Worker HTTP preview | ✅ |
 | In-tab Vite / Next | ✅ **subset** (esbuild-wasm + shims) |
-| ZIP upload → unpack → preview | ✅ |
+| ZIP upload → unpack → preview, and export a project zip | ✅ |
+| Content search, replace, glob, diff, watch | ✅ |
+| Public GitHub repo → VFS (`owner/repo`) | ✅ |
+| Lockfile pins (npm, yarn.lock, pnpm-lock) installed via npm | ✅ |
+| `.npmrc` registry + token, peer install, workspaces | ✅ |
 | OPFS persist `/home` | ✅ |
 | `WebContainer` name shim | ✅ |
 | Native `.node` addons, bit-identical Node, full Vite 8 / `next start` | ❌ |

@@ -39,6 +39,8 @@
                 <button type="button" class="menu-cmd" data-cmd="zip">Upload ZIP…</button>
                 <button type="button" class="menu-cmd" data-cmd="folder">Open Folder…</button>
                 <button type="button" class="menu-cmd" data-cmd="export">Export Snapshot</button>
+                <button type="button" class="menu-cmd" data-cmd="export-zip">Export ZIP</button>
+                <button type="button" class="menu-cmd" data-cmd="github">Clone GitHub Repo…</button>
                 <button type="button" class="menu-cmd danger" data-cmd="clear">Clear Workspace</button>
               </div>
             </div>
@@ -181,7 +183,9 @@
           <div class="sidebar-view" id="view-search" hidden>
             <div class="sidebar-title"><span>SEARCH</span></div>
             <div class="search-panel">
-              <input id="fs-search" type="search" placeholder="Search filenames" spellcheck="false" />
+              <input id="fs-search" type="search" placeholder="Search file contents" spellcheck="false" />
+              <input id="fs-replace" type="text" placeholder="Replace with" spellcheck="false" />
+              <button type="button" class="btn block" id="btn-fs-replace">Replace in files</button>
               <div id="search-results" class="file-tree"></div>
             </div>
           </div>
@@ -210,6 +214,8 @@
               <button type="button" class="btn primary block" id="btn-next-preview">Next Preview</button>
               <button type="button" class="btn block" id="btn-express-load">Load Express</button>
               <button type="button" class="btn block" id="btn-zip-upload">Upload ZIP…</button>
+              <button type="button" class="btn block" id="btn-github">Clone GitHub Repo…</button>
+              <button type="button" class="btn block" id="btn-export-zip">Export ZIP</button>
               <button type="button" class="btn block" id="btn-folder-open">Open Folder…</button>
             </div>
           </div>
@@ -221,6 +227,7 @@
               <div class="kv"><span>Worker</span><code id="set-worker">—</code></div>
               <div class="kv"><span>SAB stdio</span><code id="set-sab">—</code></div>
               <div class="kv"><span>Persist</span><code id="set-persist">OPFS /home</code></div>
+              <div class="kv"><span>Features</span><code id="set-features">—</code></div>
               <p class="run-hint">Guest is C++/WASM + QuickJS. Host TS only loads the kernel.</p>
             </div>
           </div>

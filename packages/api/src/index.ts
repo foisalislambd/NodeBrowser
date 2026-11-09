@@ -30,4 +30,7 @@ export type {
   UseWasmOption,
   AgentRpcRequest,
   AgentRpcResponse,
+  SearchHit,
+  ProjectInfo,
+  ImportRepositoryOptions,
 } from './host/node-browser.js';

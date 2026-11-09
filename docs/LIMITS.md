@@ -33,7 +33,7 @@ Native packages **install** (JS stub or skip) and **fail clearly at run**: `esbu
 - Bit-identical Node / V8 performance
 - Raw guest TCP to the public internet (virtual HTTP + allowlisted npm fetch)
 - Hardened multi-tenant jail — see [../SECURITY.md](../SECURITY.md)
-- Executing yarn/pnpm instead of the in-tab npm installer
+- Executing the yarn or pnpm CLI. Their lockfiles are read so `npm install` can pin exact versions; tarballs still come from the npm registry.
 
 ## Shell intercept
 
