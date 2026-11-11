@@ -5,7 +5,6 @@
 export {
   NodeBrowser,
   BrowserNode,
-  WebContainer,
   HttpBridge,
   resetKernelCache,
   sabStdioAvailable,
@@ -18,6 +17,7 @@ export {
   isGzip,
   handleAgentRpc,
 } from './host/node-browser.js';
+export { WebContainer, configureAPIKey, auth, PreviewMessageType, previewMessageFromData } from './host/webcontainer.js';
 export type {
   FileSystemTree,
   FileNode,
@@ -35,3 +35,13 @@ export type {
   ProjectInfo,
   ImportRepositoryOptions,
 } from './host/node-browser.js';
+export type {
+  BootOptions,
+  WebContainerProcess,
+  WebContainerFs,
+  DirEnt,
+  ExportOptions,
+  IFSWatcher,
+  PreviewMessage,
+  Unsubscribe,
+} from './host/webcontainer.js';

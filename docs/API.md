@@ -40,7 +40,7 @@ import {
   handleAgentRpc,
 } from '@foisal/nodebrowser';
 
-import { WebContainer } from '@foisal/nodebrowser/compat'; // same shim
+import { WebContainer, configureAPIKey, auth } from '@foisal/nodebrowser/compat';
 ```
 
 ---
@@ -55,6 +55,8 @@ Loads `browsernode_kernel.wasm` (from the package `wasm/` folder, or `wasmUrl`).
 | `previewBase` | `string` | `{origin}/__bn_preview` | Prefix for preview URLs |
 | `persist` | `boolean` | `false` | Hydrate/flush `/home` via OPFS (browser) |
 | `useWasm` | `true \| false \| 'auto'` | `true` | Must be WASM; `false` is rejected |
+| `guestEngine` | `'quickjs' \| 'v8'` | `'quickjs'` | `v8` runs `node` on the host engine when kernel calls are synchronous |
+| `sharedArrayBuffer` | `boolean` | `true` | `false` keeps the poll stdio transport |
 
 **Instance fields:** `runtime` (`'wasm'`), `worker` (kernel on a Worker), `sabStdio` (SharedArrayBuffer rings), `persistEnabled`.
 
@@ -238,6 +240,7 @@ GitHub fetch is allowlisted only for `importRepository` (`codeload.github.com`).
 | Event | Payload |
 |-------|---------|
 | `server-ready` | `(port: number, url: string)` |
+| `port` | `(port: number, type: 'open' \| 'close', url: string)` |
 | `install-progress` | `{ phase, name, version?, message?, streamed? }` |
 | `fs-change` | `{ type, path }` |
 | `http-log` | `{ port, method, path, status }` |
@@ -275,19 +278,45 @@ Unknown method → JSON-RPC `-32601`.
 
 ---
 
-## `WebContainer` shim
+## `WebContainer`
 
-Same kernel. Names overlap StackBlitz; **behavior is not a drop-in**.
+Compatibility layer for the public WebContainer tutorial surface. Same kernel. Migration notes and the remaining gaps: [MIGRATING.md](./MIGRATING.md).
 
 ```ts
+import { WebContainer } from '@foisal/nodebrowser/compat';
+
 const wc = await WebContainer.boot();
-await wc.mount({ /* FileSystemTree */ });
-await wc.spawn('node', ['app.js']);
-wc.instance.install(['lodash'], '/home/project'); // extra APIs
+await wc.mount({
+  'index.js': { file: { contents: "console.log('ok')\n" } },
+  'package.json': { file: { contents: '{"scripts":{"start":"node index.js"}}' } },
+});
+const proc = await wc.spawn('npm', ['run', 'start']);
+proc.output.pipeTo(new WritableStream({ write(chunk) { console.log(chunk); } }));
+await proc.exit;
 wc.teardown();
 ```
 
-Surface on the shim: `boot`, `fs`, `runtime`, `worker`, `sabStdio`, `mount`, `spawn`, `on`, `teardown`, `instance`.
+Only one `WebContainer` is booted at a time. `teardown()` allows the next `boot()`.
+
+| Member | Behavior |
+|--------|----------|
+| `boot({ coep?, workdirName?, forwardPreviewErrors? })` | `coep: 'none'` skips SharedArrayBuffer stdio. `workdirName` defaults to `project`. |
+| `workdir` | `/home/<workdirName>`. Default `/home/project`. |
+| `path` | Default `PATH` (`<workdir>/node_modules/.bin`) applied when `spawn` env omits `PATH`. |
+| `mount(tree \| zip, { mountPoint? })` | Relative `mountPoint` is under `workdir`. A string mount point is still accepted. Zip bytes are archives from `export`, not a proprietary snapshot. Symlinks use `{ file: { symlink } }`. |
+| `spawn(cmd, args?, { cwd, env, output, terminal })` | `cwd` defaults to `workdir`. `output: false` yields an empty stream and still drains the process. `env` values are stringified. |
+| process | `output` (`ReadableStream`), `input` (`WritableStream`), `exit`, `kill()`, `resize()`. `write()` is an extra. |
+| `fs.readFile` | No encoding → `Uint8Array`. `'utf8'` / `'utf-8'` → string. Relative paths use `workdir`. |
+| `fs.writeFile` / `mkdir` / `readdir` / `rm` / `rename` / `watch` | `readdir({ withFileTypes: true })` returns `{ name, isFile, isDirectory }`. `rm({ force: true })` ignores missing paths. `mkdir({ recursive: true })` resolves to the first created directory. `watch` returns `{ close() }`. |
+| `on` | Returns an unsubscribe function. Events: `server-ready`, `port` (`open` \| `close`), `error` (`{ message }`), `preview-message`, `xdg-open`, `code`. |
+| `export(path, { format, includes, excludes })` | `json` (default) is a `FileSystemTree`. `zip` and `binary` are a stored zip this runtime can `mount` again. |
+| `setPreviewScript(src, options?)` | Injects `<script src>` into HTML served by the host preview. |
+| `teardown()` | Kills host-side waits, closes ports, destroys the kernel. Further calls throw. |
+| `instance` | The `NodeBrowser` (install, preview, zip, RPC, …). |
+
+`configureAPIKey` and `auth` are exported from `@foisal/nodebrowser/compat`. They do not contact StackBlitz; npm auth stays on `.npmrc` / `configureRegistry`.
+
+Guest `process.stdin` does not yet yield bytes written to `input`. The stream is accepted and stored on the kernel pipe.
 
 ---
 
@@ -322,4 +351,4 @@ Repo example: `examples/headless.mjs`.
 
 ## `teardown()`
 
-Detach Service Worker bridge, close HTTP ports, destroy the kernel handle. Call once when the tab or agent session ends.
+Detach Service Worker bridge, close HTTP ports (`port` / `close`), stop stdio polls, drop listeners owned by this instance, and destroy the kernel handle. A process that is still running has `exit` resolve to `137`. Calling `teardown()` again does nothing. `fs` and `spawn` after teardown throw. Call it once when the tab or agent session ends.

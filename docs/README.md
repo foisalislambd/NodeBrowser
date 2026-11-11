@@ -10,7 +10,8 @@ Guides for NodeBrowser — the in-tab Node-like runtime (C++/WASM kernel + `@foi
 | [npm in the tab](./NPM.md) | `install` / `npm` / `npx` into the VFS |
 | [Tailwind](./TAILWIND.md) | Same CLI shape, no extra Tailwind product |
 | [Limits](./LIMITS.md) | What packages and CLIs actually run |
-| [Architecture](./ARCHITECTURE.md) | Kernel vs host vs demo |
+| [Architecture](./ARCHITECTURE.md) | Kernel vs host vs demo, guest engines, teardown |
+| [Migrating from WebContainers](./MIGRATING.md) | Public API map and remaining gaps |
 | [FAQ](./FAQ.md) | Short answers |
 | [GitHub Pages](./PAGES.md) | Static demo deploy |
 | [Publishing](./PUBLISHING.md) / [Releasing](./RELEASING.md) | Maintainers |

@@ -40,7 +40,7 @@ jobs:
         run: npm install --no-fund --no-audit
 
       - name: Install CMake / Ninja / g++
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+        run: bash scripts/ci-install-build-tools.sh
 
       - name: Setup Emscripten
         uses: emscripten-core/setup-emsdk@v16

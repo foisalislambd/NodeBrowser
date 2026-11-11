@@ -10,6 +10,9 @@ The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 
 ### Added
 
+- `WebContainer` compatibility layer for the public tutorial surface: workdir-relative filesystem, `spawn` streams (`output` / `input` / `exit` / `kill` / `resize`), `on` unsubscribe (`server-ready`, `port`, `error`, `preview-message`, `xdg-open`, `code`), `export` (`json` / `zip`), preview script injection, and `coep: 'none'` reduced mode. See [docs/MIGRATING.md](./docs/MIGRATING.md).
+- `HostGuestEngine` so `boot({ guestEngine: 'v8' })` is an engine behind `spawn`, with QuickJS remaining the kernel default
+- Process teardown stops stdio polls, closes port events, and releases spawn hooks so a later `boot()` is not stuck on a live timer
 - Host power tools: content search, replace, glob, diff, watch, `exec`, project inspect, workspace install, zip export, public GitHub import
 - npm install reads exact versions from `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`; `.npmrc` registry tokens; optional peer install
 - Browser: C++/WASM kernel on a **Worker** (`bn.worker`) so long `node` does not freeze the tab; Node/tests stay same-thread

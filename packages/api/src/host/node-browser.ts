@@ -36,8 +36,8 @@ import { inspectProject, workspaceDirs, type ProjectInfo } from '../project/insp
 import { applyNpmrc, configureNpm, npmConfig, resetNpmConfig } from '../npm/registry.js';
 import { readResolvedPins } from '../npm/lockfiles.js';
 import { importRepository as importGithubRepo, type ImportRepositoryOptions } from './github.js';
-import { kernelCallsAreSync, nodeArgsFromSpawn, runNodeOnV8, type V8RunResult } from '../kernel/v8-guest.js';
-import { runShellOnV8, shellScriptFromSpawn } from '../kernel/v8-shell.js';
+import type { V8RunResult } from '../kernel/v8-guest.js';
+import { createHostGuestEngine, type HostGuestEngine } from '../kernel/guest-engine.js';
 
 type Listener<K extends keyof BrowserNodeEventMap> = (...args: BrowserNodeEventMap[K]) => void;
 
@@ -57,6 +57,13 @@ export class NodeBrowser {
   #spawnChildren = new Map<number, Set<number>>();
   #persist = false;
   #opfsFlusher: ReturnType<typeof createOpfsFlusher> | null = null;
+  #closed = false;
+  #timers = new Set<ReturnType<typeof setTimeout>>();
+  #sessions = new Set<{ stop: () => void }>();
+  #openPorts = new Set<number>();
+  #guest: HostGuestEngine | null = null;
+  #previewScript: { src: string; type?: 'module' | 'importmap'; defer?: boolean; async?: boolean } | null = null;
+  #forwardPreviewErrors: boolean | 'exceptions-only' = false;
   /** Which kernel is driving this instance. */
   readonly runtime: 'js' | 'wasm';
   /** True when C++/WASM runs on a Worker (browser); UI thread stays responsive. */
@@ -72,6 +79,7 @@ export class NodeBrowser {
     previewBase: string,
     persist: boolean,
     guestEngine: GuestEngine,
+    allowSab: boolean,
   ) {
     this.#mod = mod;
     this.#k = k;
@@ -79,8 +87,9 @@ export class NodeBrowser {
     this.#persist = persist;
     this.runtime = mod.runtime === 'wasm' ? 'wasm' : 'js';
     this.worker = !!mod.worker;
-    this.sabStdio = !!mod.worker && sabStdioAvailable() && typeof mod.attachStdio === 'function';
+    this.sabStdio = allowSab && !!mod.worker && sabStdioAvailable() && typeof mod.attachStdio === 'function';
     this.guestEngine = guestEngine;
+    this.#guest = createHostGuestEngine(guestEngine, mod, k);
     this.#wireHttp();
     this.#wireFsChange();
     if (persist) {
@@ -96,11 +105,17 @@ export class NodeBrowser {
       persist?: boolean;
       /** Run `node` on V8 (this JS engine) instead of QuickJS. Default `quickjs`. */
       guestEngine?: GuestEngine;
+      /**
+       * When false, stdio uses the poll transport even if the page is cross-origin isolated.
+       * `WebContainer.boot({ coep: 'none' })` sets this.
+       */
+      sharedArrayBuffer?: boolean;
     } & LoadKernelOptions,
   ): Promise<NodeBrowser> {
     const useWasm = options?.useWasm === undefined ? true : options.useWasm;
     const persist = !!options?.persist;
     const guestEngine: GuestEngine = options?.guestEngine === 'v8' ? 'v8' : 'quickjs';
+    const allowSab = options?.sharedArrayBuffer !== false;
     const mod = await loadKernel(options?.wasmUrl, { useWasm });
     const k = await asy(mod.create());
     await asy(mod.registerBuiltins(k));
@@ -112,7 +127,7 @@ export class NodeBrowser {
             typeof document !== 'undefined' && document.baseURI ? document.baseURI : location.href,
           ).href.replace(/\/$/, '')
         : 'http://localhost/__bn_preview');
-    const bn = new NodeBrowser(mod, k, previewBase, persist, guestEngine);
+    const bn = new NodeBrowser(mod, k, previewBase, persist, guestEngine, allowSab);
     if (persist && opfsAvailable()) {
       await hydrateFromOpfs(bn.fs);
     }
@@ -184,7 +199,7 @@ export class NodeBrowser {
       const bytes = await readBytes(from);
       if (!(await asy(mod.writeBytes(k, to, bytes)))) throw new Error(`EIO: write ${to}`);
     };
-    return {
+    const api = {
       writeFile: async (path: string, data: string | Uint8Array) => {
         const ok =
           typeof data === 'string'
@@ -288,6 +303,16 @@ export class NodeBrowser {
         return target;
       },
     };
+    return new Proxy(api, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          if (self.#closed) throw new Error('NodeBrowser instance was torn down');
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    }) as typeof api;
   }
 
   get http(): HttpBridge {
@@ -321,12 +346,18 @@ export class NodeBrowser {
   }
 
   async mount(tree: FileSystemTree, mountPoint = '/'): Promise<void> {
-    const { files, dirs } = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
+    this.#assertOpen();
+    const { files, dirs, links } = flattenTree(tree, mountPoint === '/' ? '' : mountPoint);
     for (const dir of dirs) {
       await this.fs.mkdir(dir, { recursive: true });
     }
     for (const [path, contents] of Object.entries(files)) {
       await this.fs.writeFile(path, contents);
+    }
+    for (const link of links) {
+      const parent = link.path.slice(0, link.path.lastIndexOf('/')) || '/';
+      if (parent !== '/') await this.fs.mkdir(parent, { recursive: true });
+      await this.fs.symlink(link.target, link.path);
     }
   }
 
@@ -510,6 +541,7 @@ export class NodeBrowser {
       worker: this.worker,
       sabStdio: this.sabStdio,
       persist: this.#persist,
+      guestEngine: this.#guest?.name ?? 'quickjs',
       features: [
         'vfs',
         'symlink',
@@ -534,6 +566,8 @@ export class NodeBrowser {
         'opfs',
         'rpc',
         'v8-guest',
+        'guest-engine',
+        'port',
       ],
     };
   }
@@ -550,20 +584,30 @@ export class NodeBrowser {
     }
   }
 
-  #finishV8Node(args: string[], cwd: string, env?: Record<string, string>): BrowserNodeProcess {
-    return this.#finishV8Result(runNodeOnV8(this.#mod, this.#k, args, cwd, env));
-  }
-
-  #finishV8Result(result: V8RunResult): BrowserNodeProcess {
+  #finishGuest(result: V8RunResult): BrowserNodeProcess {
     let exitResolve!: (code: number) => void;
+    let settled = false;
     const exit = new Promise<number>((resolve) => {
       exitResolve = resolve;
     });
+    let halt = () => {};
     const output = new ReadableStream<string>({
-      start(controller) {
+      start: (controller) => {
         let sentOut = 0;
         let sentErr = 0;
+        const finish = (code: number) => {
+          if (settled) return;
+          settled = true;
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
+          exitResolve(code);
+        };
+        halt = () => finish(137);
         const pump = () => {
+          if (settled || this.#closed) return finish(137);
           const out = result.io.stdout;
           const err = result.io.stderr;
           if (out.length > sentOut) {
@@ -575,15 +619,15 @@ export class NodeBrowser {
             sentErr = err.length;
           }
           if (result.io.timers > 0 || result.io.servers > 0) {
-            setTimeout(pump, 16);
+            this.#later(16, pump);
             return;
           }
-          controller.close();
-          exitResolve(result.code);
+          finish(result.code);
         };
         pump();
       },
     });
+    this.#adopt(exit, () => halt());
     return {
       pid: 0,
       exit,
@@ -594,6 +638,7 @@ export class NodeBrowser {
   }
 
   async spawn(cmd: string, args: string[] = [], opts: SpawnOptions = {}): Promise<BrowserNodeProcess> {
+    this.#assertOpen();
     const cwd = opts.cwd ?? '/';
     const npm = matchHostNpm(cmd, args);
     if (npm) return this.#spawnHostNpm(npm, cwd);
@@ -607,17 +652,19 @@ export class NodeBrowser {
       __bn_on_http_listen?: (port: number) => void;
     };
     // Hooks must be installed BEFORE spawn — listen() runs synchronously inside it.
+    (globalThis as { __bn_hook_owner?: object }).__bn_hook_owner = this;
+    const ownsHooks = () => (globalThis as { __bn_hook_owner?: object }).__bn_hook_owner === this;
     notify.__bn_on_server_ready = (port: number) => {
+      if (!ownsHooks() || this.#closed) return;
       pendingPorts.add(port | 0);
       this.#ensureWasmHttpHandler(port | 0);
-      const url = `${this.#previewBase}/${port}/`;
-      this.#emit('server-ready', port, url);
+      this.#noteServer(port | 0);
     };
     notify.__bn_on_http_listen = (port: number) => {
+      if (!ownsHooks() || this.#closed) return;
       pendingPorts.add(port | 0);
       this.#ensureWasmHttpHandler(port | 0);
-      const url = `${this.#previewBase}/${port}/`;
-      this.#emit('server-ready', port, url);
+      this.#noteServer(port | 0);
     };
     const self = this;
     (globalThis as unknown as { __bn_on_tool?: (tool: string, cwd: string, mode: string) => void }).__bn_on_tool = (
@@ -697,22 +744,23 @@ export class NodeBrowser {
       const fileEnv = await readDotenv(this.fs, cwd);
       env = { ...fileEnv, ...opts.env };
     }
-    if (this.guestEngine === 'v8' && kernelCallsAreSync(this.#mod, this.#k)) {
-      const v8Args = nodeArgsFromSpawn(cmd, args);
-      if (v8Args) return this.#finishV8Node(v8Args, cwd, env);
-      const script = shellScriptFromSpawn(cmd, args);
-      if (script != null) {
-        const shell = runShellOnV8(this.#mod, this.#k, script, cwd, env);
-        if (shell) return this.#finishV8Result(shell);
-      }
+    if (this.#guest) {
+      const hosted = this.#guest.tryRun({ command: cmd, args, cwd, env });
+      if (hosted) return this.#finishGuest(hosted);
     }
     const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, env));
     if (pendingPorts.size) this.#portsByPid.set(pid, pendingPorts);
 
+    let settled = false;
     let exitResolve!: (code: number) => void;
     const exit = new Promise<number>((r) => {
       exitResolve = r;
     });
+    const finishExit = (code: number) => {
+      if (settled) return;
+      settled = true;
+      exitResolve(code);
+    };
 
     let outRing: SabStdioRing | null = null;
     let errRing: SabStdioRing | null = null;
@@ -733,51 +781,71 @@ export class NodeBrowser {
       }
     }
 
+    let halt = () => {};
     const output = new ReadableStream<string>({
       start: (controller) => {
-        const pollRpc = async () => {
-          const out = await asy(this.#mod.readStdout(this.#k, pid));
-          const err = await asy(this.#mod.readStderr(this.#k, pid));
-          if (out) controller.enqueue(out);
-          if (err) controller.enqueue(err);
-          const code = await asy(this.#mod.wait(this.#k, pid));
-          if (code === -1) {
-            setTimeout(() => void pollRpc(), 16);
-            return;
+        const finish = (code: number) => {
+          if (settled) return;
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
           }
-          const out2 = await asy(this.#mod.readStdout(this.#k, pid));
-          const err2 = await asy(this.#mod.readStderr(this.#k, pid));
-          if (out2) controller.enqueue(out2);
-          if (err2) controller.enqueue(err2);
-          controller.close();
-          exitResolve(code);
+          finishExit(code);
+        };
+        halt = () => finish(137);
+        const alive = () => !settled && !this.#closed;
+        const pollRpc = async () => {
+          if (!alive()) return finish(137);
+          try {
+            const out = await asy(this.#mod.readStdout(this.#k, pid));
+            const err = await asy(this.#mod.readStderr(this.#k, pid));
+            if (!alive()) return finish(137);
+            if (out) controller.enqueue(out);
+            if (err) controller.enqueue(err);
+            const code = await asy(this.#mod.wait(this.#k, pid));
+            if (!alive()) return finish(137);
+            if (code === -1) {
+              this.#later(16, () => void pollRpc());
+              return;
+            }
+            const out2 = await asy(this.#mod.readStdout(this.#k, pid));
+            const err2 = await asy(this.#mod.readStderr(this.#k, pid));
+            if (!alive()) return finish(137);
+            if (out2) controller.enqueue(out2);
+            if (err2) controller.enqueue(err2);
+            finish(code);
+          } catch (error) {
+            if (!this.#closed) this.#emit('error', error instanceof Error ? error : new Error(String(error)));
+            finish(this.#closed ? 137 : 1);
+          }
         };
         const pollSab = () => {
+          if (!alive()) return finish(137);
           const out = outRing!.readString();
           const err = errRing!.readString();
           if (out) controller.enqueue(out);
           if (err) controller.enqueue(err);
           if (!outRing!.closed || !errRing!.closed) {
-            setTimeout(pollSab, 8);
+            this.#later(8, pollSab);
             return;
           }
           const out2 = outRing!.readString();
           const err2 = errRing!.readString();
           if (out2) controller.enqueue(out2);
           if (err2) controller.enqueue(err2);
-          controller.close();
-          exitResolve(outRing!.exitCode);
+          finish(outRing!.exitCode);
         };
         queueMicrotask(() => (outRing ? pollSab() : void pollRpc()));
       },
     });
 
     if (opts.timeoutMs && opts.timeoutMs > 0) {
-      const timer = setTimeout(() => {
+      this.#later(opts.timeoutMs, () => {
         void this.#killWithChildren(pid);
-      }, opts.timeoutMs);
-      void exit.then(() => clearTimeout(timer));
+      });
     }
+    this.#adopt(exit, () => halt());
     return {
       pid,
       exit,
@@ -919,9 +987,10 @@ export class NodeBrowser {
       }
       try {
         if (isTextFile(filePath)) {
-          const text = await this.fs.readFile(filePath, 'utf8');
+          const type = contentTypeFor(filePath);
+          const text = this.#decorateHtml(await this.fs.readFile(filePath, 'utf8'), type);
           res.writeHead(200, {
-            'Content-Type': contentTypeFor(filePath),
+            'Content-Type': type,
             'Cross-Origin-Resource-Policy': 'same-origin',
             'Cross-Origin-Embedder-Policy': 'require-corp',
             ...opts?.headers,
@@ -946,7 +1015,7 @@ export class NodeBrowser {
         // SPA fallback → index.html
         try {
           const idx = `${root}/${indexName}`.replace(/\/+/g, '/');
-          const html = await this.fs.readFile(idx, 'utf8');
+          const html = this.#decorateHtml(await this.fs.readFile(idx, 'utf8'), 'text/html; charset=utf-8');
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(html);
         } catch {
@@ -955,14 +1024,16 @@ export class NodeBrowser {
         }
       }
     });
-    const url = `${this.#previewBase}/${port}/`;
-    this.#emit('server-ready', port, url);
-    return url;
+    this.#noteServer(port);
+    return this.#previewUrl(port);
   }
 
   /** Stop serving a virtual port (dev server restart). */
   closePort(port: number): void {
-    this.#http.close(port);
+    const p = port | 0;
+    const open = this.#http.has(p);
+    this.#http.close(p);
+    if (open) this.#notePortClosed(p);
   }
 
   /** Bundle a VFS entry with esbuild-wasm; optionally serve `serveRoot` on `servePort`. */
@@ -986,9 +1057,10 @@ export class NodeBrowser {
     return handleAgentRpc(this, req);
   }
 
-  on<K extends keyof BrowserNodeEventMap>(event: K, fn: Listener<K>): void {
+  on<K extends keyof BrowserNodeEventMap>(event: K, fn: Listener<K>): () => void {
     if (!this.#listeners.has(event)) this.#listeners.set(event, new Set());
     this.#listeners.get(event)!.add(fn);
+    return () => this.off(event, fn);
   }
 
   off<K extends keyof BrowserNodeEventMap>(event: K, fn: Listener<K>): void {
@@ -996,8 +1068,20 @@ export class NodeBrowser {
   }
 
   #emit<K extends keyof BrowserNodeEventMap>(event: K, ...args: BrowserNodeEventMap[K]): void {
-    for (const fn of this.#listeners.get(event) ?? []) {
-      (fn as Function)(...args);
+    for (const fn of [...(this.#listeners.get(event) ?? [])]) {
+      try {
+        (fn as Function)(...args);
+      } catch (error) {
+        if (event === 'error') continue;
+        const err = error instanceof Error ? error : new Error(String(error));
+        for (const report of this.#listeners.get('error') ?? []) {
+          try {
+            (report as Function)(err);
+          } catch {
+            /* listener failed */
+          }
+        }
+      }
     }
   }
 
@@ -1093,8 +1177,10 @@ export class NodeBrowser {
             body: req.body,
           });
           const out = await Promise.resolve(outMaybe);
-          res.writeHead(out.status || 200, out.headers || {});
-          res.end(out.body || '');
+          const headers = out.headers || {};
+          const type = headers['Content-Type'] || headers['content-type'] || '';
+          res.writeHead(out.status || 200, headers);
+          res.end(this.#decorateHtml(out.body || '', type));
           return;
         } catch (e) {
           res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -1128,8 +1214,10 @@ export class NodeBrowser {
           headers?: Record<string, string>;
           body?: string;
         };
-        res.writeHead(parsed.status || 200, parsed.headers || {});
-        res.end(parsed.body || '');
+        const headers = parsed.headers || {};
+        const type = headers['Content-Type'] || headers['content-type'] || '';
+        res.writeHead(parsed.status || 200, headers);
+        res.end(this.#decorateHtml(parsed.body || '', type));
       } catch {
         res.writeHead(500, { 'Content-Type': 'text/plain' });
         res.end(raw);
@@ -1137,11 +1225,49 @@ export class NodeBrowser {
     });
   }
 
+  /** Script URL inserted into HTML the host preview serves. */
+  setPreviewScript(
+    scriptSrc: string,
+    options?: { type?: 'module' | 'importmap'; defer?: boolean; async?: boolean },
+  ): void {
+    this.#previewScript = { src: scriptSrc, type: options?.type, defer: options?.defer, async: options?.async };
+  }
+
+  /** When set, HTML previews also include a small error reporter for the parent page. */
+  setForwardPreviewErrors(mode: boolean | 'exceptions-only'): void {
+    this.#forwardPreviewErrors = mode;
+  }
+
+  /** Emit an `error` event. Listeners that throw are isolated. */
+  emitError(error: Error): void {
+    this.#emit('error', error);
+  }
+
   teardown(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const timer of this.#timers) clearTimeout(timer);
+    this.#timers.clear();
+    const sessions = [...this.#sessions];
+    this.#sessions.clear();
+    for (const session of sessions) {
+      try {
+        session.stop();
+      } catch {
+        /* stream already closed */
+      }
+    }
+    this.#opfsFlusher?.dispose();
+    this.#opfsFlusher = null;
     this.#detachSw?.();
     this.#detachSw = null;
-    for (const p of this.#http.ports()) this.#http.close(p);
-    void asy(this.#mod.destroy(this.#k));
+    for (const port of this.#http.ports()) this.closePort(port);
+    this.#listeners.clear();
+    this.#releaseHooks();
+    const kernel = this.#k;
+    queueMicrotask(() => {
+      void asy(this.#mod.destroy(kernel)).catch(() => {});
+    });
   }
 
   /** Virtual listen ports currently registered on the host HttpBridge. */
@@ -1154,115 +1280,109 @@ export class NodeBrowser {
     return this.#killWithChildren(pid);
   }
 
-  async #spawnHostNpm(
-    req: { action: string; specs: string[]; saveDev: boolean; script?: string },
-    cwd: string,
-  ): Promise<BrowserNodeProcess> {
+  /** Host-side process (npm, Tailwind). `teardown()` closes the stream and resolves `exit`. */
+  #shellProcess(body: (log: (text: string) => void, stopped: () => boolean) => Promise<number>): BrowserNodeProcess {
     let exitResolve!: (code: number) => void;
-    const exit = new Promise<number>((r) => {
-      exitResolve = r;
+    let settled = false;
+    const exit = new Promise<number>((resolve) => {
+      exitResolve = resolve;
     });
-    const self = this;
+    let halt = () => {};
     const output = new ReadableStream<string>({
-      start(controller) {
-        const log = (text: string) => {
-          if (text) controller.enqueue(text);
-        };
-        void (async () => {
+      start: (controller) => {
+        const finish = (code: number) => {
+          if (settled) return;
+          settled = true;
           try {
-            if (req.action === 'help') {
-              log('npm: in-tab supports install, uninstall, ls, and run\n');
-              exitResolve(1);
-              return;
-            }
-            if (req.action === 'run') {
-              if (!req.script) throw new Error('npm run: missing script name');
-              log(`npm run ${req.script}\n`);
-              const child = await self.runScript(req.script, cwd);
-              const reader = child.output.getReader();
-              while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                if (value) controller.enqueue(value);
-              }
-              exitResolve(await child.exit);
-              return;
-            }
-            if (req.action === 'ls') {
-              log('npm ls\n');
-              const rows = await listInstalled(self, cwd);
-              log((rows.length ? rows.map((r) => `${r.name}@${r.version}`).join('\n') : '(empty)') + '\n');
-              exitResolve(0);
-              return;
-            }
-            if (req.action === 'uninstall') {
-              log(`npm uninstall ${req.specs.join(' ')}\n`);
-              const n = await uninstallPackages(self, req.specs, cwd);
-              log(`removed ${n} package${n === 1 ? '' : 's'}\n`);
-              exitResolve(0);
-              return;
-            }
-            log(req.specs.length ? `npm install ${req.specs.join(' ')}\n` : 'npm install\n');
-            await self.install(req.specs, cwd, {
-              saveDev: req.saveDev,
-              onLog: (line) => log(line),
-            });
-            exitResolve(0);
-          } catch (e) {
-            log(String(e instanceof Error ? e.message : e) + '\n');
-            exitResolve(1);
-          } finally {
             controller.close();
+          } catch {
+            /* already closed */
           }
-        })();
+          exitResolve(code);
+        };
+        halt = () => finish(137);
+        const log = (text: string) => {
+          if (!settled && text) controller.enqueue(text);
+        };
+        void body(log, () => settled || this.#closed).then(
+          (code) => finish(code),
+          (error: unknown) => {
+            log(`${error instanceof Error ? error.message : String(error)}\n`);
+            finish(this.#closed ? 137 : 1);
+          },
+        );
       },
     });
+    this.#adopt(exit, () => halt());
     return {
       pid: 0,
       exit,
       output,
-      kill: () => undefined,
-      write: () => undefined,
+      kill() {},
+      write() {},
     };
   }
 
-  async #spawnHostTailwind(
-    args: string[],
+  #spawnHostNpm(
+    req: { action: string; specs: string[]; saveDev: boolean; script?: string },
     cwd: string,
   ): Promise<BrowserNodeProcess> {
-    let exitResolve!: (code: number) => void;
-    const exit = new Promise<number>((r) => {
-      exitResolve = r;
-    });
     const self = this;
-    const output = new ReadableStream<string>({
-      start(controller) {
-        const log = (text: string) => {
-          if (text) controller.enqueue(text);
-        };
-        void (async () => {
-          try {
-            log('≈ tailwindcss in-tab (npm packages + @tailwindcss/browser)\n\n');
-            const r = await compileTailwind(self, cwd, args);
-            log(`Done: ${r.input} → ${r.output}\n`);
-            if (!r.engine) log('npm WARN @tailwindcss/browser missing — preview utilities may be empty\n');
-            exitResolve(0);
-          } catch (e) {
-            log(String(e instanceof Error ? e.message : e) + '\n');
-            exitResolve(1);
-          } finally {
-            controller.close();
+    return Promise.resolve(
+      this.#shellProcess(async (log, stopped) => {
+        if (stopped()) return 137;
+        if (req.action === 'help') {
+          log('npm: in-tab supports install, uninstall, ls, and run\n');
+          return 1;
+        }
+        if (req.action === 'run') {
+          if (!req.script) throw new Error('npm run: missing script name');
+          log(`npm run ${req.script}\n`);
+          const child = await self.runScript(req.script, cwd);
+          const reader = child.output.getReader();
+          while (true) {
+            if (stopped()) return 137;
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) log(value);
           }
-        })();
-      },
-    });
-    return {
-      pid: 0,
-      exit,
-      output,
-      kill: () => undefined,
-      write: () => undefined,
-    };
+          return stopped() ? 137 : await child.exit;
+        }
+        if (req.action === 'ls') {
+          log('npm ls\n');
+          const rows = await listInstalled(self, cwd);
+          log((rows.length ? rows.map((r) => `${r.name}@${r.version}`).join('\n') : '(empty)') + '\n');
+          return 0;
+        }
+        if (req.action === 'uninstall') {
+          log(`npm uninstall ${req.specs.join(' ')}\n`);
+          const n = await uninstallPackages(self, req.specs, cwd);
+          log(`removed ${n} package${n === 1 ? '' : 's'}\n`);
+          return 0;
+        }
+        log(req.specs.length ? `npm install ${req.specs.join(' ')}\n` : 'npm install\n');
+        await self.install(req.specs, cwd, {
+          saveDev: req.saveDev,
+          onLog: (line) => log(line),
+        });
+        return stopped() ? 137 : 0;
+      }),
+    );
+  }
+
+  #spawnHostTailwind(args: string[], cwd: string): Promise<BrowserNodeProcess> {
+    const self = this;
+    return Promise.resolve(
+      this.#shellProcess(async (log, stopped) => {
+        if (stopped()) return 137;
+        log('≈ tailwindcss in-tab (npm packages + @tailwindcss/browser)\n\n');
+        const result = await compileTailwind(self, cwd, args);
+        if (stopped()) return 137;
+        log(`Done: ${result.input} → ${result.output}\n`);
+        if (!result.engine) log('npm WARN @tailwindcss/browser missing — preview utilities may be empty\n');
+        return 0;
+      }),
+    );
   }
 
   async #completePid(pid: number, code: number): Promise<void> {
@@ -1319,17 +1439,103 @@ export class NodeBrowser {
   }
 
   async #killWithChildren(pid: number): Promise<boolean> {
+    if (this.#closed) return false;
     for (const c of [...(this.#spawnChildren.get(pid) ?? [])]) {
       await this.#killWithChildren(c);
     }
     this.#spawnChildren.delete(pid);
-    for (const port of this.#portsByPid.get(pid) ?? []) this.#http.close(port);
+    for (const port of this.#portsByPid.get(pid) ?? []) this.closePort(port);
     this.#portsByPid.delete(pid);
     try {
       return await asy(this.#mod.kill(this.#k, pid));
     } catch {
       return false;
     }
+  }
+
+  #assertOpen(): void {
+    if (this.#closed) throw new Error('NodeBrowser instance was torn down');
+  }
+
+  #later(ms: number, fn: () => void): void {
+    if (this.#closed) return;
+    const timer = setTimeout(() => {
+      this.#timers.delete(timer);
+      if (this.#closed) return;
+      fn();
+    }, ms);
+    this.#timers.add(timer);
+  }
+
+  #adopt(exit: Promise<number>, stop: () => void): void {
+    const session = { stop };
+    this.#sessions.add(session);
+    const drop = () => this.#sessions.delete(session);
+    void exit.then(drop, drop);
+  }
+
+  #previewUrl(port: number): string {
+    return `${this.#previewBase}/${port | 0}/`;
+  }
+
+  #noteServer(port: number): void {
+    if (this.#closed) return;
+    const p = port | 0;
+    const url = this.#previewUrl(p);
+    if (!this.#openPorts.has(p)) {
+      this.#openPorts.add(p);
+      this.#emit('port', p, 'open', url);
+    }
+    this.#emit('server-ready', p, url);
+  }
+
+  #notePortClosed(port: number): void {
+    const p = port | 0;
+    if (!this.#openPorts.delete(p)) return;
+    this.#emit('port', p, 'close', this.#previewUrl(p));
+  }
+
+  #releaseHooks(): void {
+    const g = globalThis as {
+      __bn_hook_owner?: object;
+      __bn_on_server_ready?: (port: number) => void;
+      __bn_on_http_listen?: (port: number) => void;
+      __bn_on_tool?: (tool: string, cwd: string, mode: string) => void;
+      __bn_on_npm?: (cwd: string, action: string, payload: string, pid: number) => void;
+      __bn_on_npx?: (pkg: string, rest: string, cwd: string, pid: number) => void;
+    };
+    if (g.__bn_hook_owner !== this) return;
+    g.__bn_on_server_ready = undefined;
+    g.__bn_on_http_listen = undefined;
+    g.__bn_on_tool = undefined;
+    g.__bn_on_npm = undefined;
+    g.__bn_on_npx = undefined;
+    g.__bn_hook_owner = undefined;
+  }
+
+  #decorateHtml(body: string, contentType: string): string {
+    const type = contentType.toLowerCase();
+    const html =
+      type.includes('text/html') ||
+      type.includes('application/xhtml') ||
+      (!type && /^\s*<(!doctype|html)\b/i.test(body));
+    if (!html) return body;
+    let extra = '';
+    if (this.#previewScript) {
+      const script = this.#previewScript;
+      const attrs = [`src=${JSON.stringify(script.src)}`];
+      if (script.type) attrs.push(`type=${JSON.stringify(script.type)}`);
+      if (script.defer) attrs.push('defer');
+      if (script.async) attrs.push('async');
+      extra += `<script ${attrs.join(' ')}></script>`;
+    }
+    if (this.#forwardPreviewErrors) {
+      const consoleErrors = this.#forwardPreviewErrors === 'exceptions-only' ? 'false' : 'true';
+      extra += `<script>(function(){function send(type,message,stack,args){try{parent.postMessage({source:'nodebrowser-preview',type:type,message:String(message||''),stack:stack||'',args:args||[],pathname:location.pathname,search:location.search,hash:location.hash},'*');}catch(e){}}window.addEventListener('error',function(e){send('uncaught-exception',e.message,e.error&&e.error.stack);});window.addEventListener('unhandledrejection',function(e){var reason=e.reason;send('unhandled-rejection',reason&&reason.message?reason.message:reason,reason&&reason.stack);});if(${consoleErrors}){var orig=console.error;console.error=function(){var args=[].slice.call(arguments);send('console-error',args.map(String).join(' '),(new Error()).stack,args);return orig.apply(console,arguments);};}})();</script>`;
+    }
+    if (!extra) return body;
+    if (body.includes('</head>')) return body.replace('</head>', `${extra}</head>`);
+    return extra + body;
   }
 }
 
@@ -1505,59 +1711,3 @@ export { sabStdioAvailable, SabStdioRing } from '../io/sab-stdio.js';
 export { assertAllowedFetchUrl } from '../net/egress.js';
 /** @deprecated Use `NodeBrowser` — kept for older snippets */
 export const BrowserNode = NodeBrowser;
-
-/**
- * WebContainer-shaped names over the same C++/WASM kernel.
- * Not StackBlitz WebContainers — method names only (PLAN Phase 41).
- */
-export class WebContainer {
-  readonly #bn: NodeBrowser;
-
-  private constructor(bn: NodeBrowser) {
-    this.#bn = bn;
-  }
-
-  static async boot(
-    options?: Parameters<typeof NodeBrowser.boot>[0],
-  ): Promise<WebContainer> {
-    const bn = await NodeBrowser.boot(options);
-    return new WebContainer(bn);
-  }
-
-  get fs() {
-    return this.#bn.fs;
-  }
-
-  get runtime() {
-    return this.#bn.runtime;
-  }
-
-  get worker() {
-    return this.#bn.worker;
-  }
-
-  get sabStdio() {
-    return this.#bn.sabStdio;
-  }
-
-  mount(tree: FileSystemTree, mountPoint?: string) {
-    return this.#bn.mount(tree, mountPoint);
-  }
-
-  spawn(cmd: string, args?: string[], opts?: SpawnOptions) {
-    return this.#bn.spawn(cmd, args ?? [], opts);
-  }
-
-  on(...args: Parameters<NodeBrowser['on']>) {
-    this.#bn.on(...args);
-  }
-
-  teardown() {
-    this.#bn.teardown();
-  }
-
-  /** Underlying NodeBrowser (install, viteDev, importZip, …). */
-  get instance() {
-    return this.#bn;
-  }
-}
