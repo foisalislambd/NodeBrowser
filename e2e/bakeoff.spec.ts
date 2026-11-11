@@ -20,8 +20,10 @@ test.describe('NodeBrowser bake-off', () => {
     const isolated = await page.evaluate(() => !!globalThis.crossOriginIsolated);
     const status = await page.locator('#status').textContent();
 
-    await page.locator('#term-input').fill('echo bakeoff-ok');
-    await page.locator('#term-input').press('Enter');
+    // The visible terminal is xterm. #term-input is hidden.
+    await page.locator('#term').click();
+    await page.keyboard.type('echo bakeoff-ok');
+    await page.keyboard.press('Enter');
 
     const t1 = Date.now();
     await expect(page.locator('#term')).toContainText('bakeoff-ok', { timeout: 30_000 });

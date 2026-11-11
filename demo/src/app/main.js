@@ -564,7 +564,8 @@ async function boot() {
   setEditorPath(openPath);
   setCwd(projectCwd);
   await refreshTree();
-  $('status').textContent = 'Ready';
+  const runtimeLabel = bn.runtime === 'wasm' ? 'wasm' : bn.runtime;
+  $('status').textContent = `Ready · ${runtimeLabel}${bn.worker ? ' worker' : ''}`;
   const sr = $('set-runtime');
   if (sr) sr.textContent = bn.runtime + (bn.guestEngine === 'v8' ? ' · v8' : '');
   const sw = $('set-worker');
