@@ -35,13 +35,7 @@ jobs:
         run: npm run lint:docs
 
       - name: Install CMake / Ninja / g++
-        run: |
-          for attempt in 1 2 3 4 5; do
-            sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ && exit 0
-            echo "apt attempt ${attempt} failed; retrying"
-            sleep $((attempt * 5))
-          done
-          exit 1
+        run: bash scripts/ci-install-build-tools.sh
 
       - name: Setup Emscripten
         uses: emscripten-core/setup-emsdk@v16
@@ -76,7 +70,7 @@ jobs:
 
       - name: Playwright bake-off (Chromium + WASM)
         run: |
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
           npm run test:e2e
 
   native:
@@ -89,13 +83,7 @@ jobs:
           submodules: recursive
 
       - name: Install build tools
-        run: |
-          for attempt in 1 2 3 4 5; do
-            sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ && exit 0
-            echo "apt attempt ${attempt} failed; retrying"
-            sleep $((attempt * 5))
-          done
-          exit 1
+        run: bash scripts/ci-install-build-tools.sh
 
       - name: Setup Node
         uses: actions/setup-node@v7
