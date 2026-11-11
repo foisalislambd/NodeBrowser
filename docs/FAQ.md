@@ -24,7 +24,9 @@ Host templates still exist (`npm run dev:vite` / `dev:next`) for comparison.
 
 ## Is this a drop-in for StackBlitz WebContainers?
 
-No. `WebContainer` from `@foisal/nodebrowser` / `@foisal/nodebrowser/compat` is a **name shim** over the same C++ kernel (`boot` / `fs` / `mount` / `spawn` / `on` / `teardown`). Extra APIs live on `instance` (`install`, `viteDev`, `importZip`, …). See [`ROADMAP.md`](../ROADMAP.md).
+The public tutorial calls work: `WebContainer.boot`, `mount` of a `FileSystemTree`, `spawn` with `output` / `input` / `exit`, the filesystem methods used by those tutorials, `on('server-ready' | 'port' | 'error')`, `export`, and `teardown`. Import them from `@foisal/nodebrowser/compat`.
+
+It is not a full Node replacement, and `export({ format: 'binary' })` is a zip this project can mount, not a proprietary snapshot. Pages can boot with `coep: 'none'` when COOP/COEP headers are absent (stdio polls; no SharedArrayBuffer). Details: [MIGRATING.md](./MIGRATING.md).
 
 ## Is this a security sandbox?
 

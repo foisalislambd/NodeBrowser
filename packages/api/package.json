@@ -24,7 +24,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
     "clean": "rm -rf dist",
-    "test": "npm run build && node ./test/conformance.mjs",
+    "test": "npm run build && node ./test/conformance.mjs && node ./test/webcontainer-compat.mjs",
     "docs": "npx --yes typedoc --options typedoc.json"
   },
   "dependencies": {

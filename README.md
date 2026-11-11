@@ -109,7 +109,7 @@ npm package blurb (what the registry shows): [`packages/api/README.md`](./packag
 | Lockfile pins (npm, yarn.lock, pnpm-lock) installed via npm | ✅ |
 | `.npmrc` registry + token, peer install, workspaces | ✅ |
 | OPFS persist `/home` | ✅ |
-| `WebContainer` name shim | ✅ |
+| `WebContainer` public API subset (`boot` / `mount` / `spawn` / `fs` / events / `export`) | ✅ |
 | Native `.node` addons, bit-identical Node, full Vite 8 / `next start` | ❌ |
 | Raw TCP to the public internet from guest | ❌ (virtual HTTP / allowlisted fetch) |
 

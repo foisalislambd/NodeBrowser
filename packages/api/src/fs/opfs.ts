@@ -180,6 +180,11 @@ export function createOpfsFlusher(fs: OpfsFs, debounceMs = 400) {
       }
       await run();
     },
+    dispose() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      dirty.clear();
+    },
     async clearHome() {
       const root = await getRoot();
       if (!root) return;

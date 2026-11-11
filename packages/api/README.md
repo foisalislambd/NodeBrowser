@@ -176,21 +176,24 @@ bn.teardown();
 
 **Events:** `server-ready`, `install-progress`, `fs-change`, `http-log`, `error`.
 
-### WebContainer name shim
+### WebContainer compatibility
 
-Same kernel, StackBlitz-shaped names. Extra APIs (`install`, `viteDev`, `importZip`, …) live on `.instance`.
+`@foisal/nodebrowser/compat` covers the public tutorial calls (`boot`, `mount`, `spawn`, `fs`, `on`, `export`, `teardown`). Paths are relative to `workdir` (`/home/project` unless `workdirName` is set). `coep: 'none'` boots without SharedArrayBuffer. Extra APIs stay on `.instance`.
 
 ```ts
 import { WebContainer } from '@foisal/nodebrowser/compat';
-// or: import { WebContainer } from '@foisal/nodebrowser';
 
 const wc = await WebContainer.boot();
-await wc.mount({ /* FileSystemTree */ });
-await wc.spawn('node', ['app.js']);
-wc.instance.install(['leftpad'], '/home/project');
+await wc.mount({
+  'index.js': { file: { contents: "console.log('ok')\n" } },
+});
+const proc = await wc.spawn('node', ['index.js']);
+proc.output.pipeTo(new WritableStream({ write(chunk) { console.log(chunk); } }));
+await proc.exit;
+wc.teardown();
 ```
 
-This is **not** a drop-in for `@webcontainer/api`. Method names overlap; behavior and coverage differ.
+What is compatible, and what is not, is [docs/MIGRATING.md](https://github.com/foisalislambd/NodeBrowser/blob/main/docs/MIGRATING.md).
 
 ---
 
