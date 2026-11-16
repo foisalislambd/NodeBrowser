@@ -1,5 +1,6 @@
 import type { NodeBrowser } from '../host/node-browser.js';
 import { binRelTarget, makeBinShim, parseBinField } from './bin.js';
+import { readNpmTarballCache, writeNpmTarballCache } from '../fs/opfs.js';
 import { assertAllowedFetchUrl } from '../net/egress.js';
 import { parseTar } from '../fs/zip.js';
 import { readResolvedPins } from './lockfiles.js';
@@ -42,6 +43,12 @@ type RegistryMeta = {
 const memoryCache = new Map<string, Uint8Array>();
 let npmCacheHits = 0;
 let npmCacheMisses = 0;
+let lastTarballFromCache = false;
+
+/** True when the most recent tarball read did not use the network. */
+export function lastNpmFetchFromCache(): boolean {
+  return lastTarballFromCache;
+}
 
 export function npmCacheStats(): { hits: number; misses: number } {
   return { hits: npmCacheHits, misses: npmCacheMisses };
@@ -372,7 +379,9 @@ async function installOne(
       phase: 'fetch',
       name,
       version: verMeta.version,
-      message: `http fetch GET 200 ${name}@${verMeta.version}`,
+      message: lastTarballFromCache
+        ? `cache hit ${name}@${verMeta.version}`
+        : `http fetch GET 200 ${name}@${verMeta.version}`,
     });
     onProgress?.({ phase: 'extract', name, version: verMeta.version });
     await extractTarball(bn, buf, destRoot);
@@ -450,7 +459,7 @@ async function extractTarball(bn: NodeBrowser, buf: Uint8Array, destRoot: string
   const tar = await gunzip(buf);
   if (typeof bn.extractTar === 'function') {
     await bn.extractTar(tar, destRoot);
-    await hoistPackagePrefix(bn, destRoot);
+    await hoistNpmPackageRoot(bn, destRoot);
     return;
   }
   const files = parseTar(tar);
@@ -459,18 +468,19 @@ async function extractTarball(bn: NodeBrowser, buf: Uint8Array, destRoot: string
     if (!rel || rel.endsWith('/')) continue;
     await bn.fs.writeFile(joinPath(destRoot, rel), content);
   }
+  await hoistNpmPackageRoot(bn, destRoot);
 }
 
-async function hoistPackagePrefix(bn: NodeBrowser, destRoot: string): Promise<void> {
-  const inner = joinPath(destRoot, 'package');
+async function liftChildren(bn: NodeBrowser, destRoot: string, inner: string): Promise<boolean> {
   let names: string[] = [];
   try {
     names = await bn.fs.readdir(inner);
   } catch {
-    return;
+    return false;
   }
-  for (const n of names) {
-    if (!n || n === '.' || n === '..') continue;
+  const real = names.filter((n) => n && n !== '.' && n !== '..');
+  if (!real.length) return false;
+  for (const n of real) {
     const from = joinPath(inner, n);
     const to = joinPath(destRoot, n);
     try {
@@ -485,6 +495,17 @@ async function hoistPackagePrefix(bn: NodeBrowser, destRoot: string): Promise<vo
   } catch {
     /* ignore */
   }
+  return true;
+}
+
+/** Move npm's `package/` prefix up, then a single nested folder that is the real package root. */
+export async function hoistNpmPackageRoot(bn: NodeBrowser, destRoot: string): Promise<void> {
+  await liftChildren(bn, destRoot, joinPath(destRoot, 'package'));
+  if (await readPkgVersion(bn, destRoot)) return;
+  const base = destRoot.split('/').filter(Boolean).pop() ?? '';
+  if (!base || base.startsWith('@')) return;
+  const nested = joinPath(destRoot, base);
+  if (await readPkgVersion(bn, nested)) await liftChildren(bn, destRoot, nested);
 }
 
 async function gunzip(data: Uint8Array): Promise<Uint8Array> {
@@ -672,11 +693,21 @@ async function fetchMeta(name: string): Promise<RegistryMeta> {
   return meta;
 }
 
-async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> {
+export async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> {
   assertAllowedFetchUrl(url, { extraHosts: npmEgressHosts() });
+  lastTarballFromCache = false;
   if (memoryCache.has(cacheKey)) {
     npmCacheHits++;
+    lastTarballFromCache = true;
     return memoryCache.get(cacheKey)!;
+  }
+
+  const persisted = await readNpmTarballCache(cacheKey);
+  if (persisted) {
+    npmCacheHits++;
+    lastTarballFromCache = true;
+    memoryCache.set(cacheKey, persisted);
+    return persisted;
   }
 
   if (typeof caches !== 'undefined') {
@@ -686,7 +717,9 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
       if (hit) {
         const ab = new Uint8Array(await hit.arrayBuffer());
         npmCacheHits++;
+        lastTarballFromCache = true;
         memoryCache.set(cacheKey, ab);
+        void writeNpmTarballCache(cacheKey, ab);
         return ab;
       }
     } catch {
@@ -699,6 +732,7 @@ async function fetchTarball(url: string, cacheKey: string): Promise<Uint8Array> 
   if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
   const ab = new Uint8Array(await res.arrayBuffer());
   memoryCache.set(cacheKey, ab);
+  void writeNpmTarballCache(cacheKey, ab);
   if (typeof caches !== 'undefined') {
     try {
       const cache = await caches.open('browsernode-npm-v1');

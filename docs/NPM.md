@@ -23,7 +23,7 @@ The **first positional** is the subcommand. `npm install ls` installs a package 
 ## What install does
 
 1. Resolve versions from `https://registry.npmjs.org` (allowlisted fetch).
-2. Fetch tarballs (memory cache, parallel deps).
+2. Fetch tarballs (memory, then OPFS or a temp-dir cache, then the network; parallel deps). A second install of the same integrity key does not hit the registry.
 3. Gunzip + kernel tar extract; hoist the npm `package/` prefix.
 4. Write `node_modules/<name>/`, `.bin` shims, lockfile, `package.json`.
 5. Skip **native** optional/platform packages (cannot run `.node` in WASM): `esbuild`, `fsevents`, `lightningcss-*`, `@tailwindcss/oxide*`, `@esbuild/*`, `@swc/core-*`, … JS wrappers may still be present.

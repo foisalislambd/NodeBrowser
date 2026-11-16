@@ -12,6 +12,13 @@ export type V8Io = {
   stderr: string;
   timers: number;
   servers: number;
+  /** Guest Promise / nextTick callbacks that have not run yet. */
+  pending?: number;
+};
+
+export type V8GuestHooks = {
+  /** Browser worker: tell the page a virtual port is listening. */
+  onServer?: (port: number) => void;
 };
 
 export type V8RunResult = {
@@ -20,6 +27,8 @@ export type V8RunResult = {
   stderr: string;
   /** Keeps growing after return while guest timers or servers are still live. */
   io: V8Io;
+  /** Stop a worker-backed guest. Same-thread runs omit this. */
+  stop?: () => void;
 };
 
 type HttpHandler = (req: {
@@ -116,6 +125,21 @@ function httpHandlers(): Map<number, HttpHandler> {
   return g.__bn_wasm_http_handlers;
 }
 
+/** HTTP dispatch for a guest that registered its server in this realm. */
+export function dispatchGuestHttp(
+  port: number,
+  req: { method?: string; url?: string; headers?: Record<string, string>; body?: string },
+): { status: number; headers: Record<string, string>; body: string } {
+  const handler = httpHandlers().get(port | 0);
+  if (!handler) return { status: 502, headers: {}, body: 'no listener' };
+  return handler({
+    method: String(req.method || 'GET'),
+    url: String(req.url || '/'),
+    headers: req.headers || {},
+    body: req.body == null ? '' : String(req.body),
+  });
+}
+
 function joinPath(dir: string, name: string): string {
   if (!name) return dir || '/';
   if (name.startsWith('/')) return name;
@@ -179,7 +203,8 @@ export function runNodeOnV8(
   args: string[],
   cwd: string,
   env: Record<string, string> | undefined,
-  io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0 },
+  io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0, pending: 0 },
+  hooks?: V8GuestHooks,
 ): V8RunResult {
   const work = cwd && cwd !== '' ? cwd : '/';
 
@@ -252,6 +277,9 @@ export function runNodeOnV8(
     readlink: (path: string) => (mod.readlink ? sync(mod.readlink(k, String(path))) : null),
     chmod: () => true,
     utimes: () => true,
+    asyncPending: (d: number) => {
+      io.pending = Math.max(0, (io.pending ?? 0) + (Number(d) || 0));
+    },
     statJson: (path: string) => {
       const p = String(path);
       const kind = mod.lstatKind ? sync(mod.lstatKind(k, p)) : null;
@@ -272,12 +300,19 @@ export function runNodeOnV8(
       const p = port | 0;
       io.servers += 1;
       httpHandlers().set(p, (req) => invokeGuest(handler, req));
-      const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
-      notify.__bn_on_server_ready?.(p);
+      if (hooks?.onServer) hooks.onServer(p);
+      else {
+        const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
+        notify.__bn_on_server_ready?.(p);
+      }
     },
     serverReady: (port: number) => {
-      const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
-      notify.__bn_on_server_ready?.(port | 0);
+      const p = port | 0;
+      if (hooks?.onServer) hooks.onServer(p);
+      else {
+        const notify = globalThis as unknown as { __bn_on_server_ready?: (port: number) => void };
+        notify.__bn_on_server_ready?.(p);
+      }
     },
     httpDispatch: (port: number, method: string, path: string, headersJson: string, body: string) => {
       const handler = httpHandlers().get(port | 0);

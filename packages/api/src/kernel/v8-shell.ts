@@ -670,7 +670,7 @@ export function runShellOnV8(
   if (source.endsWith('&')) source = source.slice(0, -1).trim();
   const work = cwd && cwd !== '' ? cwd : '/';
   if (!scriptIsKnown(mod, k, work, source)) return null;
-  const io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0 };
+  const io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0, pending: 0 };
   const scope = { ...(env || {}) };
   const chunks = splitList(source);
   const result: V8RunResult = { code: 0, stdout: '', stderr: '', io };

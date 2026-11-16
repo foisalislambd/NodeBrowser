@@ -27,7 +27,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `string_decoder` | ok (subset) | |
 | `timers` / `timers/promises` | ok (subset) | |
 | `perf_hooks` | ok (subset) | performance.now + no-op PerformanceObserver |
-| `async_hooks` | stub | AsyncLocalStorage + createHook no-op |
+| `async_hooks` | ok (subset) | AsyncLocalStorage follows Promise, timers, and nextTick; createHook stores callbacks |
 | `diagnostics_channel` | stub | channel subscribe/publish |
 | `worker_threads` | ok (subset) | Cooperative `Worker` (same thread); not OS threads / SAB |
 | `next/cache` / `next/headers` | stub | revalidate/cookies no-ops when package not installed |
@@ -55,7 +55,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 ## Next.js checklist
 
 - [x] broader `fs` + `module.createRequire`
-- [x] `async_hooks` / `diagnostics_channel` stubs
+- [x] `async_hooks` AsyncLocalStorage (Promise, timers, nextTick) / `diagnostics_channel` stubs
 - [x] `next/cache` / `next/headers` stubs
 - [x] `app/api/*/route.js` static JSON subset
 - [x] OPFS persist (`boot({ persist: true })`) for `/home`

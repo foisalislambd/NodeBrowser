@@ -300,3 +300,91 @@ function buildUstar(files: { path: string; data: Uint8Array }[]): Uint8Array {
 export function opfsAvailable(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory;
 }
+
+const NPM_CACHE = 'nodebrowser-npm-cache';
+
+function npmCacheFileName(key: string): string {
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) hash = ((hash * 33) ^ key.charCodeAt(i)) >>> 0;
+  const safe = key.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 64);
+  return `${hash.toString(16)}-${safe}`;
+}
+
+async function opfsNpmCacheDir(): Promise<FileSystemDirectoryHandle | null> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return null;
+  try {
+    const root = await navigator.storage.getDirectory();
+    return await root.getDirectoryHandle(NPM_CACHE, { create: true });
+  } catch {
+    return null;
+  }
+}
+
+type NodeFs = {
+  mkdir(path: string, opts: { recursive: boolean }): Promise<void>;
+  readFile(path: string): Promise<Uint8Array>;
+  writeFile(path: string, data: Uint8Array): Promise<void>;
+};
+
+function nodeProcess(): { versions?: { node?: string } } | undefined {
+  return (globalThis as { process?: { versions?: { node?: string } } }).process;
+}
+
+function importSpecifier<T>(specifier: string): Promise<T> {
+  const load = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<T>;
+  return load(specifier);
+}
+
+async function nodeNpmCacheFile(key: string): Promise<string | null> {
+  if (!nodeProcess()?.versions?.node) return null;
+  const fs = await importSpecifier<NodeFs>('node:fs/promises');
+  const os = await importSpecifier<{ tmpdir(): string }>('node:os');
+  const path = await importSpecifier<{ join(...parts: string[]): string }>('node:path');
+  const dir = path.join(os.tmpdir(), NPM_CACHE);
+  await fs.mkdir(dir, { recursive: true });
+  return path.join(dir, npmCacheFileName(key));
+}
+
+/** Tarball bytes saved across installs. OPFS in the browser, temp dir in Node. */
+export async function readNpmTarballCache(key: string): Promise<Uint8Array | null> {
+  const dir = await opfsNpmCacheDir();
+  if (dir) {
+    try {
+      const fh = await dir.getFileHandle(npmCacheFileName(key));
+      const file = await fh.getFile();
+      return new Uint8Array(await file.arrayBuffer());
+    } catch {
+      /* miss */
+    }
+  }
+  const file = await nodeNpmCacheFile(key).catch(() => null);
+  if (!file) return null;
+  try {
+    const fs = await importSpecifier<NodeFs>('node:fs/promises');
+    return new Uint8Array(await fs.readFile(file));
+  } catch {
+    return null;
+  }
+}
+
+/** Persist a registry tarball so the next install can skip the network. */
+export async function writeNpmTarballCache(key: string, data: Uint8Array): Promise<void> {
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  const dir = await opfsNpmCacheDir();
+  if (dir) {
+    try {
+      const fh = await dir.getFileHandle(npmCacheFileName(key), { create: true });
+      const writable = await fh.createWritable();
+      await writable.write(copy);
+      await writable.close();
+      return;
+    } catch {
+      /* temp dir below */
+    }
+  }
+  const file = await nodeNpmCacheFile(key).catch(() => null);
+  if (!file) return;
+  const fs = await importSpecifier<NodeFs>('node:fs/promises');
+  await fs.writeFile(file, copy);
+}

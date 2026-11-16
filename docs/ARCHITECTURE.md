@@ -66,9 +66,9 @@ Guest core modules live in `kernel/embed/guest_modules.js`, compiled into the ke
 | Engine | Where the program runs | When |
 | ------ | ---------------------- | ---- |
 | `quickjs` (default) | Inside the WASM kernel | Every `node` / `sh` the kernel understands |
-| `v8` | Host JS engine, same guest bootstrap | `guestEngine: 'v8'` and the kernel calls are synchronous |
+| `v8` | Host JS engine, same guest bootstrap | `guestEngine: 'v8'`. Same-thread WASM runs it inline. A Worker kernel runs it on a guest thread and serves filesystem calls through a SharedArrayBuffer |
 
-The interface is `tryRun(program) => result \| null`. `null` means “keep the kernel process.” A later build can implement the same interface in a Worker so guest code runs on the browser’s JS engine off the boot thread. The filesystem API does not change.
+The interface is `tryRun(program) => result \| null`. `null` means “keep the kernel process.” The filesystem API does not change.
 
 ### Process lifetime
 

@@ -33,8 +33,9 @@ Guest Node, VFS, processes, and shell live in the kernel + QuickJS embed. TypeSc
 
 ## Must add (still C++/WASM)
 
-1. Real installed `vite`/`tsc` graph coverage (Microsoft tsc.js still may miss APIs)
-  2. WC-speed install cache
+Landed: npm tarballs persist in an OPFS (browser) or temp-dir (Node) cache, and `guestEngine: 'v8'` runs on a Worker when the kernel itself is off the page thread. `async_hooks` keeps AsyncLocalStorage across Promise, timers, and `nextTick`.
+
+Still open: packages that need native addons or a full Node graph. Those stay non-goals.
 
 ## Non-goals
 

@@ -55,7 +55,7 @@ Loads `browsernode_kernel.wasm` (from the package `wasm/` folder, or `wasmUrl`).
 | `previewBase` | `string` | `{origin}/__bn_preview` | Prefix for preview URLs |
 | `persist` | `boolean` | `false` | Hydrate/flush `/home` via OPFS (browser) |
 | `useWasm` | `true \| false \| 'auto'` | `true` | Must be WASM; `false` is rejected |
-| `guestEngine` | `'quickjs' \| 'v8'` | `'quickjs'` | `v8` runs `node` on the host engine when kernel calls are synchronous |
+| `guestEngine` | `'quickjs' \| 'v8'` | `'quickjs'` | `v8` runs `node` on this JS engine. A Worker kernel runs that guest on its own thread (needs `SharedArrayBuffer`) |
 | `sharedArrayBuffer` | `boolean` | `true` | `false` keeps the poll stdio transport |
 
 **Instance fields:** `runtime` (`'wasm'`), `worker` (kernel on a Worker), `sabStdio` (SharedArrayBuffer rings), `persistEnabled`.

@@ -22,9 +22,9 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
+    "build": "node ../../scripts/gen-guest-bundle.mjs && rm -rf dist && tsc -p tsconfig.json && node ../../scripts/copy-wasm.mjs",
     "clean": "rm -rf dist",
-    "test": "npm run build && node ./test/conformance.mjs && node ./test/webcontainer-compat.mjs",
+    "test": "npm run build && node ./test/conformance.mjs && node ./test/webcontainer-compat.mjs && node ./test/power.mjs",
     "docs": "npx --yes typedoc --options typedoc.json"
   },
   "dependencies": {

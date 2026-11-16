@@ -3,6 +3,40 @@
  * ES5-ish (var/function); no optional chaining / BigInt.
  */
 
+/* depd / express read CallSite objects from Error.captureStackTrace. */
+if (typeof Error.captureStackTrace !== 'function') {
+  Error.stackTraceLimit = 10;
+  Error.captureStackTrace = function(target) {
+    var err = new Error();
+    var lines = String(err.stack || '').split('\n').slice(1);
+    var sites = [];
+    for (var i = 0; i < lines.length; i++) {
+      (function(line) {
+        sites.push({
+          getFileName: function() { return 'guest.js'; },
+          getLineNumber: function() { return 1; },
+          getColumnNumber: function() { return 1; },
+          getFunctionName: function() { return null; },
+          getTypeName: function() { return null; },
+          getMethodName: function() { return null; },
+          getEvalOrigin: function() { return null; },
+          isToplevel: function() { return true; },
+          isEval: function() { return false; },
+          isNative: function() { return false; },
+          isConstructor: function() { return false; },
+          toString: function() { return line; }
+        });
+      })(lines[i]);
+    }
+    if (typeof Error.prepareStackTrace === 'function') {
+      try { target.stack = Error.prepareStackTrace(target, sites); }
+      catch (eStack) { target.stack = sites; }
+    } else {
+      target.stack = sites;
+    }
+  };
+}
+
 /* ---- fs.watch / watchFile registry (host calls __bn_emit_fs) ---- */
 var __bn_fs_watchers = Object.create(null);
 var __bn_fs_watchFileListeners = Object.create(null);
@@ -76,11 +110,23 @@ function resolveExportsTarget(target, base) {
     var p = join(base, target);
     if (isFile(p)) return p;
     if (isFile(p + '.js')) return p + '.js';
+    if (isFile(p + '.mjs')) return p + '.mjs';
+    if (isFile(p + '.cjs')) return p + '.cjs';
     if (isFile(join(p, 'index.js'))) return join(p, 'index.js');
+    if (isFile(join(p, 'index.mjs'))) return join(p, 'index.mjs');
+    return null;
+  }
+  if (Array.isArray(target)) {
+    for (var a = 0; a < target.length; a++) {
+      var hitA = resolveExportsTarget(target[a], base);
+      if (hitA) return hitA;
+    }
     return null;
   }
   if (target && typeof target === 'object') {
-    var order = ['require', 'node', 'default', 'browser', 'import', 'development', 'module'];
+    var order = globalThis.__bn_cond === 'import'
+      ? ['import', 'module', 'default', 'node', 'require', 'browser', 'development']
+      : ['require', 'node', 'default', 'browser', 'import', 'development', 'module'];
     for (var i = 0; i < order.length; i++) {
       if (target[order[i]] != null) {
         var hit = resolveExportsTarget(target[order[i]], base);
@@ -111,6 +157,26 @@ function resolvePkgExports(base, requestSubpath) {
 function __bn_rewrite_esm(code, filename) {
   var out = String(code);
   var fnExports = [];
+  out = out.replace(/^\s*import\s+type\b[^;\n]*;?/gm, '');
+  out = out.replace(/^\s*export\s+type\b[^;\n]*;?/gm, '');
+  out = out.replace(/^\s*export\s*\*\s+as\s+([\w$]+)\s+from\s*['"]([^'"]+)['"]\s*;?/gm, function(_, name, src) {
+    return 'exports[' + JSON.stringify(name) + ']=require(' + JSON.stringify(src) + ');';
+  });
+  out = out.replace(/^\s*export\s*\*\s+from\s*['"]([^'"]+)['"]\s*;?/gm, function(_, src) {
+    return '(function(__star){if(__star&&typeof __star==="object"){for(var __k in __star){if(__k!=="default"&&Object.prototype.hasOwnProperty.call(__star,__k))exports[__k]=__star[__k];}}})(require(' + JSON.stringify(src) + '));';
+  });
+  out = out.replace(/^\s*export\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]\s*;?/gm, function(_, names, src) {
+    var lines = ['var __re=require(' + JSON.stringify(src) + ');'];
+    names.split(',').forEach(function(part) {
+      part = part.trim();
+      if (!part || part.indexOf('type ') === 0) return;
+      var bits = part.split(/\s+as\s+/);
+      var local = bits[0].trim();
+      var exp = (bits[1] || bits[0]).trim();
+      lines.push('exports[' + JSON.stringify(exp) + ']=__re[' + JSON.stringify(local) + '];');
+    });
+    return lines.join('\n');
+  });
   out = out.replace(/^\s*import\s+([\w$]+)\s*,\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]\s*;?/gm, function(_, def, named, src) {
     return 'var __m_' + def + '=require("' + src + '"); var ' + def + '=(__m_' + def + '.default!==undefined?__m_' + def + '.default:__m_' + def + '); var {' + named + '}=__m_' + def + ';';
   });
@@ -1944,24 +2010,7 @@ function loadCore(name) {
   if (name === 'sys') return loadCore('util');
   if (name === 'crypto') return __bn_load_crypto();
   if (name === 'perf_hooks') return __bn_load_perf_hooks();
-  if (name === 'async_hooks') {
-    function AsyncLocalStorage() { this._store = undefined; }
-    AsyncLocalStorage.prototype.run = function(store, fn) {
-      var prev = this._store;
-      this._store = store;
-      try { return fn.apply(null, Array.prototype.slice.call(arguments, 2)); }
-      finally { this._store = prev; }
-    };
-    AsyncLocalStorage.prototype.getStore = function() { return this._store; };
-    AsyncLocalStorage.prototype.enterWith = function(store) { this._store = store; };
-    AsyncLocalStorage.prototype.disable = function() { this._store = undefined; };
-    return {
-      AsyncLocalStorage: AsyncLocalStorage,
-      createHook: function() { return { enable: function() {}, disable: function() {} }; },
-      executionAsyncId: function() { return 1; },
-      triggerAsyncId: function() { return 0; }
-    };
-  }
+  if (name === 'async_hooks') return __bn_async_hooks_module();
   if (name === 'diagnostics_channel') {
     var channels = Object.create(null);
     function Channel(name) {
@@ -2164,51 +2213,176 @@ function loadCore(name) {
   throw new Error('Unknown core ' + name);
 }
 
+/* ---- async context (Promise / timers / nextTick) ---- */
+var __bn_als_list = [];
+var __bn_guest_depth = 0;
+var __bn_async_seq = 1;
+var __bn_hook_list = [];
+
+function __bn_als_snapshot() {
+  var snap = [];
+  for (var i = 0; i < __bn_als_list.length; i++) {
+    var als = __bn_als_list[i];
+    if (als && als._depth > 0) snap.push({ als: als, store: als._store, depth: als._depth });
+  }
+  return snap;
+}
+
+function __bn_als_restore(snap, fn) {
+  var prev = [];
+  var i;
+  for (i = 0; i < snap.length; i++) {
+    prev.push({ als: snap[i].als, store: snap[i].als._store, depth: snap[i].als._depth || 0 });
+    snap[i].als._store = snap[i].store;
+    snap[i].als._depth = snap[i].depth;
+  }
+  try { return fn(); }
+  finally {
+    for (i = 0; i < prev.length; i++) {
+      prev[i].als._store = prev[i].store;
+      prev[i].als._depth = prev[i].depth;
+    }
+  }
+}
+
+function __bn_track_async(delta) {
+  if (__bn && typeof __bn.asyncPending === 'function') __bn.asyncPending(delta);
+}
+
+function __bn_async_hooks_module() {
+  function AsyncLocalStorage() {
+    this._store = undefined;
+    this._depth = 0;
+    __bn_als_list.push(this);
+  }
+  AsyncLocalStorage.prototype.run = function(store, fn) {
+    var prevStore = this._store;
+    var prevDepth = this._depth || 0;
+    this._store = store;
+    this._depth = prevDepth + 1;
+    try { return fn.apply(null, Array.prototype.slice.call(arguments, 2)); }
+    finally {
+      this._store = prevStore;
+      this._depth = prevDepth;
+    }
+  };
+  AsyncLocalStorage.prototype.getStore = function() {
+    if (!this._depth) return undefined;
+    return this._store;
+  };
+  AsyncLocalStorage.prototype.enterWith = function(store) {
+    this._store = store;
+    this._depth = (this._depth || 0) + 1;
+  };
+  AsyncLocalStorage.prototype.disable = function() {
+    this._store = undefined;
+    this._depth = 0;
+  };
+  return {
+    AsyncLocalStorage: AsyncLocalStorage,
+    createHook: function(hooks) {
+      var on = false;
+      return {
+        enable: function() {
+          if (!on) { __bn_hook_list.push(hooks || {}); on = true; }
+          return this;
+        },
+        disable: function() {
+          __bn_hook_list = __bn_hook_list.filter(function(h) { return h !== hooks; });
+          on = false;
+          return this;
+        }
+      };
+    },
+    executionAsyncId: function() { return __bn_async_seq; },
+    triggerAsyncId: function() { return __bn_async_seq > 1 ? __bn_async_seq - 1 : 0; }
+  };
+}
+
+function __bn_module_fn(code) {
+  var wrapped = '(function(exports, require, module, __filename, __dirname, console, process, globalThis, setTimeout, setInterval, clearTimeout, clearInterval){\n'
+    + 'var Buffer=globalThis.Buffer;\n' + code + '\n})';
+  return (0, eval)(wrapped);
+}
+
+function __bn_call_module(fn, exportsObj, requireFn, mod, resolved) {
+  __bn_guest_depth++;
+  __bn_async_seq++;
+  try {
+    return fn(
+      exportsObj,
+      requireFn,
+      mod,
+      resolved,
+      dirname(resolved),
+      globalThis.console,
+      process,
+      globalThis,
+      globalThis.setTimeout,
+      globalThis.setInterval,
+      globalThis.clearTimeout,
+      globalThis.clearInterval
+    );
+  } finally {
+    __bn_guest_depth--;
+  }
+}
+
 /* ---- createRequire / runMain / dynamic import ---- */
 function createRequire(fromFile) {
   var fromDir = dirname(fromFile);
+  var fromEsm = false;
+  try { fromEsm = !!isEsmFile(fromFile); } catch (eEsm) { fromEsm = false; }
   return function require(request) {
-    var reqs = String(request);
-    if (reqs === 'next/cache' || reqs === 'next/headers') {
-      try {
-        var installed = resolveFrom(fromDir, reqs);
-        if (installed && __bn.readFile(installed) !== null) {
-          request = reqs;
-        } else {
-          return loadCore(reqs);
-        }
-      } catch (e) {
+    var prevCond = globalThis.__bn_cond;
+    globalThis.__bn_cond = globalThis.__bn_force_cond || (fromEsm ? 'import' : 'require');
+    try {
+      return __bn_require_resolved(fromDir, request);
+    } finally {
+      globalThis.__bn_cond = prevCond;
+    }
+  };
+}
+
+function __bn_require_resolved(fromDir, request) {
+  var reqs = String(request);
+  if (reqs === 'next/cache' || reqs === 'next/headers') {
+    try {
+      var installed = resolveFrom(fromDir, reqs);
+      if (installed && __bn.readFile(installed) !== null) {
+        request = reqs;
+      } else {
         return loadCore(reqs);
       }
+    } catch (e) {
+      return loadCore(reqs);
     }
-    var resolved = resolveFrom(fromDir, String(request));
-    if (resolved.indexOf('node:') === 0) return loadCore(resolved.slice(5));
-    if (/\.node$/i.test(resolved) || reqs === 'fsevents') {
-      throw new Error('BN_GRAPH: native addon not available in QuickJS: ' + reqs);
-    }
-    if (reqs === 'esbuild' || /\/node_modules\/esbuild(\/|$)/.test(resolved)) {
-      throw new Error('BN_GRAPH: native esbuild is not available in QuickJS');
-    }
-    if (moduleCache[resolved]) return moduleCache[resolved].exports;
-    var mod = makeModule(resolved);
-    moduleCache[resolved] = mod;
-    var code = __bn.readFile(resolved);
-    if (code === null) throw new Error('ENOENT ' + resolved);
-    if (/\.json$/i.test(resolved)) {
-      mod.exports = JSON.parse(code);
-      mod.loaded = true;
-      return mod.exports;
-    }
-    code = __bn_strip_shebang(code);
-    if (isEsmFile(resolved)) code = __bn_rewrite_esm(code, resolved);
-    var wrapped = '(function(exports, require, module, __filename, __dirname, console, process, globalThis){\n'
-      + 'var Buffer=globalThis.Buffer;\n' + code + '\n'
-      + '; if(typeof module.exports==="undefined") module.exports=exports;\n})';
-    var fn = (0, eval)(wrapped);
-    fn(mod.exports, mod.require, mod, resolved, dirname(resolved), globalThis.console, process, globalThis);
+  }
+  var resolved = resolveFrom(fromDir, String(request));
+  if (resolved.indexOf('node:') === 0) return loadCore(resolved.slice(5));
+  if (/\.node$/i.test(resolved) || reqs === 'fsevents') {
+    throw new Error('BN_GRAPH: native addon not available in QuickJS: ' + reqs);
+  }
+  if (reqs === 'esbuild' || /\/node_modules\/esbuild(\/|$)/.test(resolved)) {
+    throw new Error('BN_GRAPH: native esbuild is not available in QuickJS');
+  }
+  if (moduleCache[resolved]) return moduleCache[resolved].exports;
+  var mod = makeModule(resolved);
+  moduleCache[resolved] = mod;
+  var code = __bn.readFile(resolved);
+  if (code === null) throw new Error('ENOENT ' + resolved);
+  if (/\.json$/i.test(resolved)) {
+    mod.exports = JSON.parse(code);
     mod.loaded = true;
     return mod.exports;
-  };
+  }
+  code = __bn_strip_shebang(code);
+  if (isEsmFile(resolved)) code = __bn_rewrite_esm(code, resolved);
+  code += '\n; if(typeof module.exports==="undefined") module.exports=exports;\n';
+  var fn = __bn_module_fn(code);
+  __bn_call_module(fn, mod.exports, mod.require, mod, resolved);
+  mod.loaded = true;
+  return mod.exports;
 }
 
 function __bn_strip_shebang(code) {
@@ -2222,7 +2396,10 @@ function __bn_strip_shebang(code) {
 
 function __bn_dynamic_import(spec) {
   return Promise.resolve().then(function() {
-    return createRequire(process.cwd() + '/.')(String(spec));
+    var prev = globalThis.__bn_force_cond;
+    globalThis.__bn_force_cond = 'import';
+    try { return createRequire(process.cwd() + '/.')(String(spec)); }
+    finally { globalThis.__bn_force_cond = prev; }
   });
 }
 
@@ -2240,10 +2417,8 @@ function __bn_runMain(filename) {
     var mod = makeModule(resolved);
     moduleCache[resolved] = mod;
     if (isEsmFile(resolved)) code = __bn_rewrite_esm(code, resolved);
-    var wrapped = '(function(exports, require, module, __filename, __dirname, console, process, globalThis){\n'
-      + 'var Buffer=globalThis.Buffer;\n' + code + '\n})';
-    var fn = (0, eval)(wrapped);
-    fn(mod.exports, createRequire(resolved), mod, resolved, dirname(resolved), globalThis.console, process, globalThis);
+    var fn = __bn_module_fn(code);
+    __bn_call_module(fn, mod.exports, createRequire(resolved), mod, resolved);
     if (typeof __bn_drain_ticks === 'function') __bn_drain_ticks();
     return process.exitCode | 0;
   } catch (e) {
@@ -2287,3 +2462,67 @@ globalThis.fetch = function(input, init) {
   }
   return Promise.reject(new Error('fetch: guest has no raw internet; use virtual http.Server or host npm allowlist'));
 };
+
+function __bn_install_async_bridge() {
+  if (globalThis.__bn_async_bridge) return;
+  globalThis.__bn_async_bridge = true;
+  function guestBind(fn, snap, track) {
+    if (!track || typeof fn !== 'function') return fn;
+    return function(v) {
+      __bn_guest_depth++;
+      try { return __bn_als_restore(snap, function() { return fn(v); }); }
+      finally {
+        __bn_guest_depth--;
+        __bn_track_async(-1);
+      }
+    };
+  }
+  var origThen = Promise && Promise.prototype && Promise.prototype.then;
+  if (typeof origThen === 'function' && !origThen.__bn) {
+    var wrappedThen = function(onF, onR) {
+      var snap = __bn_als_snapshot();
+      var track = (__bn_guest_depth > 0 || snap.length > 0) && (typeof onF === 'function' || typeof onR === 'function');
+      if (track) __bn_track_async(1);
+      return origThen.call(this, guestBind(onF, snap, track), guestBind(onR, snap, track));
+    };
+    wrappedThen.__bn = true;
+    Promise.prototype.then = wrappedThen;
+  }
+  function wrapTimer(orig) {
+    if (typeof orig !== 'function' || orig.__bn) return orig;
+    var wrapped = function(fn, ms) {
+      if (typeof fn !== 'function') return orig(fn, ms);
+      var snap = __bn_als_snapshot();
+      var args = Array.prototype.slice.call(arguments, 2);
+      return orig(function() {
+        __bn_guest_depth++;
+        try { return __bn_als_restore(snap, function() { return fn.apply(null, args); }); }
+        finally { __bn_guest_depth--; }
+      }, ms);
+    };
+    wrapped.__bn = true;
+    return wrapped;
+  }
+  if (typeof globalThis.setTimeout === 'function') globalThis.setTimeout = wrapTimer(globalThis.setTimeout);
+  if (typeof globalThis.setInterval === 'function') globalThis.setInterval = wrapTimer(globalThis.setInterval);
+  if (typeof process !== 'undefined' && typeof process.nextTick === 'function' && !process.nextTick.__bn) {
+    var origTick = process.nextTick;
+    var wrappedTick = function(fn) {
+      var snap = __bn_als_snapshot();
+      var track = __bn_guest_depth > 0 || snap.length > 0;
+      var args = Array.prototype.slice.call(arguments, 1);
+      if (track) __bn_track_async(1);
+      return origTick(function() {
+        __bn_guest_depth++;
+        try { return __bn_als_restore(snap, function() { return fn.apply(null, args); }); }
+        finally {
+          __bn_guest_depth--;
+          if (track) __bn_track_async(-1);
+        }
+      });
+    };
+    wrappedTick.__bn = true;
+    process.nextTick = wrappedTick;
+  }
+}
+__bn_install_async_bridge();

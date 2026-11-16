@@ -555,6 +555,7 @@ export class NodeBrowser {
         'zip',
         'github',
         'npm',
+        'npm-cache',
         'lockfile-pins',
         'npmrc',
         'peers',
@@ -618,7 +619,7 @@ export class NodeBrowser {
             controller.enqueue(err.slice(sentErr));
             sentErr = err.length;
           }
-          if (result.io.timers > 0 || result.io.servers > 0) {
+          if (result.io.timers > 0 || result.io.servers > 0 || (result.io.pending ?? 0) > 0) {
             this.#later(16, pump);
             return;
           }
@@ -632,7 +633,10 @@ export class NodeBrowser {
       pid: 0,
       exit,
       output,
-      kill() {},
+      kill() {
+        result.stop?.();
+        halt();
+      },
       write() {},
     };
   }
@@ -745,7 +749,7 @@ export class NodeBrowser {
       env = { ...fileEnv, ...opts.env };
     }
     if (this.#guest) {
-      const hosted = this.#guest.tryRun({ command: cmd, args, cwd, env });
+      const hosted = await this.#guest.tryRun({ command: cmd, args, cwd, env });
       if (hosted) return this.#finishGuest(hosted);
     }
     const pid = await asy(this.#mod.spawn(this.#k, cmd, args, cwd, env));
