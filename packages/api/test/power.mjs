@@ -125,6 +125,35 @@ async function main() {
   const cond = await readOut(await bn.spawn('node', ['/home/project/cond/main.mjs']));
   assert(cond.code === 0 && cond.out.includes('esm'), 'exports import ' + cond.out);
 
+  await bn.fs.writeFile(
+    '/home/project/await.js',
+    [
+      "const { AsyncLocalStorage } = require('async_hooks');",
+      'const als = new AsyncLocalStorage();',
+      'als.run({ v: 4 }, async () => {',
+      '  await Promise.resolve();',
+      '  const s = als.getStore();',
+      "  console.log('a:' + (s && s.v));",
+      '});',
+    ].join('\n'),
+  );
+  const awaited = await readOut(await bn.spawn('node', ['/home/project/await.js']));
+  assert(awaited.code === 0 && awaited.out.includes('a:4'), 'await als ' + awaited.out);
+
+  const bare = '/home/project/node_modules/bare';
+  await bn.fs.mkdir(bare, { recursive: true });
+  await bn.extractTar(
+    ustar([
+      { path: 'package/package.json', data: '{"name":"bare"}' },
+      { path: 'package/index.js', data: 'module.exports = 1;\n' },
+      { path: 'package/bare/package.json', data: '{"name":"nested","version":"9.9.9"}' },
+    ]),
+    bare,
+  );
+  await hoistNpmPackageRoot(bn, bare);
+  assert(await bn.fs.exists(bare + '/index.js'), 'versionless root stays');
+  assert(await bn.fs.exists(bare + '/bare/package.json'), 'nested folder kept');
+
   const dest = '/home/project/node_modules/@types/ms';
   await bn.fs.mkdir(dest, { recursive: true });
   const tar = ustar([
@@ -167,6 +196,54 @@ async function main() {
   }
 
   await bn.teardown();
+
+  const { Worker } = await import('node:worker_threads');
+  const { createV8Sab } = await import('../dist/kernel/v8-sab.js');
+  const { serviceV8Fs } = await import('../dist/kernel/v8-guest-host.js');
+  const sab = createV8Sab();
+  const files = new Map();
+  files.set('/note.txt', new TextEncoder().encode('hi'));
+  const fake = {
+    create: () => 1,
+    destroy() {},
+    registerBuiltins() {},
+    mkdir: async () => true,
+    writeText: async (_k, path, text) => {
+      files.set(path, new TextEncoder().encode(text));
+      return true;
+    },
+    writeBytes: async (_k, path, data) => {
+      files.set(path, data);
+      return true;
+    },
+    readText: async (_k, path) => {
+      const hit = files.get(path);
+      return hit ? new TextDecoder().decode(hit) : null;
+    },
+    readBytes: async (_k, path) => files.get(path) ?? null,
+    unlink: async () => true,
+    readdir: async () => [],
+    exists: async (_k, path) => files.has(path),
+    spawn: async () => 0,
+    wait: async () => 0,
+    kill: async () => false,
+    readStdout: async () => '',
+    readStderr: async () => '',
+    writeStdin: async () => 0,
+  };
+  const protocol = await new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./sab-worker.mjs', import.meta.url), { workerData: { sab } });
+    worker.on('message', (msg) => {
+      if (msg.t === 'fs') {
+        void serviceV8Fs(fake, 1, sab).catch(reject);
+        return;
+      }
+      if (msg.t === 'done') resolve(msg);
+    });
+    worker.on('error', reject);
+  });
+  assert(protocol.missing && protocol.wrote && protocol.same && protocol.empty && protocol.note, 'sab protocol ' + JSON.stringify(protocol));
+
   console.log('power ok');
 }
 

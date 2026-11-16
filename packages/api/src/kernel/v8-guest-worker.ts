@@ -159,19 +159,23 @@ function publish(io: V8Io, code: number, final: boolean): void {
     post({ t: 'http-result', id: http.id, out });
     return;
   }
+  if (msg.t === 'boot') {
+    post({ t: 'ready', sab });
+    return;
+  }
   if (msg.t !== 'run') return;
   const run = msg as RunMsg;
   const mod = sabKernel(sab);
-  const io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0, pending: 0 };
   const nodeArgs = nodeArgsFromSpawn(run.command, run.args);
+  let io: V8Io;
   let resultCode = 0;
   if (nodeArgs) {
-    const ran = runNodeOnV8(mod, 1, nodeArgs, run.cwd, run.env, io, {
+    io = { stdout: '', stderr: '', timers: 0, servers: 0, pending: 0 };
+    resultCode = runNodeOnV8(mod, 1, nodeArgs, run.cwd, run.env, io, {
       onServer(port) {
         post({ t: 'listen', port });
       },
-    });
-    resultCode = ran.code;
+    }).code;
   } else {
     const script = shellScriptFromSpawn(run.command, run.args);
     if (script == null) {
@@ -183,11 +187,7 @@ function publish(io: V8Io, code: number, final: boolean): void {
       post({ t: 'skip' });
       return;
     }
-    io.stdout = ran.io.stdout;
-    io.stderr = ran.io.stderr;
-    io.timers = ran.io.timers;
-    io.servers = ran.io.servers;
-    io.pending = ran.io.pending ?? 0;
+    io = ran.io;
     resultCode = ran.code;
   }
   const live = () => (io.timers || 0) > 0 || (io.servers || 0) > 0 || (io.pending || 0) > 0;
@@ -199,5 +199,3 @@ function publish(io: V8Io, code: number, final: boolean): void {
     if (!still) clearInterval(timer);
   }, 16);
 };
-
-post({ t: 'ready', sab });

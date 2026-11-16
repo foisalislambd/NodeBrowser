@@ -282,5 +282,6 @@ export function runGuestOnV8Worker(
         reject(new Error(ev.message || 'v8 guest worker failed'));
       }
     };
+    worker.postMessage({ t: 'boot' });
   });
 }

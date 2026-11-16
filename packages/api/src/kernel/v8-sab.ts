@@ -68,9 +68,16 @@ export function v8FsCall(
   Atomics.store(header, 0, V8_STATE_REQ);
   ping();
   let spins = 0;
-  while (Atomics.load(header, 0) === V8_STATE_REQ) {
+  for (;;) {
+    if (Atomics.load(header, 0) !== V8_STATE_REQ) break;
     Atomics.wait(header, 0, V8_STATE_REQ, 1000);
-    if (++spins > 60) return { status: 0, extra: 0, bytes: new Uint8Array() };
+    if (Atomics.load(header, 0) !== V8_STATE_REQ) break;
+    if (++spins <= 60) continue;
+    Atomics.compareExchange(header, 0, V8_STATE_REQ, V8_STATE_IDLE);
+    if (Atomics.load(header, 0) === V8_STATE_IDLE) {
+      return { status: 0, extra: 0, bytes: new Uint8Array() };
+    }
+    break;
   }
   const len = Math.max(0, Atomics.load(header, 2));
   const outExtra = Atomics.load(header, 3);

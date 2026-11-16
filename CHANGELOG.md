@@ -11,7 +11,7 @@ The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 ### Added
 
 - V8 guest runs on its own thread when the WASM kernel is on a Worker, with filesystem calls over a SharedArrayBuffer
-- `async_hooks.AsyncLocalStorage` follows Promise reactions, timers, and `nextTick`; ESM `export *` / `export { } from` and the `import` exports condition resolve
+- `async_hooks.AsyncLocalStorage` uses Node's own hooks on the V8 guest there, so `await` keeps the store; the embedded polyfill covers `.then`, timers, and `nextTick`. ESM `export *` / `export { } from` and the `import` exports condition resolve
 - npm tarball cache in OPFS (browser) or the temp directory (Node); scoped installs hoist a nested package root such as `@types/ms`
 - `WebContainer` compatibility layer for the public tutorial surface: workdir-relative filesystem, `spawn` streams (`output` / `input` / `exit` / `kill` / `resize`), `on` unsubscribe (`server-ready`, `port`, `error`, `preview-message`, `xdg-open`, `code`), `export` (`json` / `zip`), preview script injection, and `coep: 'none'` reduced mode. See [docs/MIGRATING.md](./docs/MIGRATING.md).
 - `HostGuestEngine` so `boot({ guestEngine: 'v8' })` is an engine behind `spawn`, with QuickJS remaining the kernel default

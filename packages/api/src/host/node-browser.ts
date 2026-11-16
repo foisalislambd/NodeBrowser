@@ -625,7 +625,7 @@ export class NodeBrowser {
           }
           finish(result.code);
         };
-        pump();
+        this.#later(0, pump);
       },
     });
     this.#adopt(exit, () => halt());

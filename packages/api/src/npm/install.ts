@@ -498,14 +498,23 @@ async function liftChildren(bn: NodeBrowser, destRoot: string, inner: string): P
   return true;
 }
 
+async function hasPackageJson(bn: NodeBrowser, dir: string): Promise<boolean> {
+  try {
+    await bn.fs.readFile(joinPath(dir, 'package.json'), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Move npm's `package/` prefix up, then a single nested folder that is the real package root. */
 export async function hoistNpmPackageRoot(bn: NodeBrowser, destRoot: string): Promise<void> {
   await liftChildren(bn, destRoot, joinPath(destRoot, 'package'));
-  if (await readPkgVersion(bn, destRoot)) return;
+  if (await hasPackageJson(bn, destRoot)) return;
   const base = destRoot.split('/').filter(Boolean).pop() ?? '';
   if (!base || base.startsWith('@')) return;
   const nested = joinPath(destRoot, base);
-  if (await readPkgVersion(bn, nested)) await liftChildren(bn, destRoot, nested);
+  if (await hasPackageJson(bn, nested)) await liftChildren(bn, destRoot, nested);
 }
 
 async function gunzip(data: Uint8Array): Promise<Uint8Array> {
@@ -719,7 +728,7 @@ export async function fetchTarball(url: string, cacheKey: string): Promise<Uint8
         npmCacheHits++;
         lastTarballFromCache = true;
         memoryCache.set(cacheKey, ab);
-        void writeNpmTarballCache(cacheKey, ab);
+        await writeNpmTarballCache(cacheKey, ab);
         return ab;
       }
     } catch {
@@ -732,7 +741,7 @@ export async function fetchTarball(url: string, cacheKey: string): Promise<Uint8
   if (!res.ok) throw new Error(`tarball fetch failed: ${res.status}`);
   const ab = new Uint8Array(await res.arrayBuffer());
   memoryCache.set(cacheKey, ab);
-  void writeNpmTarballCache(cacheKey, ab);
+  await writeNpmTarballCache(cacheKey, ab);
   if (typeof caches !== 'undefined') {
     try {
       const cache = await caches.open('browsernode-npm-v1');

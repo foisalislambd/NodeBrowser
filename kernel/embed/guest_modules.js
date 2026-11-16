@@ -2250,6 +2250,9 @@ function __bn_track_async(delta) {
 }
 
 function __bn_async_hooks_module() {
+  if (__bn && __bn.nativeAsyncHooks && typeof __bn.nativeAsyncHooks.AsyncLocalStorage === 'function') {
+    return __bn.nativeAsyncHooks;
+  }
   function AsyncLocalStorage() {
     this._store = undefined;
     this._depth = 0;

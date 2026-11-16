@@ -188,6 +188,20 @@ function invokeGuest(handler: GuestFn, req: { method?: string; url?: string; hea
   return { status, headers, body };
 }
 
+function hostAsyncHooks(): unknown {
+  const proc = (
+    globalThis as {
+      process?: { versions?: { node?: string }; getBuiltinModule?: (name: string) => unknown };
+    }
+  ).process;
+  if (!proc?.versions?.node || typeof proc.getBuiltinModule !== 'function') return null;
+  try {
+    return proc.getBuiltinModule('async_hooks');
+  } catch {
+    return null;
+  }
+}
+
 function asEnv(value: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!value || typeof value !== 'object') return out;
@@ -280,6 +294,7 @@ export function runNodeOnV8(
     asyncPending: (d: number) => {
       io.pending = Math.max(0, (io.pending ?? 0) + (Number(d) || 0));
     },
+    nativeAsyncHooks: hostAsyncHooks(),
     statJson: (path: string) => {
       const p = String(path);
       const kind = mod.lstatKind ? sync(mod.lstatKind(k, p)) : null;

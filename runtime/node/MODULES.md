@@ -27,7 +27,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `string_decoder` | ok (subset) | |
 | `timers` / `timers/promises` | ok (subset) | |
 | `perf_hooks` | ok (subset) | performance.now + no-op PerformanceObserver |
-| `async_hooks` | ok (subset) | AsyncLocalStorage follows Promise, timers, and nextTick; createHook stores callbacks |
+| `async_hooks` | ok (subset) | On Node's V8 guest this is the host's `async_hooks`, so `await` keeps the store. QuickJS and the browser use the embedded polyfill: `.then`, timers, and `nextTick` keep it; `await` does not |
 | `diagnostics_channel` | stub | channel subscribe/publish |
 | `worker_threads` | ok (subset) | Cooperative `Worker` (same thread); not OS threads / SAB |
 | `next/cache` / `next/headers` | stub | revalidate/cookies no-ops when package not installed |
