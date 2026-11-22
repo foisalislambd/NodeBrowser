@@ -1491,6 +1491,29 @@ function loadCore(name) {
       for (i = 0; i < b.length; i++) arr.push(b[i] & 255);
       return arr;
     }
+    function __bn_fit_len(arr, len) {
+      len = len == null ? 0 : len | 0;
+      if (len < 0) __bn_fs_code('EINVAL', 'EINVAL');
+      var out = arr.slice(0, len);
+      while (out.length < len) out.push(0);
+      return out;
+    }
+    function __bn_bytes_of(data, enc) {
+      var encoding = 'utf8';
+      if (typeof enc === 'string') encoding = enc;
+      else if (enc && typeof enc.encoding === 'string') encoding = enc.encoding;
+      if (typeof data === 'string') return Buffer._encode(data, encoding);
+      if (Buffer.isBuffer && Buffer.isBuffer(data)) return (data._data || []).slice();
+      var src = null;
+      if (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer) src = new Uint8Array(data);
+      else if (typeof Uint8Array !== 'undefined' && data instanceof Uint8Array) src = data;
+      if (src) {
+        var copy = [];
+        for (var i = 0; i < src.length; i++) copy.push(src[i] & 255);
+        return copy;
+      }
+      return Buffer._encode(String(data), encoding);
+    }
     function __bn_write_all(path, arr) {
       var u8 = new Uint8Array(arr.length);
       for (var i = 0; i < arr.length; i++) u8[i] = arr[i] & 255;
@@ -1507,6 +1530,16 @@ function loadCore(name) {
         S_IFMT: 61440, S_IFREG: 32768, S_IFDIR: 16384, S_IFLNK: 40960
       },
       readFileSync: function(p, enc) {
+        if (typeof p === 'number') {
+          var slot = __bn_fds[p];
+          if (!slot || !slot.read) __bn_fs_code('EBADF');
+          var all = __bn_read_all(slot.path) || [];
+          var slice = all.slice(slot.pos);
+          slot.pos = all.length;
+          var encoding = typeof enc === 'string' ? enc : (enc && enc.encoding);
+          if (encoding && encoding !== 'buffer') return Buffer._decode(slice, encoding);
+          return Buffer.from(slice);
+        }
         if (enc === 'buffer' || (enc && enc.encoding === 'buffer')) {
           var b = __bn.readBytes ? __bn.readBytes(String(p)) : null;
           if (b === null) {
@@ -1520,7 +1553,20 @@ function loadCore(name) {
         if (t === null) throw new Error('ENOENT: ' + p);
         return t;
       },
-      writeFileSync: function(p, d) {
+      writeFileSync: function(p, d, opts) {
+        if (typeof p === 'number') {
+          var slot = __bn_fds[p];
+          if (!slot || !slot.write) __bn_fs_code('EBADF');
+          var bytes = __bn_bytes_of(d, opts);
+          var file = __bn_read_all(slot.path) || [];
+          var at = slot.append ? file.length : slot.pos;
+          if (at < 0) at = 0;
+          while (file.length < at) file.push(0);
+          for (var wi = 0; wi < bytes.length; wi++) file[at + wi] = bytes[wi] & 255;
+          __bn_write_all(slot.path, file);
+          slot.pos = at + bytes.length;
+          return;
+        }
         if (Buffer.isBuffer && Buffer.isBuffer(d)) {
           if (__bn.writeBytes) {
             // QuickJS C binding accepts ArrayBuffer, not TypedArray / plain arrays
@@ -1550,9 +1596,21 @@ function loadCore(name) {
         if (!__bn.writeFile(String(p), String(d))) throw new Error('EIO');
       },
       existsSync: function(p) { return !!__bn.exists(String(p)); },
-      accessSync: function(p) {
+      accessSync: function(p, mode) {
         if (!__bn.exists(String(p))) {
           var e = new Error('ENOENT: ' + p); e.code = 'ENOENT'; throw e;
+        }
+        mode = mode == null ? 0 : (mode | 0);
+        if ((mode & 7) === 0) return;
+        var bits = fs.statSync(p).mode & 511;
+        if ((mode & 4) && (bits & 292) === 0) {
+          var er = new Error('EACCES: ' + p); er.code = 'EACCES'; throw er;
+        }
+        if ((mode & 2) && (bits & 146) === 0) {
+          var ew = new Error('EACCES: ' + p); ew.code = 'EACCES'; throw ew;
+        }
+        if ((mode & 1) && (bits & 73) === 0) {
+          var ex = new Error('EACCES: ' + p); ex.code = 'EACCES'; throw ex;
         }
       },
       mkdirSync: function(p, opts) {
@@ -1685,20 +1743,49 @@ function loadCore(name) {
         __bn_fs_watchFileListeners[p] = list.filter(function(fn) { return fn !== listener; });
       },
       realpathSync: function(p) {
-        var path = String(p);
-        if (path.charAt(0) !== '/') path = join(process.cwd(), path);
-        var parts = [], segs = path.split('/');
-        for (var i = 0; i < segs.length; i++) {
-          var s = segs[i];
-          if (!s || s === '.') continue;
-          if (s === '..') parts.pop();
-          else parts.push(s);
+        function walk(path, depth) {
+          if (depth > 40) {
+            var loop = new Error('ELOOP: ' + path);
+            loop.code = 'ELOOP';
+            throw loop;
+          }
+          path = String(path);
+          if (path.charAt(0) !== '/') path = join(process.cwd() || '/', path);
+          var segs = path.split('/');
+          var resolved = '/';
+          for (var i = 0; i < segs.length; i++) {
+            var s = segs[i];
+            if (!s || s === '.') continue;
+            if (s === '..') {
+              if (resolved !== '/') resolved = resolved.slice(0, resolved.lastIndexOf('/')) || '/';
+              continue;
+            }
+            var next = resolved === '/' ? '/' + s : resolved + '/' + s;
+            var kind = __bn.lstatKind ? __bn.lstatKind(next) : null;
+            if (kind === 'symlink') {
+              var target = __bn.readlink ? __bn.readlink(next) : null;
+              if (target == null) {
+                var broken = new Error('ENOENT: ' + next);
+                broken.code = 'ENOENT';
+                throw broken;
+              }
+              var rest = [];
+              for (var k = i + 1; k < segs.length; k++) if (segs[k]) rest.push(segs[k]);
+              var combined = String(target);
+              if (combined.charAt(0) !== '/') combined = (resolved === '/' ? '/' : resolved + '/') + combined;
+              if (rest.length) combined = combined.replace(/\/$/, '') + '/' + rest.join('/');
+              return walk(combined, depth + 1);
+            }
+            resolved = next;
+          }
+          if (resolved !== '/' && !__bn.exists(resolved)) {
+            var missing = new Error('ENOENT: ' + path);
+            missing.code = 'ENOENT';
+            throw missing;
+          }
+          return resolved;
         }
-        path = '/' + parts.join('/');
-        if (!__bn.exists(path)) {
-          var e = new Error('ENOENT: ' + path); e.code = 'ENOENT'; throw e;
-        }
-        return path;
+        return walk(p, 0);
       },
       copyFileSync: function(src, dest) {
         var b = __bn.readBytes ? __bn.readBytes(String(src)) : null;
@@ -1843,6 +1930,57 @@ function loadCore(name) {
         if (!slot) __bn_fs_code('EBADF');
         return fs.statSync(slot.path);
       },
+      truncateSync: function(p, len) {
+        var path = String(p);
+        if (!__bn.exists(path)) __bn_fs_code('ENOENT', 'ENOENT: ' + path);
+        if (__bn.isDir && __bn.isDir(path)) __bn_fs_code('EISDIR', 'EISDIR: ' + path);
+        var data = __bn_read_all(path) || [];
+        __bn_write_all(path, __bn_fit_len(data, len));
+      },
+      ftruncateSync: function(fd, len) {
+        var slot = __bn_fds[fd];
+        if (!slot || !slot.write) __bn_fs_code('EBADF');
+        var data = __bn_read_all(slot.path) || [];
+        var next = __bn_fit_len(data, len);
+        __bn_write_all(slot.path, next);
+        if (slot.pos > next.length) slot.pos = next.length;
+      },
+      appendFileSync: function(p, data, enc) {
+        if (typeof p === 'number') {
+          var slot = __bn_fds[p];
+          if (!slot || !slot.write) __bn_fs_code('EBADF');
+          var extraFd = __bn_bytes_of(data, enc);
+          var file = __bn_read_all(slot.path) || [];
+          for (var ai = 0; ai < extraFd.length; ai++) file.push(extraFd[ai] & 255);
+          __bn_write_all(slot.path, file);
+          slot.pos = file.length;
+          return;
+        }
+        var path = String(p);
+        if (__bn.isDir && __bn.isDir(path)) __bn_fs_code('EISDIR', 'EISDIR: ' + path);
+        var cur = __bn_read_all(path) || [];
+        var extra;
+        if (typeof data === 'string') extra = Buffer._encode(data, (enc && enc.encoding) || enc || 'utf8');
+        else if (Buffer.isBuffer && Buffer.isBuffer(data)) extra = data._data;
+        else extra = Buffer._encode(String(data), 'utf8');
+        for (var i = 0; i < extra.length; i++) cur.push(extra[i] & 255);
+        __bn_write_all(path, cur);
+      },
+      renameSync: function(from, to) {
+        var src = String(from);
+        var dst = String(to);
+        if (!__bn.rename) __bn_fs_code('ENOSYS', 'ENOSYS');
+        if (!__bn.exists(src)) __bn_fs_code('ENOENT', 'ENOENT: ' + src);
+        if (src !== dst && __bn.isDir && __bn.isDir(dst)) __bn_fs_code('EISDIR', 'EISDIR: ' + dst);
+        if (!__bn.rename(src, dst)) __bn_fs_code('EPERM', 'EPERM');
+        var id;
+        for (id in __bn_fds) {
+          var slot = __bn_fds[id];
+          if (!slot) continue;
+          if (slot.path === src) slot.path = dst;
+          else if (slot.path.indexOf(src + '/') === 0) slot.path = dst + slot.path.slice(src.length);
+        }
+      },
       statSync: function(p) {
         var path = String(p);
         if (!__bn.exists(path)) throw new Error('ENOENT: ' + path);
@@ -1879,6 +2017,24 @@ function loadCore(name) {
       chmod: function(p, mode) { return Promise.resolve().then(function() { return fs.chmodSync(p, mode); }); },
       utimes: function(p, a, m) { return Promise.resolve().then(function() { return fs.utimesSync(p, a, m); }); }
     };
+    if (fs.promises && !fs.promises.rename) {
+      fs.promises.rename = function(from, to) {
+        return Promise.resolve().then(function() { return fs.renameSync(from, to); });
+      };
+    }
+    if (fs.promises) {
+      fs.promises.access = function(p, mode) {
+        return Promise.resolve().then(function() { return fs.accessSync(p, mode); });
+      };
+    }
+    if (fs.promises && !fs.promises.truncate) {
+      fs.promises.truncate = function(p, len) {
+        return Promise.resolve().then(function() { return fs.truncateSync(p, len); });
+      };
+      fs.promises.appendFile = function(p, data, enc) {
+        return Promise.resolve().then(function() { return fs.appendFileSync(p, data, enc); });
+      };
+    }
     if (fs.promises && !fs.promises.open) {
       fs.promises.open = function(p, flags) {
         return Promise.resolve().then(function() {
@@ -1895,11 +2051,13 @@ function loadCore(name) {
               return Promise.resolve().then(function() { return fs.writeSync(fd, buf, off, len, pos); });
             },
             stat: function() { return Promise.resolve().then(function() { return fs.fstatSync(fd); }); },
+            truncate: function(len) { return Promise.resolve().then(function() { fs.ftruncateSync(fd, len); }); },
             close: function() { return Promise.resolve().then(function() { fs.closeSync(fd); }); }
           };
         });
       };
     }
+    if (fs.realpathSync) fs.realpathSync.native = fs.realpathSync;
     return fs;
   }
   if (name === 'path') {
@@ -1948,8 +2106,153 @@ function loadCore(name) {
         return rel || '.';
       }
     };
+    function __bn_win32() {
+      function isAbs(p) {
+        p = String(p);
+        if (!p) return false;
+        if (p.charAt(0) === '\\' || p.charAt(0) === '/') return true;
+        return /^[A-Za-z]:[\\/]/.test(p);
+      }
+      function normalize(p) {
+        p = String(p);
+        if (!p) return '.';
+        var unc = p.charAt(0) === '\\' && p.charAt(1) === '\\' || p.charAt(0) === '/' && p.charAt(1) === '/';
+        var drive = '';
+        var rest = p;
+        var dm = /^([A-Za-z]:)/.exec(p);
+        if (dm) {
+          drive = dm[1];
+          rest = p.slice(2);
+        } else if (unc) {
+          rest = p.slice(2);
+        }
+        var abs = isAbs(p);
+        var parts = rest.split(/[\\/]+/);
+        var stack = [];
+        var i;
+        for (i = 0; i < parts.length; i++) {
+          var part = parts[i];
+          if (!part || part === '.') continue;
+          if (part === '..') {
+            if (stack.length && stack[stack.length - 1] !== '..') stack.pop();
+            else if (!abs && !drive) stack.push('..');
+            continue;
+          }
+          stack.push(part);
+        }
+        var body = stack.join('\\');
+        if (drive) return body ? drive + '\\' + body : drive + '\\';
+        if (unc) return '\\\\' + body;
+        if (abs) return body ? '\\' + body : '\\';
+        return body || '.';
+      }
+      function basename(p, ext) {
+        p = String(p).replace(/[\\/]+$/, '');
+        var slash = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+        var base = slash < 0 ? p : p.slice(slash + 1);
+        if (ext && base.slice(-String(ext).length) === ext) base = base.slice(0, -String(ext).length);
+        return base;
+      }
+      var win = {
+        sep: '\\',
+        delimiter: ';',
+        isAbsolute: isAbs,
+        normalize: normalize,
+        join: function() {
+          var parts = [];
+          for (var i = 0; i < arguments.length; i++) {
+            if (arguments[i] != null && arguments[i] !== '') parts.push(String(arguments[i]));
+          }
+          if (!parts.length) return '.';
+          return normalize(parts.join('\\'));
+        },
+        dirname: function(p) {
+          var parsed = win.parse(p);
+          return parsed.dir || '.';
+        },
+        basename: basename,
+        extname: function(p) {
+          var base = basename(p);
+          var dot = base.lastIndexOf('.');
+          return dot <= 0 ? '' : base.slice(dot);
+        },
+        parse: function(p) {
+          p = String(p);
+          var root = '';
+          if ((p.charAt(0) === '\\' && p.charAt(1) === '\\') || (p.charAt(0) === '/' && p.charAt(1) === '/')) {
+            var bits = p.slice(2).split(/[\\/]/);
+            root = '\\\\' + (bits[0] || '') + (bits.length > 1 ? '\\' + bits[1] : '');
+          } else if (/^[A-Za-z]:/.test(p)) {
+            root = p.slice(0, 2);
+            if (p.charAt(2) === '\\' || p.charAt(2) === '/') root += '\\';
+          } else if (p.charAt(0) === '\\' || p.charAt(0) === '/') {
+            root = '\\';
+          }
+          var trimmed = p.replace(/[\\/]+$/, '');
+          if (root && trimmed.length < root.length) trimmed = p;
+          var slash = Math.max(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'));
+          var base = slash < 0 ? trimmed : trimmed.slice(slash + 1);
+          var dir = slash < 0 ? '' : trimmed.slice(0, slash);
+          if (root && dir.length < root.length) dir = root;
+          if (root && base && trimmed.slice(0, root.length) === root && slash < root.length) base = trimmed.slice(root.length);
+          var dot = base.lastIndexOf('.');
+          var ext = dot <= 0 ? '' : base.slice(dot);
+          return {
+            root: root,
+            dir: dir,
+            base: base,
+            ext: ext,
+            name: ext ? base.slice(0, -ext.length) : base
+          };
+        },
+        format: function(o) {
+          o = o || {};
+          var dir = o.dir || o.root || '';
+          var base = o.base || ((o.name || '') + (o.ext || ''));
+          if (!dir) return base;
+          if (dir.charAt(dir.length - 1) === '\\') return dir + base;
+          return dir + '\\' + base;
+        },
+        resolve: function() {
+          var resolved = '';
+          var abs = false;
+          for (var i = arguments.length - 1; i >= -1 && !abs; i--) {
+            var seg;
+            if (i >= 0) {
+              if (arguments[i] == null || arguments[i] === '') continue;
+              seg = String(arguments[i]);
+            } else {
+              var cwd = String(process.cwd() || '/').replace(/\//g, '\\');
+              if (cwd.charAt(0) !== '\\') cwd = '\\' + cwd;
+              seg = 'C:' + cwd;
+            }
+            resolved = resolved ? seg + '\\' + resolved : seg;
+            abs = isAbs(seg);
+          }
+          return normalize(resolved);
+        },
+        relative: function(from, to) {
+          var f = win.resolve(from);
+          var t = win.resolve(to);
+          var fd = /^([A-Za-z]:)/.exec(f);
+          var td = /^([A-Za-z]:)/.exec(t);
+          if (fd && td && fd[1].toLowerCase() !== td[1].toLowerCase()) return t;
+          var fs = f.slice(fd ? 2 : 0).split('\\').filter(function(s) { return s; });
+          var ts = t.slice(td ? 2 : 0).split('\\').filter(function(s) { return s; });
+          var n = 0;
+          while (n < fs.length && n < ts.length && fs[n].toLowerCase() === ts[n].toLowerCase()) n++;
+          var ups = [];
+          for (var j = n; j < fs.length; j++) ups.push('..');
+          var rel = ups.concat(ts.slice(n)).join('\\');
+          return rel || '.';
+        }
+      };
+      win.win32 = win;
+      win.posix = pathApi;
+      return win;
+    }
     pathApi.posix = pathApi;
-    pathApi.win32 = pathApi;
+    pathApi.win32 = __bn_win32();
     return pathApi;
   }
   if (name === 'events') {
@@ -3125,3 +3428,142 @@ function __bn_install_stdin() {
   process.stdin = new Stdin();
 }
 __bn_install_stdin();
+
+function __bn_hr_now() {
+  if (__bn.hrtime) {
+    var pair = __bn.hrtime();
+    return [pair[0], pair[1] | 0];
+  }
+  var ms = Date.now();
+  return [Math.floor(ms / 1000), (ms % 1000) * 1000000];
+}
+function __bn_hr_sub(now, prev) {
+  var sec = now[0] - prev[0];
+  var nano = now[1] - prev[1];
+  if (nano < 0) {
+    sec -= 1;
+    nano += 1000000000;
+  }
+  return [sec, nano];
+}
+function __bn_install_hrtime() {
+  if (!process || process.hrtime) return;
+  var start = __bn_hr_now();
+  function hrtime(prev) {
+    var abs = __bn_hr_sub(__bn_hr_now(), start);
+    if (prev == null) return abs;
+    return __bn_hr_sub(abs, [prev[0] | 0, prev[1] | 0]);
+  }
+  hrtime.bigint = function(prev) {
+    if (typeof BigInt !== 'function') {
+      var err = new Error('BigInt is not available');
+      err.code = 'ERR_NO_BIGINT';
+      throw err;
+    }
+    var unit = BigInt('1000000000');
+    var now = hrtime();
+    var value = BigInt(now[0]) * unit + BigInt(now[1] < 0 ? 0 : now[1]);
+    if (typeof prev === 'bigint') return value - prev;
+    if (prev == null) return value;
+    var delta = hrtime(prev);
+    return BigInt(delta[0]) * unit + BigInt(delta[1] < 0 ? 0 : delta[1]);
+  };
+  process.hrtime = hrtime;
+  process.uptime = function() {
+    var t = hrtime();
+    return t[0] + t[1] / 1000000000;
+  };
+}
+__bn_install_hrtime();
+
+function __bn_abs_path(p) {
+  p = String(p == null ? '' : p);
+  if (p.charAt(0) === '/') {
+    var rootParts = p.split('/');
+    var rootStack = [];
+    for (var r = 0; r < rootParts.length; r++) {
+      if (!rootParts[r] || rootParts[r] === '.') continue;
+      if (rootParts[r] === '..') rootStack.pop();
+      else rootStack.push(rootParts[r]);
+    }
+    return '/' + rootStack.join('/');
+  }
+  var cwd = (process.cwd && process.cwd()) || '/';
+  if (cwd.charAt(cwd.length - 1) !== '/') cwd += '/';
+  var parts = (cwd + p).split('/');
+  var stack = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (!parts[i] || parts[i] === '.') continue;
+    if (parts[i] === '..') stack.pop();
+    else stack.push(parts[i]);
+  }
+  return '/' + stack.join('/');
+}
+function __bn_wrap_cwd() {
+  function wrap(name, argcPath) {
+    var fn = __bn[name];
+    if (typeof fn !== 'function' || fn.__bn_abs) return;
+    var next = function() {
+      var args = Array.prototype.slice.call(arguments);
+      for (var i = 0; i < argcPath.length; i++) {
+        var idx = argcPath[i];
+        if (args.length > idx && args[idx] != null) args[idx] = __bn_abs_path(args[idx]);
+      }
+      return fn.apply(__bn, args);
+    };
+    next.__bn_abs = true;
+    __bn[name] = next;
+  }
+  wrap('readFile', [0]);
+  wrap('readBytes', [0]);
+  wrap('writeFile', [0]);
+  wrap('writeBytes', [0]);
+  wrap('exists', [0]);
+  wrap('isFile', [0]);
+  wrap('isDir', [0]);
+  wrap('isSymlink', [0]);
+  wrap('lstatKind', [0]);
+  wrap('readdir', [0]);
+  wrap('mkdir', [0]);
+  wrap('unlink', [0]);
+  wrap('rmdir', [0]);
+  wrap('readlink', [0]);
+  wrap('chmod', [0]);
+  wrap('utimes', [0]);
+  wrap('statJson', [0]);
+  wrap('rename', [0, 1]);
+  var link = __bn.symlink;
+  if (typeof link === 'function' && !link.__bn_abs) {
+    var nextLink = function(target, path) { return link.call(__bn, String(target), __bn_abs_path(path)); };
+    nextLink.__bn_abs = true;
+    __bn.symlink = nextLink;
+  }
+}
+function __bn_install_chdir() {
+  if (!process || process.chdir) return;
+  __bn_wrap_cwd();
+  process.chdir = function(dir) {
+    if (!__bn.chdir) {
+      var missing = new Error('chdir is not available');
+      missing.code = 'ENOSYS';
+      throw missing;
+    }
+    var rc = __bn.chdir(__bn_abs_path(dir)) | 0;
+    if (rc === 2) {
+      var eno = new Error('ENOENT: ' + dir);
+      eno.code = 'ENOENT';
+      throw eno;
+    }
+    if (rc === 1) {
+      var nd = new Error('ENOTDIR: ' + dir);
+      nd.code = 'ENOTDIR';
+      throw nd;
+    }
+    if (rc !== 0) {
+      var perm = new Error('EPERM: ' + dir);
+      perm.code = 'EPERM';
+      throw perm;
+    }
+  };
+}
+__bn_install_chdir();

@@ -65,15 +65,15 @@ Coverage is a Node 20-shaped subset aimed at tooling (Vite first, then Next). Fu
 
 | Module | Today |
 | --- | --- |
-| `fs` / `fs/promises` | Read, write, mkdir, cp, rm, symlink, chmod, utimes, watch, and file descriptors (`openSync`, `readSync`, `writeSync`, `closeSync`, `fstatSync`, `promises.open`) |
+| `fs` / `fs/promises` | Read, write, mkdir, cp, rm, rename, symlink, realpath, chmod, utimes, access (`R_OK` / `W_OK` / `X_OK`), watch, truncate, appendFile, and file descriptors (`open`, `read`, `write`, `close`, `fstat`, and `readFile` / `writeFile` on an open descriptor) |
 | `module` | CommonJS `require`, `createRequire`, the `exports` field, ESM rewrite |
 | `http` / `https` | `createServer` plus `request` / `get` to a virtual server on localhost |
 | `child_process` | `spawn` / `execFile` pass script arguments and `env` |
 | `stream` | Readable, Writable, `pipe`, `pipeline`, `finished` |
 | `crypto` | Hashes and HMAC (`sha1`, `sha256`, `sha384`, `sha512`), `timingSafeEqual`, `randomBytes` |
 | `readline` | `createInterface` splits input into `line`; `question` waits for the next line |
-| `process` | `cwd`, `argv`, `env`, `exit`, `nextTick`, stdin `data` events |
-| `zlib`, `buffer`, `path`, `assert`, `url`, `util` | Present as subsets. `path` is POSIX |
+| `process` | `cwd`, `chdir`, `argv`, `env`, `exit`, `nextTick`, stdin `data` events, `hrtime`, and `uptime` |
+| `zlib`, `buffer`, `path`, `assert`, `url`, `util` | Present as subsets. `path.win32` handles Windows separators and drive letters; `path.posix` stays `/` |
 
 Still outside this subset: native `.node` addons, `crypto.createCipheriv`, raw TCP to the public internet, and a bit-identical Node. Virtual HTTP stays on localhost. npm fetch uses an allowlisted HTTPS registry.
 

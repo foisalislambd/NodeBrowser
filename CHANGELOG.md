@@ -17,6 +17,14 @@ The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 - Guest `http.request` / `http.get` (and `https`) call a virtual server on localhost and deliver the status, headers, and body
 - Guest `child_process.spawn` / `execFile` pass arguments after the script and the `env` option into the child
 - Guest `fs.openSync` / `readSync` / `writeSync` / `closeSync` / `fstatSync`, plus `fs.promises.open`
+- Guest `fs.truncateSync` / `ftruncateSync` / `appendFileSync`, plus `fs.promises.truncate` and `appendFile`
+- Guest `fs.readFileSync` / `writeFileSync` / `appendFileSync` accept an open file descriptor and leave it open
+- Guest `path.win32` resolves Windows paths (`join`, `dirname`, `basename`, `normalize`, `parse`, `relative`, `resolve`) separately from `path.posix`
+- Guest `fs.renameSync` and `fs.promises.rename` move files and directories, and open descriptors follow the new path
+- Guest `process.hrtime`, `process.hrtime.bigint`, and `process.uptime` use a monotonic clock
+- Guest `process.chdir` changes the working directory, and relative `fs` paths resolve from `process.cwd()`
+- Guest `fs.accessSync` and `fs.promises.access` honor `F_OK`, `R_OK`, `W_OK`, and `X_OK` against the file mode
+- Guest `fs.realpathSync` follows symlinks, resolves `.` and `..`, and throws `ELOOP` on a cycle
 - V8 guest runs on its own thread when the WASM kernel is on a Worker, with filesystem calls over a SharedArrayBuffer
 - `async_hooks.AsyncLocalStorage` uses Node's own hooks on the V8 guest there, so `await` keeps the store; the embedded polyfill covers `.then`, timers, and `nextTick`. ESM `export *` / `export { } from` and the `import` exports condition resolve
 - npm tarball cache in OPFS (browser) or the temp directory (Node); scoped installs hoist a nested package root such as `@types/ms`

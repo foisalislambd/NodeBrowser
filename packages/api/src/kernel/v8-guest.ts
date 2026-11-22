@@ -220,7 +220,7 @@ export function runNodeOnV8(
   io: V8Io = { stdout: '', stderr: '', timers: 0, servers: 0, pending: 0 },
   hooks?: V8GuestHooks,
 ): V8RunResult {
-  const work = cwd && cwd !== '' ? cwd : '/';
+  let work = cwd && cwd !== '' ? cwd : '/';
 
   const text = (parts: unknown[]) => parts.map((p) => (p == null ? '' : String(p))).join(' ');
 
@@ -230,6 +230,23 @@ export function runNodeOnV8(
 
   const bn: BnShim = {
     cwd: () => work,
+    chdir: (dir: string) => {
+      const raw = String(dir ?? '');
+      const base = work.replace(/\/$/, '') || '';
+      let dest = raw.startsWith('/') ? raw : `${base}/${raw}`;
+      const parts = dest.split('/');
+      const stack: string[] = [];
+      for (const part of parts) {
+        if (!part || part === '.') continue;
+        if (part === '..') stack.pop();
+        else stack.push(part);
+      }
+      dest = '/' + stack.join('/');
+      if (dest !== '/' && !sync(mod.exists(k, dest))) return 2;
+      if (dest !== '/' && mod.lstatKind && sync(mod.lstatKind(k, dest)) !== 'directory') return 1;
+      work = dest;
+      return 0;
+    },
     print: (...parts: unknown[]) => {
       io.stdout += text(parts) + '\n';
     },
@@ -289,6 +306,17 @@ export function runNodeOnV8(
     symlink: (target: string, linkpath: string) =>
       mod.symlink ? sync(mod.symlink(k, String(target), String(linkpath))) : false,
     readlink: (path: string) => (mod.readlink ? sync(mod.readlink(k, String(path))) : null),
+    rename: (from: string, to: string) => (mod.rename ? sync(mod.rename(k, String(from), String(to))) : false),
+    hrtime: () => {
+      const host = globalThis as { process?: { hrtime?: () => [number, number] } };
+      if (host.process?.hrtime) {
+        const pair = host.process.hrtime();
+        return [pair[0], pair[1]];
+      }
+      const ms = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const sec = Math.floor(ms / 1000);
+      return [sec, Math.floor((ms - sec * 1000) * 1e6)];
+    },
     chmod: () => true,
     utimes: () => true,
     asyncPending: (d: number) => {

@@ -6,9 +6,9 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch/**chmod/utimes/cp/rm/open fd**/mode+mtime, binary buffer I/O, host `rename` |
-| `path` | partial | posix only |
-| `process` | partial | cwd, argv, **env from spawn**, exit, nextTick, **stdin `data`** |
+| `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch/**chmod/utimes/cp/rm/rename/access mode/realpath/open fd/truncate/appendFile**/`readFile`+`writeFile` on an fd, mode+mtime, binary buffer I/O, host `rename` |
+| `path` | partial | **posix and win32** (`join`, `dirname`, `basename`, `extname`, `normalize`, `parse`, `format`, `relative`, `resolve`) |
+| `process` | partial | cwd, **chdir**, argv, **env from spawn**, exit, nextTick, **stdin `data`**, **hrtime / uptime** |
 | `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex + index Proxy |
 | `events` | ok | EventEmitter basics |
 | `stream` | ok (subset) | Readable/Writable/Duplex/Transform + `.pipe()`, `pipeline`, `finished`, `stream/promises` |

@@ -591,6 +591,179 @@ int main() {
     auto out = k.get(pid)->stdout_buf.read_all_string();
     CHECK(out.find("ph=2:hi") != std::string::npos);
   }
+  {
+    k.vfs().write_text(
+        "/trunc.js",
+        "const fs=require('fs');\n"
+        "fs.writeFileSync('/t.txt', 'hello');\n"
+        "fs.truncateSync('/t.txt', 2);\n"
+        "fs.appendFileSync('/t.txt', '!');\n"
+        "fs.appendFileSync('/new.txt', 'ab');\n"
+        "fs.writeFileSync('/z.txt', 'ab');\n"
+        "fs.truncateSync('/z.txt', 4);\n"
+        "const pad=fs.readFileSync('/z.txt', 'buffer');\n"
+        "const hex=pad.toString('hex');\n"
+        "const fd=fs.openSync('/t.txt', 'r+');\n"
+        "fs.ftruncateSync(fd, 1);\n"
+        "fs.closeSync(fd);\n"
+        "var bad=false;\n"
+        "try{fs.ftruncateSync(fd, 0);}catch(e){bad=e.code==='EBADF';}\n"
+        "try{fs.truncateSync('/missing-trunc', 0);}catch(e){bad=bad&&e.code==='ENOENT';}\n"
+        "fs.promises.appendFile('/p2.txt', 'zz').then(function(){\n"
+        "  return fs.promises.truncate('/p2.txt', 1);\n"
+        "}).then(function(){\n"
+        "  console.log('trunc='+fs.readFileSync('/t.txt')+'|'+fs.readFileSync('/new.txt')+'|'+hex+'|'+bad+'|'+fs.readFileSync('/p2.txt'));\n"
+        "}).catch(function(e){ console.log('ERR '+(e&&e.code)+' '+(e&&e.message)); });\n");
+    auto pid = k.spawn("node", {"/trunc.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("trunc=h|ab|61620000|true|z") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/fd-rw.js",
+        "const fs=require('fs');\n"
+        "fs.writeFileSync('/rw.txt', 'hello');\n"
+        "const fd=fs.openSync('/rw.txt', 'r+');\n"
+        "const s=fs.readFileSync(fd, 'utf8');\n"
+        "fs.writeFileSync(fd, '!');\n"
+        "fs.closeSync(fd);\n"
+        "const r=fs.openSync('/rw.txt', 'r');\n"
+        "const b=fs.readFileSync(r);\n"
+        "fs.closeSync(r);\n"
+        "var bad=false;\n"
+        "try{fs.readFileSync(r, 'utf8');}catch(e){bad=e.code==='EBADF';}\n"
+        "try{fs.writeFileSync(r, 'no');}catch(e){bad=bad&&e.code==='EBADF';}\n"
+        "const w=fs.openSync('/rw.txt', 'r+');\n"
+        "fs.writeFileSync(w, 'XY');\n"
+        "fs.appendFileSync(w, '?');\n"
+        "fs.closeSync(w);\n"
+        "console.log('fdrw='+s+'|'+b.toString()+'|'+fs.readFileSync('/rw.txt')+'|'+bad);\n");
+    auto pid = k.spawn("node", {"/fd-rw.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("fdrw=hello|hello!|XYllo!?|true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/win.js",
+        "const path=require('path');\n"
+        "const w=path.win32;\n"
+        "const a=w.join('C:\\\\foo','bar','..','baz');\n"
+        "const b=w.dirname('C:\\\\foo\\\\bar.txt');\n"
+        "const c=w.basename('C:\\\\foo\\\\bar.txt','.txt');\n"
+        "const d=w.extname('C:\\\\foo\\\\bar.txt');\n"
+        "const e=w.normalize('C:\\\\foo\\\\\\\\bar\\\\..\\\\baz');\n"
+        "const abs=w.isAbsolute('C:/foo')&&!w.isAbsolute('foo')&&w.isAbsolute('\\\\\\\\srv\\\\share');\n"
+        "const p=w.parse('C:\\\\foo\\\\bar.txt');\n"
+        "const rel=w.relative('C:\\\\foo\\\\bar','C:\\\\foo\\\\baz\\\\x');\n"
+        "const res=w.resolve('C:\\\\foo','..\\\\bar');\n"
+        "const posix=path.join('/a','b');\n"
+        "console.log([a,b,c,d,e,abs?1:0,p.root,p.dir,p.base,p.ext,p.name,rel,res,posix,path.win32!==path.posix?1:0].join('|'));\n");
+    auto pid = k.spawn("node", {"/win.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("C:\\foo\\baz|C:\\foo|bar|.txt|C:\\foo\\baz|1|C:\\|C:\\foo|bar.txt|.txt|bar|..\\baz\\x|C:\\bar|/a/b|1") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/ren.js",
+        "const fs=require('fs');\n"
+        "fs.writeFileSync('/a.txt','hi');\n"
+        "const fd=fs.openSync('/a.txt','r');\n"
+        "fs.renameSync('/a.txt','/b.txt');\n"
+        "const n=fs.readFileSync(fd,'utf8');\n"
+        "fs.closeSync(fd);\n"
+        "fs.mkdirSync('/dir');\n"
+        "fs.writeFileSync('/dir/x.txt','x');\n"
+        "fs.renameSync('/dir','/dir2');\n"
+        "var missing=false;\n"
+        "try{fs.renameSync('/nope','/z');}catch(e){missing=e.code==='ENOENT';}\n"
+        "fs.promises.rename('/b.txt','/c.txt').then(function(){\n"
+        "  console.log(n+'|'+fs.readFileSync('/c.txt')+'|'+fs.readFileSync('/dir2/x.txt')+'|'+fs.existsSync('/a.txt')+'|'+missing);\n"
+        "}).catch(function(e){ console.log('ERR '+(e&&e.code)+' '+(e&&e.message)); });\n");
+    auto pid = k.spawn("node", {"/ren.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("hi|hi|x|false|true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/hr.js",
+        "var a=process.hrtime();\n"
+        "var b=process.hrtime(a);\n"
+        "var c=process.hrtime();\n"
+        "var nano=a[1]>=0&&a[1]<1000000000&&b[1]>=0&&b[1]<1000000000;\n"
+        "var mono=c[0]>a[0]||(c[0]===a[0]&&c[1]>=a[1]);\n"
+        "var u=process.uptime();\n"
+        "console.log('hr='+(a.length===2&&nano&&b[0]>=0&&mono&&u>=0));\n");
+    auto pid = k.spawn("node", {"/hr.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("hr=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/cd.js",
+        "const fs=require('fs');\n"
+        "fs.mkdirSync('/work/sub', {recursive:true});\n"
+        "fs.writeFileSync('/work/sub/a.txt', 'ok');\n"
+        "process.chdir('/work/sub');\n"
+        "process.chdir('..');\n"
+        "process.chdir('sub');\n"
+        "var text=fs.readFileSync('a.txt');\n"
+        "var cwd=process.cwd();\n"
+        "var eno=false, nd=false;\n"
+        "try{process.chdir('nope');}catch(e){eno=e.code==='ENOENT';}\n"
+        "try{process.chdir('a.txt');}catch(e){nd=e.code==='ENOTDIR';}\n"
+        "console.log(cwd+'|'+text+'|'+eno+'|'+nd);\n");
+    auto pid = k.spawn("node", {"/cd.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("/work/sub|ok|true|true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/acc.js",
+        "const fs=require('fs');\n"
+        "fs.writeFileSync('/m.txt','a');\n"
+        "fs.accessSync('/m.txt', fs.constants.R_OK);\n"
+        "fs.accessSync('/m.txt', fs.constants.W_OK);\n"
+        "var x=false, w=false, miss=false;\n"
+        "try{fs.accessSync('/m.txt', fs.constants.X_OK);}catch(e){x=e.code==='EACCES';}\n"
+        "fs.chmodSync('/m.txt', 0o444);\n"
+        "try{fs.accessSync('/m.txt', fs.constants.W_OK);}catch(e){w=e.code==='EACCES';}\n"
+        "fs.accessSync('/m.txt', fs.constants.R_OK);\n"
+        "try{fs.accessSync('/no-access');}catch(e){miss=e.code==='ENOENT';}\n"
+        "fs.promises.access('/m.txt', fs.constants.R_OK).then(function(){\n"
+        "  console.log('acc='+x+'|'+w+'|'+miss);\n"
+        "}).catch(function(e){ console.log('ERR '+(e&&e.code)+' '+(e&&e.message)); });\n");
+    auto pid = k.spawn("node", {"/acc.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("acc=true|true|true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/rp.js",
+        "const fs=require('fs');\n"
+        "fs.mkdirSync('/real', {recursive:true});\n"
+        "fs.writeFileSync('/real/file.txt', 'hi');\n"
+        "fs.symlinkSync('/real/file.txt', '/link');\n"
+        "fs.symlinkSync('file.txt', '/real/rel');\n"
+        "fs.symlinkSync('/link', '/link2');\n"
+        "fs.symlinkSync('/cycle/b', '/cycle/a');\n"
+        "fs.symlinkSync('/cycle/a', '/cycle/b');\n"
+        "var loop=false, miss=false;\n"
+        "try{fs.realpathSync('/cycle/a');}catch(e){loop=e.code==='ELOOP';}\n"
+        "try{fs.realpathSync('/no-such-real');}catch(e){miss=e.code==='ENOENT';}\n"
+        "var got=fs.realpathSync('/link')+'|'+fs.realpathSync('/real/rel')+'|'+fs.realpathSync('/link2')+'|'+fs.realpathSync('/real/../real/./file.txt');\n"
+        "console.log(got+'|'+loop+'|'+miss+'|'+(fs.realpathSync.native===fs.realpathSync));\n");
+    auto pid = k.spawn("node", {"/rp.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("/real/file.txt|/real/file.txt|/real/file.txt|/real/file.txt|true|true|true") != std::string::npos);
+  }
 #endif
 
   {

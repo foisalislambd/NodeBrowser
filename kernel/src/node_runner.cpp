@@ -1221,6 +1221,38 @@ static JSValue js_bn_chmod(JSContext* ctx, JSValueConst, int argc, JSValueConst*
   return JS_NewBool(ctx, ok);
 }
 
+static JSValue js_bn_rename(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 2) return JS_EXCEPTION;
+  const char* from = JS_ToCString(ctx, argv[0]);
+  if (!from) return JS_EXCEPTION;
+  const char* to = JS_ToCString(ctx, argv[1]);
+  if (!to) {
+    JS_FreeCString(ctx, from);
+    return JS_EXCEPTION;
+  }
+  bool ok = nc->kernel->vfs().rename(from, to);
+  if (ok) {
+    emit_fs_js(ctx, "rename", from);
+    emit_fs_js(ctx, "rename", to);
+  }
+  JS_FreeCString(ctx, from);
+  JS_FreeCString(ctx, to);
+  return JS_NewBool(ctx, ok);
+}
+
+static JSValue js_bn_hrtime(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+  using namespace std::chrono;
+  auto ns = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+  if (ns < 0) ns = 0;
+  auto sec = ns / 1000000000LL;
+  auto nsec = static_cast<int32_t>(ns % 1000000000LL);
+  JSValue arr = JS_NewArray(ctx);
+  JS_SetPropertyUint32(ctx, arr, 0, JS_NewInt64(ctx, sec));
+  JS_SetPropertyUint32(ctx, arr, 1, JS_NewInt32(ctx, nsec));
+  return arr;
+}
+
 static JSValue js_bn_utimes(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   auto* nc = get_opaque(ctx);
   if (!nc || argc < 3) return JS_EXCEPTION;
@@ -1387,6 +1419,21 @@ static JSValue js_bn_cwd(JSContext* ctx, JSValueConst, int, JSValueConst*) {
   auto* nc = get_opaque(ctx);
   if (!nc) return JS_EXCEPTION;
   return JS_NewString(ctx, nc->proc->cwd.c_str());
+}
+
+static JSValue js_bn_chdir(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || argc < 1) return JS_EXCEPTION;
+  const char* path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+  auto dest = join_path(nc->proc->cwd.empty() ? "/" : nc->proc->cwd, path);
+  JS_FreeCString(ctx, path);
+  if (dest.empty()) dest = "/";
+  auto st = nc->kernel->vfs().stat(dest, true);
+  if (!st) return JS_NewInt32(ctx, 2);
+  if (st->kind != NodeKind::Directory) return JS_NewInt32(ctx, 1);
+  nc->proc->cwd = dest;
+  return JS_NewInt32(ctx, 0);
 }
 
 static JSValue js_bn_server_ready(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -2189,6 +2236,7 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "writeOut", JS_NewCFunction(ctx, js_bn_write_out, "writeOut", 1));
   JS_SetPropertyStr(ctx, bn, "writeErr", JS_NewCFunction(ctx, js_bn_write_err, "writeErr", 1));
   JS_SetPropertyStr(ctx, bn, "cwd", JS_NewCFunction(ctx, js_bn_cwd, "cwd", 0));
+  JS_SetPropertyStr(ctx, bn, "chdir", JS_NewCFunction(ctx, js_bn_chdir, "chdir", 1));
   JS_SetPropertyStr(ctx, bn, "getEnv", JS_NewCFunction(ctx, js_bn_get_env, "getEnv", 0));
   JS_SetPropertyStr(ctx, bn, "serverReady", JS_NewCFunction(ctx, js_bn_server_ready, "serverReady", 1));
   JS_SetPropertyStr(ctx, bn, "registerHttp", JS_NewCFunction(ctx, js_bn_register_http, "registerHttp", 2));
@@ -2204,6 +2252,8 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "readStdin", JS_NewCFunction(ctx, js_bn_read_stdin, "readStdin", 0));
   JS_SetPropertyStr(ctx, bn, "writeStdin", JS_NewCFunction(ctx, js_bn_write_stdin_pid, "writeStdin", 2));
   JS_SetPropertyStr(ctx, bn, "chmod", JS_NewCFunction(ctx, js_bn_chmod, "chmod", 2));
+  JS_SetPropertyStr(ctx, bn, "rename", JS_NewCFunction(ctx, js_bn_rename, "rename", 2));
+  JS_SetPropertyStr(ctx, bn, "hrtime", JS_NewCFunction(ctx, js_bn_hrtime, "hrtime", 0));
   JS_SetPropertyStr(ctx, bn, "utimes", JS_NewCFunction(ctx, js_bn_utimes, "utimes", 3));
   JS_SetPropertyStr(ctx, bn, "statJson", JS_NewCFunction(ctx, js_bn_stat_json, "statJson", 2));
   JS_SetPropertyStr(ctx, global, "__bn", bn);
