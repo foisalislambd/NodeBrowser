@@ -10,6 +10,13 @@ The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 
 ### Added
 
+- Guest `crypto.createHmac` for sha1, sha256, sha384, and sha512, plus `timingSafeEqual` and `getHashes`
+- Guest `fs.cpSync` / `fs.rmSync` (and the promises forms) and `stream.pipeline` / `stream.finished`
+- Guest `process.stdin` on the QuickJS kernel reads bytes written to the process input and emits `data`
+- Guest `readline.createInterface` emits `line` from that input, and `question` waits for the next line
+- Guest `http.request` / `http.get` (and `https`) call a virtual server on localhost and deliver the status, headers, and body
+- Guest `child_process.spawn` / `execFile` pass arguments after the script and the `env` option into the child
+- Guest `fs.openSync` / `readSync` / `writeSync` / `closeSync` / `fstatSync`, plus `fs.promises.open`
 - V8 guest runs on its own thread when the WASM kernel is on a Worker, with filesystem calls over a SharedArrayBuffer
 - `async_hooks.AsyncLocalStorage` uses Node's own hooks on the V8 guest there, so `await` keeps the store; the embedded polyfill covers `.then`, timers, and `nextTick`. ESM `export *` / `export { } from` and the `import` exports condition resolve
 - npm tarball cache in OPFS (browser) or the temp directory (Node); scoped installs hoist a nested package root such as `@types/ms`
@@ -28,6 +35,10 @@ The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 - Release/Pages CI builds **C++ → WASM** with Emscripten before npm publish / demo deploy
 - **Phases 13–20:** WASM spawn `env` + `read_bytes`; streams/util/timers; zlib + crypto hashes; symlink/`fs.watch`/`fs-change`; `child_process`; ESM + `exports`; OPFS `persist` + snapshot export/import; `net`/`https`; WASM HTTP keep-alive via retained QuickJS handlers
 - **C++/QuickJS guest modules:** `kernel/embed/guest_modules.js` (stream/util/zlib/crypto/child_process/http/https/net/ESM) + VFS symlink/`readlink`/`lstat` ABI; host `kernel.ts` wires those ABI entry points
+
+### Fixed
+
+- C++/WASM builds no longer pick up QuickJS's `version` file as the C++ `<version>` header
 
 ### Changed
 

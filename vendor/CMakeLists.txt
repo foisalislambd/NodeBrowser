@@ -23,7 +23,10 @@ endif()
 
 add_library(quickjs STATIC ${QUICKJS_SOURCES})
 
-target_include_directories(quickjs PUBLIC ${QUICKJS_DIR})
+# Public includes go through qjs-inc so the QuickJS repo root (which contains a
+# file named "version") is not on the -I path. libc++ #include <version> otherwise
+# picks up that file and the C++ build fails.
+target_include_directories(quickjs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/qjs-inc)
 
 set(BN_QJS_VERSION "unknown")
 if(EXISTS "${QUICKJS_DIR}/VERSION")

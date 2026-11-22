@@ -152,6 +152,7 @@ std::string http_dispatch_json(int port, const char* method, const char* path,
   JSValue req = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, req, "method", JS_NewString(ctx, method ? method : "GET"));
   JS_SetPropertyStr(ctx, req, "url", JS_NewString(ctx, path ? path : "/"));
+  JS_SetPropertyStr(ctx, req, "body", JS_NewString(ctx, body ? body : ""));
   if (headers_json && headers_json[0]) {
     JSValue hj = JS_ParseJSON(ctx, headers_json, std::strlen(headers_json), "<headers>");
     if (!JS_IsException(hj)) JS_SetPropertyStr(ctx, req, "headers", hj);
@@ -1004,6 +1005,32 @@ static JSValue js_bn_spawn_cmd(JSContext* ctx, JSValueConst, int argc, JSValueCo
     }
   }
   std::unordered_map<std::string, std::string> env = nc->proc->env;
+  if (argc >= 4 && JS_IsString(argv[3])) {
+    const char* json = JS_ToCString(ctx, argv[3]);
+    if (json && json[0] == '{') {
+      JSValue obj = JS_ParseJSON(ctx, json, std::strlen(json), "<env>");
+      if (!JS_IsException(obj)) {
+        JSPropertyEnum* tab = nullptr;
+        uint32_t nprops = 0;
+        if (JS_GetOwnPropertyNames(ctx, &tab, &nprops, obj, JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) == 0) {
+          for (uint32_t i = 0; i < nprops; ++i) {
+            const char* key = JS_AtomToCString(ctx, tab[i].atom);
+            JSValue val = JS_GetProperty(ctx, obj, tab[i].atom);
+            const char* text = JS_ToCString(ctx, val);
+            if (key && text) env[key] = text;
+            if (key) JS_FreeCString(ctx, key);
+            if (text) JS_FreeCString(ctx, text);
+            JS_FreeValue(ctx, val);
+          }
+          JS_FreePropertyEnum(ctx, tab, nprops);
+        }
+        JS_FreeValue(ctx, obj);
+      } else {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+      }
+    }
+    if (json) JS_FreeCString(ctx, json);
+  }
   int pid = nc->kernel->spawn(cmd, args, env, cwd, nc->proc->pid);
   JS_FreeCString(ctx, cmd);
   auto proc = nc->kernel->get(pid);
@@ -1028,16 +1055,33 @@ static JSValue js_bn_spawn_cmd(JSContext* ctx, JSValueConst, int argc, JSValueCo
 }
 
 static JSValue js_bn_spawn_node(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-  // spawnNode(script, cwd, envObj) → spawn("node", [script], ...)
+  // spawnNode(script, cwd, envJson, extraArgs) → spawn("node", [script, ...extra], env)
   auto* nc = get_opaque(ctx);
   if (!nc || argc < 1) return JS_EXCEPTION;
   JSValue arr = JS_NewArray(ctx);
   JS_SetPropertyUint32(ctx, arr, 0, JS_DupValue(ctx, argv[0]));
-  JSValue args[3] = {JS_NewString(ctx, "node"), arr, argc >= 2 ? JS_DupValue(ctx, argv[1]) : JS_NewString(ctx, nc->proc->cwd.c_str())};
-  JSValue ret = js_bn_spawn_cmd(ctx, this_val, 3, args);
+  uint32_t extra_at = 1;
+  if (argc >= 4 && JS_IsArray(ctx, argv[3])) {
+    JSValue lenv = JS_GetPropertyStr(ctx, argv[3], "length");
+    int32_t n = 0;
+    JS_ToInt32(ctx, &n, lenv);
+    JS_FreeValue(ctx, lenv);
+    for (int32_t i = 0; i < n; ++i) {
+      JSValue el = JS_GetPropertyUint32(ctx, argv[3], static_cast<uint32_t>(i));
+      JS_SetPropertyUint32(ctx, arr, extra_at++, el);
+    }
+  }
+  JSValue args[4] = {
+      JS_NewString(ctx, "node"),
+      arr,
+      argc >= 2 ? JS_DupValue(ctx, argv[1]) : JS_NewString(ctx, nc->proc->cwd.c_str()),
+      argc >= 3 ? JS_DupValue(ctx, argv[2]) : JS_NewString(ctx, "{}"),
+  };
+  JSValue ret = js_bn_spawn_cmd(ctx, this_val, 4, args);
   JS_FreeValue(ctx, args[0]);
   JS_FreeValue(ctx, args[1]);
   JS_FreeValue(ctx, args[2]);
+  JS_FreeValue(ctx, args[3]);
   return ret;
 }
 
@@ -1134,6 +1178,15 @@ static JSValue js_bn_eval_new_ctx(JSContext* ctx, JSValueConst, int argc, JSValu
   JS_FreeValue(sub, result);
   JS_FreeContext(sub);
   return ret;
+}
+
+static JSValue js_bn_read_stdin(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || !nc->proc) return JS_EXCEPTION;
+  uint8_t buf[65536];
+  size_t n = nc->kernel->read_stdin(nc->proc->pid, buf, sizeof(buf));
+  if (!n) return JS_NULL;
+  return JS_NewArrayBufferCopy(ctx, buf, n);
 }
 
 static JSValue js_bn_write_stdin_pid(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -2148,6 +2201,7 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "complete", JS_NewCFunction(ctx, js_bn_complete, "complete", 1));
   JS_SetPropertyStr(ctx, bn, "httpDispatch", JS_NewCFunction(ctx, js_bn_http_dispatch, "httpDispatch", 5));
   JS_SetPropertyStr(ctx, bn, "evalNewContext", JS_NewCFunction(ctx, js_bn_eval_new_ctx, "evalNewContext", 1));
+  JS_SetPropertyStr(ctx, bn, "readStdin", JS_NewCFunction(ctx, js_bn_read_stdin, "readStdin", 0));
   JS_SetPropertyStr(ctx, bn, "writeStdin", JS_NewCFunction(ctx, js_bn_write_stdin_pid, "writeStdin", 2));
   JS_SetPropertyStr(ctx, bn, "chmod", JS_NewCFunction(ctx, js_bn_chmod, "chmod", 2));
   JS_SetPropertyStr(ctx, bn, "utimes", JS_NewCFunction(ctx, js_bn_utimes, "utimes", 3));

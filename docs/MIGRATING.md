@@ -51,7 +51,7 @@ wc.teardown();
 
 ## Follow-up
 
-- Guest `process.stdin` does not yet read the `input` stream. Writes are accepted on the kernel pipe.
+- Guest `process.stdin` emits `data` for bytes written with `proc.write` on the QuickJS kernel. The host does not send end-of-file, so the listener keeps the process alive until `process.exit` or `kill`.
 - `resize()` is stored for the host. The guest does not receive SIGWINCH.
 - `export({ format: 'binary' })` will not round-trip through another product's snapshot decoder.
 - Preview messages from a cross-origin iframe still need the page to forward `postMessage`. The host listens on `window` when it exists.

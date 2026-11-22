@@ -521,6 +521,69 @@ function __bn_sha512(msg, bits) {
   return out;
 }
 
+function __bn_as_bytes(data, enc) {
+  if (typeof data === 'string') return Buffer._encode(data, enc || 'utf8');
+  if (Buffer.isBuffer && Buffer.isBuffer(data)) return data._data;
+  if (typeof Uint8Array !== 'undefined' && data instanceof Uint8Array) return data;
+  if (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (data && typeof data.length === 'number') return data;
+  return Buffer._encode(String(data == null ? '' : data), 'utf8');
+}
+
+function __bn_join_bytes(chunks) {
+  var len = 0, i, j, o = 0;
+  for (i = 0; i < chunks.length; i++) len += chunks[i].length;
+  var all = new Uint8Array(len);
+  for (i = 0; i < chunks.length; i++) {
+    var ch = chunks[i];
+    for (j = 0; j < ch.length; j++) all[o++] = ch[j] & 255;
+  }
+  return all;
+}
+
+function __bn_norm_hash(alg) {
+  return String(alg || '').toLowerCase().replace(/^sha-/, 'sha');
+}
+
+function __bn_hash_ok(alg) {
+  return alg === 'sha1' || alg === 'sha256' || alg === 'sha384' || alg === 'sha512';
+}
+
+function __bn_hash_bytes(alg, all) {
+  if (alg === 'sha1') return __bn_sha1(all);
+  if (alg === 'sha256') return __bn_sha256(all);
+  if (alg === 'sha384') return __bn_sha512(all, 384);
+  return __bn_sha512(all, 512);
+}
+
+function __bn_hex_bytes(dig) {
+  var h = '';
+  for (var k = 0; k < dig.length; k++) h += ((dig[k] & 255) + 256).toString(16).slice(1);
+  return h;
+}
+
+/** HMAC(K, m) = H((K' ⊕ opad) || H((K' ⊕ ipad) || m)). Block is 64 (sha1/256) or 128 (sha384/512). */
+function __bn_hmac(alg, key, msg) {
+  var block = (alg === 'sha384' || alg === 'sha512') ? 128 : 64;
+  var k = key;
+  if (k.length > block) k = __bn_hash_bytes(alg, k);
+  var i, b;
+  var inner = new Uint8Array(block + msg.length);
+  for (i = 0; i < block; i++) {
+    b = i < k.length ? (k[i] & 255) : 0;
+    inner[i] = b ^ 0x36;
+  }
+  for (i = 0; i < msg.length; i++) inner[block + i] = msg[i] & 255;
+  var ih = __bn_hash_bytes(alg, inner);
+  var outer = new Uint8Array(block + ih.length);
+  for (i = 0; i < block; i++) {
+    b = i < k.length ? (k[i] & 255) : 0;
+    outer[i] = b ^ 0x5c;
+  }
+  for (i = 0; i < ih.length; i++) outer[block + i] = ih[i] & 255;
+  return __bn_hash_bytes(alg, outer);
+}
+
 function __bn_load_crypto() {
   return {
     randomFillSync: function(buf, offset, size) {
@@ -588,7 +651,44 @@ function __bn_load_crypto() {
         }
       };
     },
-    createHmac: function() { throw new Error('crypto.createHmac: not implemented'); },
+    createHmac: function(alg, key) {
+      alg = __bn_norm_hash(alg);
+      if (!__bn_hash_ok(alg)) {
+        throw new Error('createHmac: unsupported algorithm ' + alg + ' (supported: sha1, sha256, sha384, sha512)');
+      }
+      if (key == null) throw new TypeError('createHmac: key required');
+      var keyBytes = __bn_as_bytes(key, 'utf8');
+      var chunks = [];
+      var done = false;
+      return {
+        update: function(data, enc) {
+          if (done) throw new Error('Digest already called');
+          chunks.push(__bn_as_bytes(data, enc || 'utf8'));
+          return this;
+        },
+        digest: function(enc) {
+          if (done) throw new Error('Digest already called');
+          done = true;
+          var dig = __bn_hmac(alg, keyBytes, __bn_join_bytes(chunks));
+          if (enc === 'hex') return __bn_hex_bytes(dig);
+          return Buffer.from(dig);
+        }
+      };
+    },
+    timingSafeEqual: function(a, b) {
+      if (typeof a === 'string' || typeof b === 'string') throw new TypeError('timingSafeEqual: expected buffers');
+      var aa = __bn_as_bytes(a);
+      var bb = __bn_as_bytes(b);
+      if (aa.length !== bb.length) {
+        var err = new Error('Input buffers must have the same byte length');
+        err.code = 'ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH';
+        throw err;
+      }
+      var diff = 0;
+      for (var i = 0; i < aa.length; i++) diff |= (aa[i] ^ bb[i]) & 255;
+      return diff === 0;
+    },
+    getHashes: function() { return ['sha1', 'sha256', 'sha384', 'sha512']; },
     createCipheriv: function() { throw new Error('crypto.createCipheriv: unsupported'); },
     createDecipheriv: function() { throw new Error('crypto.createDecipheriv: unsupported'); }
   };
@@ -729,6 +829,48 @@ function __bn_load_stream() {
   };
   function PassThrough(opts) { Transform.call(this, opts); }
   PassThrough.prototype = Object.create(Transform.prototype);
+  function finished(stream, opts, cb) {
+    if (typeof opts === 'function') { cb = opts; opts = undefined; }
+    if (typeof cb !== 'function') cb = function() {};
+    var done = false;
+    function end(err) {
+      if (done) return;
+      done = true;
+      cb(err);
+    }
+    if (stream && typeof stream.on === 'function') {
+      stream.on('finish', function() { end(); });
+      stream.on('end', function() { end(); });
+      stream.on('close', function() { end(); });
+      stream.on('error', function(err) { end(err || new Error('stream error')); });
+    } else end();
+    return stream;
+  }
+  function pipeline() {
+    var args = Array.prototype.slice.call(arguments);
+    var userCb = typeof args[args.length - 1] === 'function' ? args.pop() : function() {};
+    var settled = false;
+    function cb(err) {
+      if (settled) return;
+      settled = true;
+      userCb(err);
+    }
+    if (!args.length) {
+      cb(new Error('pipeline: no streams'));
+      return null;
+    }
+    var i;
+    for (i = 0; i < args.length - 1; i++) {
+      var src = args[i];
+      var dest = args[i + 1];
+      if (src && typeof src.on === 'function') src.on('error', cb);
+      if (src && typeof src.pipe === 'function') src.pipe(dest);
+    }
+    var last = args[args.length - 1];
+    if (last && typeof last.on === 'function') last.on('error', cb);
+    finished(last, function(err) { cb(err); });
+    return last;
+  }
   Readable.from = function(iterable) {
     var r = new Readable();
     setTimeout(function() {
@@ -743,7 +885,15 @@ function __bn_load_stream() {
     }, 0);
     return r;
   };
-  return { Readable: Readable, Writable: Writable, Duplex: Duplex, Transform: Transform, PassThrough: PassThrough };
+  return {
+    Readable: Readable,
+    Writable: Writable,
+    Duplex: Duplex,
+    Transform: Transform,
+    PassThrough: PassThrough,
+    pipeline: pipeline,
+    finished: finished
+  };
 }
 
 function __bn_load_util() {
@@ -1058,13 +1208,20 @@ function __bn_register_http(which) {
           res.end(bodyParts.join(''));
         }
       };
+      var rawBody = req.body == null ? '' : String(req.body);
       var nodeReq = {
         method: req.method || 'GET',
         url: req.url || '/',
         headers: req.headers || {},
         httpVersion: '1.1',
         upgrade: false,
-        on: function() { return nodeReq; }
+        on: function(ev, fn) {
+          if (typeof fn === 'function') {
+            if (ev === 'data' && rawBody) fn(rawBody);
+            if (ev === 'end') fn();
+          }
+          return nodeReq;
+        }
       };
       try { h(nodeReq, nodeRes); }
       catch (e) { nodeRes.writeHead(500, { 'Content-Type': 'text/plain' }); nodeRes.end(String(e)); }
@@ -1080,10 +1237,119 @@ function __bn_register_http(which) {
     if (typeof cb === 'function') setTimeout(cb, 0);
     return self;
   };
+  function IncomingMessage(parsed) {
+    var Readable = loadCore('stream').Readable;
+    Readable.call(this);
+    this.statusCode = parsed && parsed.status != null ? (parsed.status | 0) : 0;
+    this.statusMessage = '';
+    this.httpVersion = '1.1';
+    this.headers = {};
+    var h = (parsed && parsed.headers) || {};
+    for (var k in h) {
+      if (Object.prototype.hasOwnProperty.call(h, k)) this.headers[String(k).toLowerCase()] = String(h[k]);
+    }
+    this._body = parsed && parsed.body != null ? String(parsed.body) : '';
+  }
+  var ReadableP = loadCore('stream').Readable;
+  IncomingMessage.prototype = Object.create(ReadableP.prototype);
+  function deliver(res) {
+    if (res._body) res.push(res._body);
+    res.push(null);
+  }
+  function ClientRequest(opts, cb) {
+    EE.call(this);
+    this._opts = opts || {};
+    this._cb = cb;
+    this._headers = {};
+    var h = this._opts.headers || {};
+    for (var k in h) if (Object.prototype.hasOwnProperty.call(h, k)) this._headers[k] = h[k];
+    this._body = [];
+  }
+  ClientRequest.prototype = Object.create(EE.prototype);
+  ClientRequest.prototype.setHeader = function(k, v) { this._headers[k] = v; return this; };
+  ClientRequest.prototype.write = function(chunk) {
+    this._body.push(chunk == null ? '' : String(chunk));
+    return true;
+  };
+  ClientRequest.prototype.end = function(chunk) {
+    if (chunk != null) this.write(chunk);
+    var opts = this._opts;
+    var host = String(opts.hostname || opts.host || '127.0.0.1');
+    var colon = host.indexOf(':');
+    if (colon >= 0 && host.charAt(0) !== '[') host = host.slice(0, colon);
+    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+      this.emit('error', new Error(which + '.request: only virtual localhost is available'));
+      return this;
+    }
+    var port = opts.port | 0;
+    var path = opts.path || '/';
+    var method = String(opts.method || 'GET').toUpperCase();
+    var raw = '';
+    try {
+      raw = __bn.httpDispatch ? __bn.httpDispatch(port, method, path, JSON.stringify(this._headers), this._body.join('')) : '';
+    } catch (err) {
+      this.emit('error', err);
+      return this;
+    }
+    if (!raw) {
+      var refused = new Error('connect ECONNREFUSED 127.0.0.1:' + port);
+      refused.code = 'ECONNREFUSED';
+      this.emit('error', refused);
+      return this;
+    }
+    var parsed;
+    try { parsed = JSON.parse(raw); }
+    catch (err2) { this.emit('error', err2); return this; }
+    var res = new IncomingMessage(parsed);
+    if (typeof this._cb === 'function') this._cb(res);
+    this.emit('response', res);
+    deliver(res);
+    return this;
+  };
+  function parseTarget(url, options, cb) {
+    if (url && typeof url === 'object') {
+      cb = typeof options === 'function' ? options : cb;
+      options = url;
+      url = null;
+    } else if (typeof options === 'function') {
+      cb = options;
+      options = {};
+    }
+    options = Object.assign({}, options || {});
+    if (typeof url === 'string') {
+      var rest = url;
+      var proto = rest.indexOf('://');
+      if (proto >= 0) rest = rest.slice(proto + 3);
+      var slash = rest.indexOf('/');
+      var authority = slash >= 0 ? rest.slice(0, slash) : rest;
+      var path = slash >= 0 ? rest.slice(slash) : '/';
+      var hostname = authority;
+      var port = '';
+      var c = authority.lastIndexOf(':');
+      if (c > 0 && authority.charAt(0) !== '[') {
+        hostname = authority.slice(0, c);
+        port = authority.slice(c + 1);
+      }
+      if (!options.hostname && !options.host) options.hostname = hostname;
+      if (!options.port && port) options.port = port;
+      if (!options.path) options.path = path || '/';
+    }
+    if (!options.method) options.method = 'GET';
+    return { options: options, cb: cb };
+  }
   return {
     createServer: function(handler) { return new Server(handler); },
-    request: function() { throw new Error(which + '.request: use virtual servers / fetch allowlist'); },
-    get: function() { throw new Error(which + '.get: use virtual servers / fetch allowlist'); }
+    request: function(url, options, cb) {
+      var spec = parseTarget(url, options, cb);
+      return new ClientRequest(spec.options, spec.cb);
+    },
+    get: function(url, options, cb) {
+      var spec = parseTarget(url, options, cb);
+      spec.options.method = 'GET';
+      var req = new ClientRequest(spec.options, spec.cb);
+      req.end();
+      return req;
+    }
   };
 }
 
@@ -1184,6 +1450,56 @@ function __bn_load_express() {
 function loadCore(name) {
   if (name === 'buffer') return { Buffer: Buffer };
   if (name === 'fs') {
+    var __bn_fds = Object.create(null);
+    var __bn_next_fd = 3;
+    function __bn_fs_code(code, msg) {
+      var e = new Error(msg || code); e.code = code; throw e;
+    }
+    function __bn_flag_mode(flags) {
+      if (typeof flags === 'number') {
+        var acc = flags & 3;
+        return {
+          read: acc !== 1,
+          write: acc !== 0,
+          append: (flags & 1024) !== 0,
+          trunc: (flags & 512) !== 0,
+          creat: (flags & 64) !== 0 || (flags & 512) !== 0
+        };
+      }
+      var s = String(flags == null ? 'r' : flags);
+      var plus = s.indexOf('+') >= 0;
+      return {
+        read: s.indexOf('r') >= 0 || plus,
+        write: s.indexOf('w') >= 0 || s.indexOf('a') >= 0 || plus,
+        append: s.indexOf('a') >= 0,
+        trunc: s.indexOf('w') >= 0,
+        creat: s.indexOf('w') >= 0 || s.indexOf('a') >= 0
+      };
+    }
+    function __bn_read_all(path) {
+      var b = __bn.readBytes ? __bn.readBytes(String(path)) : null;
+      var arr = [];
+      var i;
+      if (b == null) {
+        var t = __bn.readFile(String(path));
+        if (t == null) return null;
+        var enc = Buffer._encode(t, 'utf8');
+        for (i = 0; i < enc.length; i++) arr.push(enc[i] & 255);
+        return arr;
+      }
+      if (typeof ArrayBuffer !== 'undefined' && b instanceof ArrayBuffer) b = new Uint8Array(b);
+      for (i = 0; i < b.length; i++) arr.push(b[i] & 255);
+      return arr;
+    }
+    function __bn_write_all(path, arr) {
+      var u8 = new Uint8Array(arr.length);
+      for (var i = 0; i < arr.length; i++) u8[i] = arr[i] & 255;
+      if (__bn.writeBytes) {
+        if (!__bn.writeBytes(String(path), u8.buffer)) __bn_fs_code('EIO', 'EIO');
+        return;
+      }
+      if (!__bn.writeFile(String(path), Buffer.from(u8).toString())) __bn_fs_code('EIO', 'EIO');
+    }
     var fs = {
       constants: {
         F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
@@ -1403,6 +1719,130 @@ function loadCore(name) {
         }
         if (!__bn.writeFile(String(dest), t)) throw new Error('EIO');
       },
+      cpSync: function(src, dest, opts) {
+        src = String(src);
+        dest = String(dest);
+        var kind = __bn.lstatKind ? __bn.lstatKind(src) : null;
+        if (!kind) {
+          if (!__bn.exists(src)) {
+            var missing = new Error('ENOENT: ' + src); missing.code = 'ENOENT'; throw missing;
+          }
+          kind = __bn.isDir(src) ? 'dir' : 'file';
+        }
+        if (kind === 'directory') kind = 'dir';
+        if (kind === 'dir') {
+          if (!(opts && opts.recursive)) {
+            var eis = new Error('EISDIR: ' + src); eis.code = 'EISDIR'; throw eis;
+          }
+          if (!__bn.mkdir(dest, true)) throw new Error('EIO mkdir: ' + dest);
+          var names = __bn.readdir(src) || [];
+          for (var i = 0; i < names.length; i++) {
+            var child = names[i];
+            fs.cpSync(src.replace(/\/$/, '') + '/' + child, dest.replace(/\/$/, '') + '/' + child, opts);
+          }
+          return;
+        }
+        if (kind === 'symlink') {
+          var target = __bn.readlink ? __bn.readlink(src) : null;
+          if (target == null) throw new Error('EINVAL: ' + src);
+          fs.symlinkSync(target, dest);
+          return;
+        }
+        fs.copyFileSync(src, dest);
+      },
+      rmSync: function(p, opts) {
+        p = String(p);
+        var force = !!(opts && opts.force);
+        if (!__bn.exists(p)) {
+          if (force) return;
+          var missing = new Error('ENOENT: ' + p); missing.code = 'ENOENT'; throw missing;
+        }
+        var kind = __bn.lstatKind ? __bn.lstatKind(p) : (__bn.isDir(p) ? 'dir' : 'file');
+        if (kind === 'directory') kind = 'dir';
+        if (kind === 'symlink') {
+          if (!__bn.unlink(p) && __bn.exists(p)) throw new Error('EPERM: ' + p);
+          return;
+        }
+        if (kind === 'dir') {
+          if (!(opts && opts.recursive)) {
+            var eis = new Error('EISDIR: ' + p); eis.code = 'EISDIR'; throw eis;
+          }
+          var names = __bn.readdir(p) || [];
+          for (var i = 0; i < names.length; i++) {
+            fs.rmSync(p.replace(/\/$/, '') + '/' + names[i], { recursive: true, force: true });
+          }
+          if (__bn.rmdir && !__bn.rmdir(p) && __bn.exists(p)) throw new Error('ENOTEMPTY: ' + p);
+          return;
+        }
+        if (!__bn.unlink(p) && __bn.exists(p)) throw new Error('EPERM: ' + p);
+      },
+      openSync: function(p, flags) {
+        var path = String(p);
+        var mode = __bn_flag_mode(flags);
+        var exists = !!__bn.exists(path);
+        if (!exists && !mode.creat) __bn_fs_code('ENOENT', 'ENOENT: ' + path);
+        if (mode.trunc || (!exists && mode.creat)) __bn_write_all(path, []);
+        var data = __bn_read_all(path) || [];
+        var fd = __bn_next_fd++;
+        __bn_fds[fd] = { path: path, pos: mode.append ? data.length : 0, read: mode.read, write: mode.write, append: mode.append };
+        return fd;
+      },
+      readSync: function(fd, buf, offset, length, position) {
+        var slot = __bn_fds[fd];
+        if (!slot || !slot.read) __bn_fs_code('EBADF');
+        var data = __bn_read_all(slot.path) || [];
+        var pos = typeof position === 'number' ? position : slot.pos;
+        if (pos < 0) pos = 0;
+        offset = offset == null ? 0 : offset | 0;
+        var dest = (Buffer.isBuffer && Buffer.isBuffer(buf)) ? buf._data : buf;
+        if (!dest || typeof dest.length !== 'number') __bn_fs_code('EINVAL', 'EINVAL');
+        length = length == null ? dest.length - offset : length | 0;
+        var n = 0;
+        while (n < length && pos + n < data.length && offset + n < dest.length) {
+          dest[offset + n] = data[pos + n] & 255;
+          n++;
+        }
+        if (typeof position !== 'number') slot.pos = pos + n;
+        return n;
+      },
+      writeSync: function(fd, data, offset, length, position) {
+        var slot = __bn_fds[fd];
+        if (!slot || !slot.write) __bn_fs_code('EBADF');
+        var bytes, pos;
+        if (typeof data === 'string') {
+          var enc = 'utf8';
+          pos = null;
+          if (typeof offset === 'number') pos = offset;
+          if (typeof length === 'string') enc = length;
+          else if (typeof offset === 'string') enc = offset;
+          bytes = Buffer._encode(data, enc);
+        } else {
+          var src = (Buffer.isBuffer && Buffer.isBuffer(data)) ? data._data : data;
+          offset = offset == null ? 0 : offset | 0;
+          length = length == null ? src.length - offset : length | 0;
+          bytes = [];
+          for (var i = 0; i < length; i++) bytes.push(src[offset + i] & 255);
+          pos = typeof position === 'number' ? position : null;
+        }
+        var file = __bn_read_all(slot.path) || [];
+        var at = slot.append ? file.length : (pos == null ? slot.pos : pos);
+        if (at < 0) at = 0;
+        while (file.length < at) file.push(0);
+        for (var j = 0; j < bytes.length; j++) file[at + j] = bytes[j] & 255;
+        __bn_write_all(slot.path, file);
+        if (!slot.append && pos == null) slot.pos = at + bytes.length;
+        else if (slot.append) slot.pos = file.length;
+        return bytes.length;
+      },
+      closeSync: function(fd) {
+        if (!__bn_fds[fd]) __bn_fs_code('EBADF');
+        delete __bn_fds[fd];
+      },
+      fstatSync: function(fd) {
+        var slot = __bn_fds[fd];
+        if (!slot) __bn_fs_code('EBADF');
+        return fs.statSync(slot.path);
+      },
       statSync: function(p) {
         var path = String(p);
         if (!__bn.exists(path)) throw new Error('ENOENT: ' + path);
@@ -1432,11 +1872,34 @@ function loadCore(name) {
       access: function(p) { return Promise.resolve().then(function() { return fs.accessSync(p); }); },
       realpath: function(p) { return Promise.resolve().then(function() { return fs.realpathSync(p); }); },
       copyFile: function(src, dest) { return Promise.resolve().then(function() { return fs.copyFileSync(src, dest); }); },
+      cp: function(src, dest, opts) { return Promise.resolve().then(function() { return fs.cpSync(src, dest, opts); }); },
+      rm: function(p, opts) { return Promise.resolve().then(function() { return fs.rmSync(p, opts); }); },
       symlink: function(t, p) { return Promise.resolve().then(function() { return fs.symlinkSync(t, p); }); },
       readlink: function(p) { return Promise.resolve().then(function() { return fs.readlinkSync(p); }); },
       chmod: function(p, mode) { return Promise.resolve().then(function() { return fs.chmodSync(p, mode); }); },
       utimes: function(p, a, m) { return Promise.resolve().then(function() { return fs.utimesSync(p, a, m); }); }
     };
+    if (fs.promises && !fs.promises.open) {
+      fs.promises.open = function(p, flags) {
+        return Promise.resolve().then(function() {
+          var fd = fs.openSync(p, flags);
+          return {
+            fd: fd,
+            read: function(buf, off, len, pos) {
+              return Promise.resolve().then(function() {
+                var n = fs.readSync(fd, buf, off, len, pos);
+                return { bytesRead: n, buffer: buf };
+              });
+            },
+            write: function(buf, off, len, pos) {
+              return Promise.resolve().then(function() { return fs.writeSync(fd, buf, off, len, pos); });
+            },
+            stat: function() { return Promise.resolve().then(function() { return fs.fstatSync(fd); }); },
+            close: function() { return Promise.resolve().then(function() { fs.closeSync(fd); }); }
+          };
+        });
+      };
+    }
     return fs;
   }
   if (name === 'path') {
@@ -1611,6 +2074,23 @@ function loadCore(name) {
   }
   if (name === 'util') return __bn_load_util();
   if (name === 'stream') return __bn_load_stream();
+  if (name === 'stream/promises') {
+    var streamMod = loadCore('stream');
+    return {
+      pipeline: function() {
+        var args = Array.prototype.slice.call(arguments);
+        return new Promise(function(resolve, reject) {
+          args.push(function(err) { if (err) reject(err); else resolve(); });
+          streamMod.pipeline.apply(null, args);
+        });
+      },
+      finished: function(stream, opts) {
+        return new Promise(function(resolve, reject) {
+          streamMod.finished(stream, opts, function(err) { if (err) reject(err); else resolve(); });
+        });
+      }
+    };
+  }
   if (name === 'string_decoder') return __bn_load_string_decoder();
   if (name === 'timers') {
     return {
@@ -1722,7 +2202,7 @@ function loadCore(name) {
         else result = { pid: 0, stdout: '', stderr: '', running: false, code: 0, cwd: dest };
       } else if (cmd0 === 'export') {
         result = { pid: 0, stdout: '', stderr: '', running: false, code: 0 };
-      }       else if (isNodeCmd(cmd0)) result = __bn.spawnNode(args0[0] || '', cwd, env);
+      }       else if (isNodeCmd(cmd0)) result = spawnNode(args0[0] || '', args0, cwd, env);
       else {
         var bin = join(cwd, 'node_modules/.bin/' + cmd0);
         if (__bn.exists && __bn.exists(bin)) result = __bn.spawnNode(bin, cwd, env);
@@ -1808,6 +2288,28 @@ function loadCore(name) {
       if (bg && result && result.pid) __bn_bg_jobs.push(result.pid);
       return result;
     }
+    function mergedEnv(env) {
+      var base = {};
+      var k;
+      if (process.env) {
+        for (k in process.env) {
+          if (Object.prototype.hasOwnProperty.call(process.env, k)) base[k] = String(process.env[k]);
+        }
+      }
+      if (env) {
+        for (k in env) {
+          if (Object.prototype.hasOwnProperty.call(env, k) && env[k] != null) base[k] = String(env[k]);
+        }
+      }
+      return base;
+    }
+    function spawnNode(script, args, cwd, env) {
+      var extra = [];
+      for (var i = 1; i < (args || []).length; i++) extra.push(String(args[i]));
+      var envJson = '{}';
+      try { envJson = JSON.stringify(mergedEnv(env)); } catch (e) {}
+      return __bn.spawnNode(String(script || ''), cwd, envJson, extra);
+    }
     function spawn(cmd, args, opts) {
       args = args || [];
       opts = opts || {};
@@ -1818,10 +2320,10 @@ function loadCore(name) {
         var result;
         if (isShellCmd(cmd) && args[0] === '-c') {
           result = runShellScript(args[1] || '', cwd, env);
-        } else if (isNodeCmd(cmd)) result = __bn.spawnNode(args[0] || '', cwd, env);
+        } else if (isNodeCmd(cmd)) result = spawnNode(args[0] || '', args, cwd, env);
         else {
           var bin = join(cwd, 'node_modules/.bin/' + String(cmd));
-          if (__bn.exists && __bn.exists(bin)) result = __bn.spawnNode(bin, cwd, env);
+          if (__bn.exists && __bn.exists(bin)) result = spawnNode(bin, [bin].concat(args), cwd, env);
           else result = __bn.spawnCmd(String(cmd), args.map(String), cwd);
         }
         child.pid = result.pid;
@@ -1879,21 +2381,69 @@ function loadCore(name) {
     };
   }
   if (name === 'readline') {
+    var RLEE = loadCore('events').EventEmitter;
+    function ReadlineInterface(opts) {
+      RLEE.call(this);
+      opts = opts || {};
+      this.input = opts.input || null;
+      this.output = opts.output || null;
+      this._buf = '';
+      this._closed = false;
+      this._question = null;
+      var self = this;
+      this._onData = function(chunk) {
+        if (self._closed) return;
+        var text = typeof chunk === 'string' ? chunk : (chunk && chunk.toString ? chunk.toString() : String(chunk));
+        self._push(text);
+      };
+      if (this.input && typeof this.input.on === 'function') this.input.on('data', this._onData);
+    }
+    ReadlineInterface.prototype = Object.create(RLEE.prototype);
+    ReadlineInterface.prototype._deliver = function(line) {
+      if (this._question) {
+        var ask = this._question;
+        this._question = null;
+        ask(line);
+      }
+      this.emit('line', line);
+    };
+    ReadlineInterface.prototype._push = function(text) {
+      var parts = (this._buf + text).split(/\r?\n/);
+      this._buf = parts.pop();
+      for (var i = 0; i < parts.length; i++) this._deliver(parts[i]);
+    };
+    ReadlineInterface.prototype.question = function(q, cb) {
+      if (this.output && typeof this.output.write === 'function') this.output.write(String(q));
+      this._question = typeof cb === 'function' ? cb : function() {};
+      return this;
+    };
+    ReadlineInterface.prototype.close = function() {
+      if (this._closed) return this;
+      this._closed = true;
+      if (this.input && typeof this.input.off === 'function') this.input.off('data', this._onData);
+      if (this._buf.length) {
+        var rest = this._buf;
+        this._buf = '';
+        this._deliver(rest);
+      }
+      if (this.input && typeof this.input.pause === 'function') this.input.pause();
+      this.emit('close');
+      return this;
+    };
+    ReadlineInterface.prototype.pause = function() {
+      if (this.input && typeof this.input.pause === 'function') this.input.pause();
+      return this;
+    };
+    ReadlineInterface.prototype.resume = function() {
+      if (this.input && typeof this.input.resume === 'function') this.input.resume();
+      return this;
+    };
+    ReadlineInterface.prototype.write = function(s) {
+      if (this.output && typeof this.output.write === 'function') this.output.write(s);
+      return this;
+    };
     return {
-      createInterface: function(opts) {
-        opts = opts || {};
-        var closed = false;
-        var iface = {
-          question: function(q, cb) { if (cb) setTimeout(function() { cb(''); }, 0); },
-          close: function() { closed = true; if (opts.input && opts.input.resume) {} },
-          on: function() { return iface; },
-          once: function() { return iface; },
-          write: function() {},
-          pause: function() { return iface; },
-          resume: function() { return iface; }
-        };
-        return iface;
-      },
+      createInterface: function(opts) { return new ReadlineInterface(opts); },
       cursorTo: function() {},
       clearLine: function() {},
       clearScreenDown: function() {},
@@ -2529,3 +3079,49 @@ function __bn_install_async_bridge() {
   }
 }
 __bn_install_async_bridge();
+
+function __bn_install_stdin() {
+  if (typeof process === 'undefined' || !__bn || typeof __bn.readStdin !== 'function') return;
+  if (process.stdin && process.stdin.__bn_live) return;
+  var EE = loadCore('events').EventEmitter;
+  function Stdin() {
+    EE.call(this);
+    this.isTTY = false;
+    this.readable = true;
+    this._flowing = false;
+    this._poll = 0;
+  }
+  Stdin.prototype = Object.create(EE.prototype);
+  Stdin.prototype.read = function() {
+    var ab = __bn.readStdin();
+    if (!ab || !ab.byteLength) return null;
+    return Buffer.from(ab);
+  };
+  Stdin.prototype.pause = function() {
+    this._flowing = false;
+    if (this._poll) {
+      clearInterval(this._poll);
+      this._poll = 0;
+    }
+    return this;
+  };
+  Stdin.prototype.resume = function() {
+    if (this._flowing) return this;
+    this._flowing = true;
+    var self = this;
+    this._poll = setInterval(function() {
+      var chunk = self.read();
+      if (chunk && chunk.length) self.emit('data', chunk);
+    }, 0);
+    return this;
+  };
+  Stdin.prototype.on = function(ev, fn) {
+    EE.prototype.on.call(this, ev, fn);
+    if (ev === 'data') this.resume();
+    return this;
+  };
+  Stdin.prototype.setRawMode = function() { return this; };
+  Stdin.prototype.__bn_live = true;
+  process.stdin = new Stdin();
+}
+__bn_install_stdin();

@@ -379,6 +379,12 @@ size_t Kernel::write_stdin(Pid pid, const uint8_t* data, size_t n) {
   return p->stdin_buf.write(data, n);
 }
 
+size_t Kernel::read_stdin(Pid pid, uint8_t* data, size_t n) {
+  auto p = get(pid);
+  if (!p || !data || !n) return 0;
+  return p->stdin_buf.read(data, n);
+}
+
 size_t Kernel::write_stdout(Pid pid, const uint8_t* data, size_t n) {
   auto p = get(pid);
   if (!p || !data || !n) return 0;

@@ -6,23 +6,23 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch/**chmod/utimes**/mode+mtime, binary buffer I/O, host `rename` |
+| `fs` / `fs/promises` | ok (subset) | + symlink/lstat/watch/**chmod/utimes/cp/rm/open fd**/mode+mtime, binary buffer I/O, host `rename` |
 | `path` | partial | posix only |
-| `process` | partial | cwd, argv, **env from spawn**, exit, nextTick |
+| `process` | partial | cwd, argv, **env from spawn**, exit, nextTick, **stdin `data`** |
 | `buffer` | ok (subset) | alloc/from/concat/utf8/base64/hex + index Proxy |
 | `events` | ok | EventEmitter basics |
-| `stream` | ok (subset) | Readable/Writable/Duplex/Transform + `.pipe()` |
-| `http` / `https` | ok (subset) | createServer + listen → HttpBridge; chunked write/end; upgrade stub; HMR reload poll |
+| `stream` | ok (subset) | Readable/Writable/Duplex/Transform + `.pipe()`, `pipeline`, `finished`, `stream/promises` |
+| `http` / `https` | ok (subset) | createServer + listen → HttpBridge; `request`/`get` to virtual localhost; chunked write/end; upgrade stub |
 | `connect` | stub | middleware stack → `http.createServer` |
 | `ws` | stub | Server/handleUpgrade no-op sockets |
 | `corepack` | stub | npm-only; yarn/pnpm not executed |
 | `net` | ok (subset) | Server/Socket on virtual ports via HttpBridge |
-| `child_process` | ok (subset) | spawn/execFile; `parent_pid`; `kill` = kill tree; max 32 procs |
+| `child_process` | ok (subset) | spawn/execFile pass argv after the script and `env`; `kill` = kill tree; max 32 procs |
 | `module` / `require` | ok | CJS + **createRequire** + `exports` field + ESM rewrite |
 | `url` | ok (subset) | parse + `fileURLToPath` / `pathToFileURL` |
 | `util` | ok (subset) | promisify/callbackify/format/inherits/deprecate/types |
 | `os` | ok (subset) | platform linux, tmpdir, cpus, homedir |
-| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash(**sha1/sha256/sha384/sha512**) |
+| `crypto` | ok (subset) | randomFillSync, randomBytes, createHash / createHmac (**sha1/sha256/sha384/sha512**), timingSafeEqual |
 | `zlib` | ok (subset) | gzip/gunzip/deflate/inflate sync (+ streams) |
 | `string_decoder` | ok (subset) | |
 | `timers` / `timers/promises` | ok (subset) | |
@@ -39,7 +39,7 @@ Target: Node 20 compatible surface for tooling (Vite first, then Next).
 | `querystring` | ok (subset) | parse/stringify + arrays |
 | `constants` / `punycode` / `sys` | stub | sys → util |
 | `tty` | ok (stub) | `isatty` → false; ReadStream/WriteStream |
-| `readline` | ok (stub) | createInterface MVP |
+| `readline` | ok (subset) | `createInterface` splits `input` into `line` events; `question` waits for the next line |
 
 ## Vite checklist
 

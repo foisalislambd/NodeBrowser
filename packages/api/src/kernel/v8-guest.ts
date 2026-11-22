@@ -341,8 +341,17 @@ export function runNodeOnV8(
       const out = handler({ method: String(method || 'GET'), url: String(path || '/'), headers, body: body == null ? '' : String(body) });
       return JSON.stringify(out);
     },
-    spawnNode: (script: string, childCwd: string, childEnv: unknown): SpawnResult => {
-      const child = runNodeOnV8(mod, k, [String(script || '')], childCwd || work, asEnv(childEnv));
+    spawnNode: (script: string, childCwd: string, childEnv: unknown, extra?: unknown): SpawnResult => {
+      const more = Array.isArray(extra) ? extra.map((item) => String(item)) : [];
+      let envValue = childEnv;
+      if (typeof childEnv === 'string') {
+        try {
+          envValue = JSON.parse(childEnv) as unknown;
+        } catch {
+          envValue = {};
+        }
+      }
+      const child = runNodeOnV8(mod, k, [String(script || ''), ...more], childCwd || work, asEnv(envValue));
       return { pid: 0, stdout: child.stdout, stderr: child.stderr, running: false, code: child.code };
     },
     spawnCmd: (cmd: string, cmdArgs: unknown, childCwd: string): SpawnResult => {

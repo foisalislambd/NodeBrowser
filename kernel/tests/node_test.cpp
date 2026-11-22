@@ -1,8 +1,11 @@
 #include "bn/node_runner.hpp"
 #include "bn/process.hpp"
 
+#include <chrono>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <thread>
 
 using namespace bn;
 
@@ -210,6 +213,9 @@ int main() {
         "const buf=Buffer.alloc(4); crypto.randomFillSync(buf);\n"
         "const hex=crypto.createHash('sha256').update('abc').digest('hex');\n"
         "if(hex!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') throw new Error('sha');\n"
+        "const hk=crypto.createHmac('sha256','Jefe').update('what do ya want for nothing?').digest('hex');\n"
+        "if(hk!=='5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843') throw new Error('hmac '+hk);\n"
+        "if(!crypto.timingSafeEqual(Buffer.from('ab'), Buffer.from('ab'))) throw new Error('tse');\n"
         "const dig=crypto.createHash('sha256').update('abc').digest();\n"
         "if(dig.length!==32) throw new Error('digest buf');\n"
         "fs.writeFileSync('/out.bin', Buffer.from([9,8,7]));\n"
@@ -220,6 +226,36 @@ int main() {
     auto code = k.wait(pid);
     CHECK(code.has_value() && *code == 0);
     CHECK(k.get(pid)->stdout_buf.read_all_string().find("bufok") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/cp.js",
+        "const fs=require('fs');\n"
+        "const stream=require('stream');\n"
+        "fs.mkdirSync('/cp/a/b',{recursive:true});\n"
+        "fs.writeFileSync('/cp/a/b/f.txt','tree');\n"
+        "fs.cpSync('/cp/a','/cp/out',{recursive:true});\n"
+        "if(fs.readFileSync('/cp/out/b/f.txt')!=='tree') throw new Error('cp');\n"
+        "var dirThrew=false;\n"
+        "try{fs.cpSync('/cp/a','/cp/nope');}catch(e){dirThrew=e.code==='EISDIR';}\n"
+        "if(!dirThrew) throw new Error('cp dir');\n"
+        "fs.rmSync('/cp/out',{recursive:true});\n"
+        "if(fs.existsSync('/cp/out')) throw new Error('rm');\n"
+        "fs.rmSync('/cp/missing',{force:true});\n"
+        "const chunks=[];\n"
+        "const r=new stream.Readable({read(){}});\n"
+        "const w=new stream.Writable({write(c,_,cb){chunks.push(String(c));cb();}});\n"
+        "stream.pipeline(r,w,(err)=>{\n"
+        "  if(err) throw err;\n"
+        "  if(chunks.join('')!=='hi') throw new Error('pipeline '+chunks.join(''));\n"
+        "  console.log('cpok');\n"
+        "});\n"
+        "r.push('hi'); r.push(null);\n");
+    auto pid = k.spawn("node", {"/cp.js"}, {}, "/");
+    auto code = k.wait(pid);
+    CHECK(code.has_value() && *code == 0);
+    auto cpOut = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(cpOut.find("cpok") != std::string::npos);
   }
   // Intermediate symlink must resolve for read/lstat of nested path
   {
@@ -414,6 +450,146 @@ int main() {
     CHECK(k.wait(pid).value_or(1) == 0);
     auto out = k.get(pid)->stdout_buf.read_all_string();
     CHECK(out.find("AB") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/stdin.js",
+        "process.stdin.on('data', function(buf) {\n"
+        "  console.log('in=' + buf.toString());\n"
+        "  process.exit(0);\n"
+        "});\n");
+    auto pid = k.spawn("node", {"/stdin.js"}, {}, "/");
+    CHECK(!k.wait(pid).has_value());
+    const char* msg = "ping";
+    CHECK(k.write_stdin(pid, reinterpret_cast<const uint8_t*>(msg), 4) == 4);
+    std::optional<int> code;
+    for (int i = 0; i < 20 && !code; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      code = k.wait(pid);
+    }
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("in=ping") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/rl.js",
+        "const rl=require('readline').createInterface({input:process.stdin,output:process.stdout});\n"
+        "rl.question('name? ', function(a){ console.log('ans='+a); });\n"
+        "rl.on('line', function(line){ console.log('line='+line); if(line==='quit') rl.close(); });\n"
+        "rl.on('close', function(){ process.exit(0); });\n");
+    auto pid = k.spawn("node", {"/rl.js"}, {}, "/");
+    CHECK(!k.wait(pid).has_value());
+    const char* lines = "ada\nquit\n";
+    CHECK(k.write_stdin(pid, reinterpret_cast<const uint8_t*>(lines), 9) == 9);
+    std::optional<int> code;
+    for (int i = 0; i < 20 && !code; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      code = k.wait(pid);
+    }
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("name? ") != std::string::npos);
+    CHECK(out.find("ans=ada") != std::string::npos);
+    CHECK(out.find("line=quit") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/http.js",
+        "const http=require('http');\n"
+        "http.createServer(function(req,res){\n"
+        "  var b='';\n"
+        "  req.on('data', function(c){ b+=c; });\n"
+        "  req.on('end', function(){\n"
+        "    res.writeHead(201, {'X-Test':'yes'});\n"
+        "    res.end(req.method+' '+req.url+' '+b);\n"
+        "  });\n"
+        "}).listen(3210);\n"
+        "http.request({hostname:'127.0.0.1', port:3210, path:'/x', method:'POST'}, function(res){\n"
+        "  var body='';\n"
+        "  res.on('data', function(c){ body+=c; });\n"
+        "  res.on('end', function(){ console.log('status='+res.statusCode+' body='+body+' x='+res.headers['x-test']); });\n"
+        "}).end('z');\n"
+        "var miss=http.request({hostname:'127.0.0.1', port:9, path:'/'}, function(){});\n"
+        "miss.on('error', function(e){ console.log('code='+e.code); });\n"
+        "miss.end();\n"
+        "var blocked=http.request({hostname:'example.com', port:80, path:'/'}, function(){});\n"
+        "blocked.on('error', function(){ console.log('blocked=1'); });\n"
+        "blocked.end();\n");
+    auto pid = k.spawn("node", {"/http.js"}, {}, "/");
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("status=201") != std::string::npos);
+    CHECK(out.find("body=POST /x z") != std::string::npos);
+    CHECK(out.find("x=yes") != std::string::npos);
+    CHECK(out.find("code=ECONNREFUSED") != std::string::npos);
+    CHECK(out.find("blocked=1") != std::string::npos);
+    k.kill(pid);
+  }
+  {
+    k.vfs().write_text(
+        "/child.js",
+        "console.log(process.argv.slice(2).join('+') + ':' + process.env.BN_CHILD);\n");
+    k.vfs().write_text(
+        "/parent.js",
+        "const cp=require('child_process');\n"
+        "cp.execFile(process.execPath, ['/child.js', 'a', 'b'], {env:{BN_CHILD:'ok'}}, function(err, stdout){\n"
+        "  console.log('child=' + String(stdout||'').trim() + ' bad=' + (err?1:0));\n"
+        "  process.exit(0);\n"
+        "});\n");
+    auto pid = k.spawn("node", {"/parent.js"}, {}, "/");
+    std::optional<int> code;
+    for (int i = 0; i < 20 && !code; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      code = k.wait(pid);
+    }
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("child=a+b:ok") != std::string::npos);
+    CHECK(out.find("bad=0") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/fd.js",
+        "const fs=require('fs');\n"
+        "const w=fs.openSync('/fd.txt','w');\n"
+        "if(fs.writeSync(w, Buffer.from('hello'))!==5) throw new Error('write');\n"
+        "fs.closeSync(w);\n"
+        "const buf=Buffer.alloc(8);\n"
+        "const r=fs.openSync('/fd.txt','r');\n"
+        "const n=fs.readSync(r, buf, 0, 8, 0);\n"
+        "const st=fs.fstatSync(r);\n"
+        "fs.closeSync(r);\n"
+        "var bad=false;\n"
+        "try{fs.readSync(r, buf, 0, 1, 0);}catch(e){bad=e.code==='EBADF';}\n"
+        "const a=fs.openSync('/fd.txt','a');\n"
+        "fs.writeSync(a, '!');\n"
+        "fs.closeSync(a);\n"
+        "console.log('fd='+n+':'+buf.toString().slice(0,n)+' size='+st.size+' bad='+bad+' all='+fs.readFileSync('/fd.txt'));\n");
+    auto pid = k.spawn("node", {"/fd.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("fd=5:hello") != std::string::npos);
+    CHECK(out.find("bad=true") != std::string::npos);
+    CHECK(out.find("all=hello!") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/fd-p.js",
+        "const fs=require('fs');\n"
+        "const w=fs.openSync('/p.txt','w');\n"
+        "fs.writeSync(w, 'hi');\n"
+        "fs.closeSync(w);\n"
+        "fs.promises.open('/p.txt','r').then(function(h){\n"
+        "  var b=Buffer.alloc(4);\n"
+        "  return h.read(b,0,4,0).then(function(got){\n"
+        "    console.log('ph='+got.bytesRead+':'+b.toString().slice(0,got.bytesRead));\n"
+        "    return h.close();\n"
+        "  });\n"
+        "}).catch(function(e){ console.log('ERR '+(e&&e.code)+' '+(e&&e.message)); });\n");
+    auto pid = k.spawn("node", {"/fd-p.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("ph=2:hi") != std::string::npos);
   }
 #endif
 

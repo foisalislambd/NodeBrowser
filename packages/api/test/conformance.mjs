@@ -171,6 +171,75 @@ async function main() {
   assert(zlibOut.out.includes('sha512=ddaf35a193617aba'), 'sha512: ' + zlibOut.out);
   assert(zlibOut.out.includes('sha384=cb00753f45a35e8b'), 'sha384: ' + zlibOut.out);
 
+  // HMAC uses the guest module source. The V8 engine loads that file at boot,
+  // so this does not wait on a rebuilt WASM image.
+  {
+    const hmacBn = await NodeBrowser.boot({ useWasm: true, guestEngine: 'v8' });
+    await hmacBn.fs.writeFile(
+      '/home/project/hmac.js',
+      [
+        "const crypto = require('crypto');",
+        'const key20 = Buffer.alloc(20, 0x0b);',
+        "const h1 = crypto.createHmac('sha256', key20).update('Hi There').digest('hex');",
+        "if (h1 !== 'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7') throw new Error('hmac256 ' + h1);",
+        "const h2 = crypto.createHmac('SHA-256', 'Jefe').update('what do ya want ').update('for nothing?').digest('hex');",
+        "if (h2 !== '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843') throw new Error('hmac-jefe ' + h2);",
+        'const longKey = Buffer.alloc(131, 0xaa);',
+        "const h3 = crypto.createHmac('sha256', longKey).update('Test Using Larger Than Block-Size Key - Hash Key First').digest('hex');",
+        "if (h3 !== '60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54') throw new Error('hmac-long ' + h3);",
+        "const h4 = crypto.createHmac('sha1', key20).update('Hi There').digest('hex');",
+        "if (h4 !== 'b617318655057264e28bc0b6fb378c8ef146be00') throw new Error('hmac1 ' + h4);",
+        "const h5 = crypto.createHmac('sha512', key20).update('Hi There').digest('hex');",
+        "if (h5 !== '87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854') throw new Error('hmac512 ' + h5);",
+        "if (!crypto.timingSafeEqual(Buffer.from(h1, 'hex'), Buffer.from(h1, 'hex'))) throw new Error('tse');",
+        'let lenThrew = false;',
+        "try { crypto.timingSafeEqual(Buffer.from('a'), Buffer.from('ab')); } catch (e) { lenThrew = e.code === 'ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH'; }",
+        "if (!lenThrew) throw new Error('tse length');",
+        "if (crypto.getHashes().indexOf('sha384') < 0) throw new Error('hashes');",
+        "let twice = false;",
+        "try { const x = crypto.createHmac('sha256', 'k'); x.digest('hex'); x.digest('hex'); } catch (e) { twice = true; }",
+        "if (!twice) throw new Error('digest twice');",
+        "console.log('hmac=ok');",
+      ].join('\n'),
+    );
+    const hmacOut = await readOut(await hmacBn.spawn('node', ['/home/project/hmac.js'], { cwd: '/home/project' }));
+    assert(hmacOut.code === 0, 'hmac exit ' + hmacOut.code + ' ' + hmacOut.out);
+    assert(hmacOut.out.includes('hmac=ok'), hmacOut.out);
+
+    await hmacBn.fs.writeFile(
+      '/home/project/cp.js',
+      [
+        "const fs = require('fs');",
+        "const stream = require('stream');",
+        "fs.mkdirSync('/cp/a/b', { recursive: true });",
+        "fs.writeFileSync('/cp/a/b/f.txt', 'tree');",
+        "fs.cpSync('/cp/a', '/cp/out', { recursive: true });",
+        "if (fs.readFileSync('/cp/out/b/f.txt') !== 'tree') throw new Error('cp');",
+        'let dirThrew = false;',
+        "try { fs.cpSync('/cp/a', '/cp/nope'); } catch (e) { dirThrew = e.code === 'EISDIR'; }",
+        "if (!dirThrew) throw new Error('cp dir');",
+        "fs.rmSync('/cp/out', { recursive: true });",
+        "if (fs.existsSync('/cp/out')) throw new Error('rm');",
+        "fs.rmSync('/cp/missing', { force: true });",
+        'const chunks = [];',
+        'const r = new stream.Readable({ read() {} });',
+        'const w = new stream.Writable({ write(c, _, cb) { chunks.push(String(c)); cb(); } });',
+        'let piped = false;',
+        'stream.pipeline(r, w, (err) => {',
+        '  if (err) throw err;',
+        "  if (chunks.join('') !== 'hi') throw new Error('pipeline ' + chunks.join(''));",
+        '  piped = true;',
+        '});',
+        "r.push('hi'); r.push(null);",
+        "if (!piped) throw new Error('pipeline did not finish');",
+        "console.log('cpok');",
+      ].join('\n'),
+    );
+    const cpOut = await readOut(await hmacBn.spawn('node', ['/home/project/cp.js'], { cwd: '/home/project' }));
+    assert(cpOut.code === 0, 'cp exit ' + cpOut.code + ' ' + cpOut.out);
+    assert(cpOut.out.includes('cpok'), cpOut.out);
+  }
+
   // --- Phase 15: symlink + watch ---
   await bn.fs.writeFile(
     '/home/project/link.js',
