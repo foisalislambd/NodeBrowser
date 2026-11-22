@@ -65,17 +65,19 @@ Coverage is a Node 20-shaped subset aimed at tooling (Vite first, then Next). Fu
 
 | Module | Today |
 | --- | --- |
-| `fs` / `fs/promises` | Read, write, mkdir, cp, rm, rename, symlink, realpath, chmod, utimes, access (`R_OK` / `W_OK` / `X_OK`), watch, truncate, appendFile, and file descriptors (`open`, `read`, `write`, `close`, `fstat`, and `readFile` / `writeFile` on an open descriptor) |
+| `fs` / `fs/promises` | Read, write, mkdir, cp, rm, rename, symlink, realpath, chmod, utimes, access (`R_OK` / `W_OK` / `X_OK`), watch, truncate, appendFile, encodings (`utf8`, `hex`, `base64`, `buffer`), `readdir` with `withFileTypes`, callback `readFile` / `writeFile` / `readdir`, and file descriptors (`open`, `read`, `write`, `close`, `fstat`, and `readFile` / `writeFile` on an open descriptor) |
 | `module` | CommonJS `require`, `createRequire`, the `exports` field, ESM rewrite |
-| `http` / `https` | `createServer` plus `request` / `get` to a virtual server on localhost |
+| `http` / `https` | `createServer` plus `request` / `get` to a virtual server on localhost. Responses have `statusCode`, `statusMessage`, and case-insensitive headers |
 | `child_process` | `spawn` / `execFile` pass script arguments and `env` |
 | `stream` | Readable, Writable, `pipe`, `pipeline`, `finished` |
-| `crypto` | Hashes and HMAC (`sha1`, `sha256`, `sha384`, `sha512`), `timingSafeEqual`, `randomBytes` |
+| `crypto` | Hashes and HMAC (`sha1`, `sha256`, `sha384`, `sha512`), `pbkdf2Sync`, AES-CBC `createCipheriv` / `createDecipheriv`, `timingSafeEqual`, `randomBytes`, `randomInt`, `randomUUID` |
 | `readline` | `createInterface` splits input into `line`; `question` waits for the next line |
-| `process` | `cwd`, `chdir`, `argv`, `env`, `exit`, `nextTick`, stdin `data` events, `hrtime`, and `uptime` |
-| `zlib`, `buffer`, `path`, `assert`, `url`, `util` | Present as subsets. `path.win32` handles Windows separators and drive letters; `path.posix` stays `/` |
+| `events` | `on`, `once`, `prependListener`, `eventNames`, and `events.once` |
+| `process` | `cwd`, `chdir`, `argv`, `env`, `exit`, `nextTick`, stdin `data` and `end`, `hrtime`, and `uptime` |
+| `os` | Linux `platform`, `homedir`, `tmpdir`, and `constants` (signals, errno, priority) |
+| `zlib`, `buffer`, `path`, `assert`, `url`, `util` | Present as subsets. `Buffer` speaks `utf8` (including characters above U+FFFF), `hex`, `base64`, `base64url`, and `latin1`, and has `byteLength`, `equals`, `compare`, `copy`, `fill`, `indexOf`, 8/16/32-bit integer reads and writes, and `toJSON`. `assert.deepStrictEqual` compares objects, buffers, dates, and regular expressions. `util.format` keeps leftover arguments and `util.inspect` prints objects and buffers. `string_decoder` holds a UTF-8 character split across chunks. `path.basename` accepts a suffix, `path.extname` uses only the last segment, and `join` / `normalize` / `resolve` collapse `.` and `..`. `path.win32` handles Windows separators and drive letters; `path.posix` stays `/`. `url.fileURLToPath` and `pathToFileURL` round-trip POSIX file URLs. `url.parse` keeps auth, port, query, and hash, and `url.format` rebuilds the URL |
 
-Still outside this subset: native `.node` addons, `crypto.createCipheriv`, raw TCP to the public internet, and a bit-identical Node. Virtual HTTP stays on localhost. npm fetch uses an allowlisted HTTPS registry.
+Still outside this subset: native `.node` addons, cipher modes other than AES-CBC, raw TCP to the public internet, and a bit-identical Node. Virtual HTTP stays on localhost. npm fetch uses an allowlisted HTTPS registry.
 
 ---
 

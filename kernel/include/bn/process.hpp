@@ -85,6 +85,8 @@ public:
 
   // stdio helpers for host
   size_t write_stdin(Pid pid, const uint8_t* data, size_t n);
+  void close_stdin(Pid pid);
+  bool stdin_closed(Pid pid);
   size_t read_stdin(Pid pid, uint8_t* data, size_t n);
   size_t write_stdout(Pid pid, const uint8_t* data, size_t n);
   size_t write_stderr(Pid pid, const uint8_t* data, size_t n);

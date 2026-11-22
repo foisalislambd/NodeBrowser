@@ -316,7 +316,7 @@ Only one `WebContainer` is booted at a time. `teardown()` allows the next `boot(
 
 `configureAPIKey` and `auth` are exported from `@foisal/nodebrowser/compat`. They do not contact StackBlitz; npm auth stays on `.npmrc` / `configureRegistry`.
 
-Guest `process.stdin` on the QuickJS kernel emits `data` for bytes written with `write`. The host does not close the pipe, so a `data` listener keeps the process alive until `process.exit` or `kill`.
+Guest `process.stdin` on the QuickJS kernel emits `data` for bytes written with `write`. `proc.end()` closes the pipe: the guest emits `end` and the `data` listener no longer keeps the process alive.
 
 ---
 

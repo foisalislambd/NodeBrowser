@@ -638,6 +638,7 @@ export class NodeBrowser {
         halt();
       },
       write() {},
+      end() {},
     };
   }
 
@@ -850,6 +851,7 @@ export class NodeBrowser {
       });
     }
     this.#adopt(exit, () => halt());
+    let stdinChain = Promise.resolve();
     return {
       pid,
       exit,
@@ -873,7 +875,15 @@ export class NodeBrowser {
             }
           };
           tryWrite();
-        } else void asy(this.#mod.writeStdin(this.#k, pid, data));
+        } else {
+          stdinChain = stdinChain.then(() => asy(this.#mod.writeStdin(this.#k, pid, data))).then(() => undefined);
+        }
+      },
+      end: () => {
+        if (inRing && !inRing.closed) inRing.close(0);
+        stdinChain = stdinChain.then(() => {
+          if (this.#mod.closeStdin) return asy(this.#mod.closeStdin(this.#k, pid));
+        }).then(() => undefined);
       },
     };
   }
@@ -1324,6 +1334,7 @@ export class NodeBrowser {
       output,
       kill() {},
       write() {},
+      end() {},
     };
   }
 

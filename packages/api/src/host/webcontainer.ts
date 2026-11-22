@@ -342,6 +342,9 @@ export class WebContainer {
       write(chunk) {
         proc.write(typeof chunk === 'string' ? chunk : String(chunk));
       },
+      close() {
+        proc.end();
+      },
     });
     return {
       exit: proc.exit,

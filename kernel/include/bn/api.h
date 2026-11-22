@@ -45,6 +45,7 @@ double bn_vfs_usage(BNKernel* k);
 int bn_read_stdout(BNKernel* k, int pid, uint8_t* buf, int buflen);
 int bn_read_stderr(BNKernel* k, int pid, uint8_t* buf, int buflen);
 int bn_write_stdin(BNKernel* k, int pid, const uint8_t* buf, int buflen);
+int bn_close_stdin(BNKernel* k, int pid);
 int bn_write_stdout(BNKernel* k, int pid, const uint8_t* buf, int buflen);
 int bn_write_stderr(BNKernel* k, int pid, const uint8_t* buf, int buflen);
 /** Finish a keep-alive process (npm/npx) with an exit code instead of SIGKILL. */

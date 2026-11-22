@@ -55,6 +55,7 @@ export interface KernelModule {
   readStdout(k: KernelHandle, pid: number): Awaitable<string>;
   readStderr(k: KernelHandle, pid: number): Awaitable<string>;
   writeStdin(k: KernelHandle, pid: number, data: string): Awaitable<number>;
+  closeStdin?(k: KernelHandle, pid: number): Awaitable<number>;
   writeStdout?(k: KernelHandle, pid: number, data: string): Awaitable<number>;
   writeStderr?(k: KernelHandle, pid: number, data: string): Awaitable<number>;
   complete?(k: KernelHandle, pid: number, exitCode: number): Awaitable<number>;
@@ -120,6 +121,7 @@ type EmscriptenModule = {
   _bn_read_stdout: (k: number, pid: number, buf: number, len: number) => number;
   _bn_read_stderr: (k: number, pid: number, buf: number, len: number) => number;
   _bn_write_stdin: (k: number, pid: number, buf: number, len: number) => number;
+  _bn_close_stdin?: (k: number, pid: number) => number;
   _bn_write_stdout?: (k: number, pid: number, buf: number, len: number) => number;
   _bn_write_stderr?: (k: number, pid: number, buf: number, len: number) => number;
   _bn_complete?: (k: number, pid: number, code: number) => number;
@@ -406,6 +408,7 @@ function wrap(mod: EmscriptenModule): KernelModule {
     readStdout: (k, pid) => readPipe(mod._bn_read_stdout, k, pid),
     readStderr: (k, pid) => readPipe(mod._bn_read_stderr, k, pid),
     writeStdin: (k, pid, data) => writePipe(mod._bn_write_stdin, k, pid, data),
+    closeStdin: mod._bn_close_stdin ? (k, pid) => mod._bn_close_stdin!(k, pid) : undefined,
     writeStdout: mod._bn_write_stdout
       ? (k, pid, data) => writePipe(mod._bn_write_stdout!, k, pid, data)
       : undefined,

@@ -265,10 +265,32 @@ function resolveFile(base) {
   return null;
 }
 
+function __bn_posix_normalize(p) {
+  p = String(p);
+  if (!p) return '.';
+  var abs = p.charAt(0) === '/';
+  var trailing = p.length > 1 && p.charAt(p.length - 1) === '/';
+  var parts = p.split('/');
+  var stack = [];
+  for (var i = 0; i < parts.length; i++) {
+    var part = parts[i];
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (stack.length && stack[stack.length - 1] !== '..') stack.pop();
+      else if (!abs) stack.push('..');
+    } else stack.push(part);
+  }
+  var out = stack.join('/');
+  if (abs) out = '/' + out;
+  else if (!out) out = '.';
+  if (trailing && out !== '/' && out.charAt(out.length - 1) !== '/') out += '/';
+  return out;
+}
 function resolveFrom(fromDir, request) {
   if (request.indexOf('node:') === 0) return request;
   if (request.charAt(0) === '.' || request.charAt(0) === '/') {
-    var hit = resolveFile(request.charAt(0) === '/' ? request : join(fromDir, request));
+    var base = request.charAt(0) === '/' ? request : join(fromDir, request);
+    var hit = resolveFile(__bn_posix_normalize(base));
     if (hit) return hit;
     throw new Error('Cannot find module ' + request);
   }
@@ -587,6 +609,273 @@ function __bn_hmac(alg, key, msg) {
   return __bn_hash_bytes(alg, outer);
 }
 
+function __bn_pbkdf2(alg, password, salt, iterations, keylen) {
+  alg = __bn_norm_hash(alg || 'sha1');
+  if (!__bn_hash_ok(alg)) {
+    var bad = new Error('pbkdf2: unsupported digest ' + alg);
+    bad.code = 'ERR_CRYPTO_INVALID_DIGEST';
+    throw bad;
+  }
+  iterations = iterations | 0;
+  keylen = keylen | 0;
+  if (iterations <= 0 || keylen < 0) {
+    var range = new RangeError('pbkdf2: invalid iterations or key length');
+    range.code = 'ERR_OUT_OF_RANGE';
+    throw range;
+  }
+  var pass = __bn_as_bytes(password);
+  var sal = __bn_as_bytes(salt);
+  var hlen = alg === 'sha1' ? 20 : (alg === 'sha256' ? 32 : (alg === 'sha384' ? 48 : 64));
+  var blocks = Math.ceil(keylen / hlen) || 0;
+  var out = [];
+  var block, s, seed, u, t, j, c;
+  for (block = 1; block <= blocks; block++) {
+    seed = new Uint8Array(sal.length + 4);
+    for (s = 0; s < sal.length; s++) seed[s] = sal[s] & 255;
+    seed[sal.length] = (block >>> 24) & 255;
+    seed[sal.length + 1] = (block >>> 16) & 255;
+    seed[sal.length + 2] = (block >>> 8) & 255;
+    seed[sal.length + 3] = block & 255;
+    u = __bn_hmac(alg, pass, seed);
+    t = [];
+    for (j = 0; j < u.length; j++) t.push(u[j] & 255);
+    for (c = 1; c < iterations; c++) {
+      u = __bn_hmac(alg, pass, u);
+      for (j = 0; j < t.length; j++) t[j] = (t[j] ^ (u[j] & 255)) & 255;
+    }
+    for (j = 0; j < t.length && out.length < keylen; j++) out.push(t[j]);
+  }
+  return out;
+}
+
+var __bn_aes_sbox = null;
+var __bn_aes_inv = null;
+function __bn_aes_bytes(hex) {
+  var out = [];
+  for (var i = 0; i < hex.length; i += 2) out.push(parseInt(hex.substr(i, 2), 16));
+  return out;
+}
+function __bn_aes_tables() {
+  if (__bn_aes_sbox) return;
+  __bn_aes_sbox = __bn_aes_bytes(
+    '637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b27509832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16'
+  );
+  __bn_aes_inv = __bn_aes_bytes(
+    '52096ad53036a538bf40a39e81f3d7fb7ce339829b2fff87348e4344c4dee9cb547b9432a6c2233dee4c950b42fac34e082ea16628d924b2765ba2496d8bd12572f8f66486689816d4a45ccc5d65b6926c704850fdedb9da5e154657a78d9d8490d8ab008cbcd30af7e45805b8b34506d02c1e8fca3f0f02c1afbd0301138a6b3a9111414f67dcea97f2cfcef0b4e67396ac7422e7ad3585e2f937e81c75df6e47f11a711d29c5896fb7620eaa18be1bfc563e4bc6d279209adbc0fe78cd5af41fdda8338807c731b11210592780ec5f60517fa919b54a0d2de57a9f93c99cefa0e03b4dae2af5b0c8ebbb3c83539961172b047eba77d626e169146355210c7d'
+  );
+}
+function __bn_gfmul(a, b) {
+  var p = 0;
+  var i;
+  a &= 255;
+  b &= 255;
+  for (i = 0; i < 8; i++) {
+    if (b & 1) p ^= a;
+    var hi = a & 128;
+    a = (a << 1) & 255;
+    if (hi) a ^= 0x1b;
+    b >>= 1;
+  }
+  return p & 255;
+}
+function __bn_aes_expand(key) {
+  __bn_aes_tables();
+  var nk = key.length / 4;
+  var nr = nk + 6;
+  var words = nk * (nr + 1);
+  var w = [];
+  var i;
+  var rcon = [0, 1, 2, 4, 8, 16, 32, 64, 128, 27, 54];
+  for (i = 0; i < nk; i++) {
+    w[i] = ((key[4 * i] << 24) | (key[4 * i + 1] << 16) | (key[4 * i + 2] << 8) | key[4 * i + 3]) >>> 0;
+  }
+  for (i = nk; i < words; i++) {
+    var temp = w[i - 1];
+    if (i % nk === 0) {
+      temp = ((temp << 8) | (temp >>> 24)) >>> 0;
+      temp = ((__bn_aes_sbox[(temp >>> 24) & 255] << 24) | (__bn_aes_sbox[(temp >>> 16) & 255] << 16) |
+        (__bn_aes_sbox[(temp >>> 8) & 255] << 8) | __bn_aes_sbox[temp & 255]) >>> 0;
+      temp = (temp ^ (rcon[(i / nk) | 0] << 24)) >>> 0;
+    } else if (nk > 6 && i % nk === 4) {
+      temp = ((__bn_aes_sbox[(temp >>> 24) & 255] << 24) | (__bn_aes_sbox[(temp >>> 16) & 255] << 16) |
+        (__bn_aes_sbox[(temp >>> 8) & 255] << 8) | __bn_aes_sbox[temp & 255]) >>> 0;
+    }
+    w[i] = (w[i - nk] ^ temp) >>> 0;
+  }
+  return { nr: nr, w: w };
+}
+function __bn_aes_add(state, w, round) {
+  var c;
+  for (c = 0; c < 4; c++) {
+    var word = w[round * 4 + c];
+    state[c * 4] ^= (word >>> 24) & 255;
+    state[c * 4 + 1] ^= (word >>> 16) & 255;
+    state[c * 4 + 2] ^= (word >>> 8) & 255;
+    state[c * 4 + 3] ^= word & 255;
+  }
+}
+function __bn_aes_encrypt_block(block, exp) {
+  var state = block.slice();
+  var r, c, t, round;
+  __bn_aes_add(state, exp.w, 0);
+  for (round = 1; round < exp.nr; round++) {
+    for (r = 0; r < 16; r++) state[r] = __bn_aes_sbox[state[r]];
+    t = state.slice();
+    for (r = 0; r < 4; r++) {
+      for (c = 0; c < 4; c++) state[r + 4 * c] = t[r + 4 * ((c + r) % 4)];
+    }
+    for (c = 0; c < 4; c++) {
+      var i = c * 4;
+      var a0 = state[i], a1 = state[i + 1], a2 = state[i + 2], a3 = state[i + 3];
+      state[i] = __bn_gfmul(a0, 2) ^ __bn_gfmul(a1, 3) ^ a2 ^ a3;
+      state[i + 1] = a0 ^ __bn_gfmul(a1, 2) ^ __bn_gfmul(a2, 3) ^ a3;
+      state[i + 2] = a0 ^ a1 ^ __bn_gfmul(a2, 2) ^ __bn_gfmul(a3, 3);
+      state[i + 3] = __bn_gfmul(a0, 3) ^ a1 ^ a2 ^ __bn_gfmul(a3, 2);
+    }
+    __bn_aes_add(state, exp.w, round);
+  }
+  for (r = 0; r < 16; r++) state[r] = __bn_aes_sbox[state[r]];
+  t = state.slice();
+  for (r = 0; r < 4; r++) {
+    for (c = 0; c < 4; c++) state[r + 4 * c] = t[r + 4 * ((c + r) % 4)];
+  }
+  __bn_aes_add(state, exp.w, exp.nr);
+  return state;
+}
+function __bn_aes_decrypt_block(block, exp) {
+  var state = block.slice();
+  var r, c, t, round;
+  __bn_aes_add(state, exp.w, exp.nr);
+  for (round = exp.nr - 1; round >= 1; round--) {
+    t = state.slice();
+    for (r = 0; r < 4; r++) {
+      for (c = 0; c < 4; c++) state[r + 4 * c] = t[r + 4 * ((c - r + 4) % 4)];
+    }
+    for (r = 0; r < 16; r++) state[r] = __bn_aes_inv[state[r]];
+    __bn_aes_add(state, exp.w, round);
+    for (c = 0; c < 4; c++) {
+      var i = c * 4;
+      var a0 = state[i], a1 = state[i + 1], a2 = state[i + 2], a3 = state[i + 3];
+      state[i] = __bn_gfmul(a0, 14) ^ __bn_gfmul(a1, 11) ^ __bn_gfmul(a2, 13) ^ __bn_gfmul(a3, 9);
+      state[i + 1] = __bn_gfmul(a0, 9) ^ __bn_gfmul(a1, 14) ^ __bn_gfmul(a2, 11) ^ __bn_gfmul(a3, 13);
+      state[i + 2] = __bn_gfmul(a0, 13) ^ __bn_gfmul(a1, 9) ^ __bn_gfmul(a2, 14) ^ __bn_gfmul(a3, 11);
+      state[i + 3] = __bn_gfmul(a0, 11) ^ __bn_gfmul(a1, 13) ^ __bn_gfmul(a2, 9) ^ __bn_gfmul(a3, 14);
+    }
+  }
+  t = state.slice();
+  for (r = 0; r < 4; r++) {
+    for (c = 0; c < 4; c++) state[r + 4 * c] = t[r + 4 * ((c - r + 4) % 4)];
+  }
+  for (r = 0; r < 16; r++) state[r] = __bn_aes_inv[state[r]];
+  __bn_aes_add(state, exp.w, 0);
+  return state;
+}
+function __bn_aes_out(bytes, enc) {
+  var buf = Buffer.from(bytes);
+  if (enc === 'hex' || enc === 'utf8' || enc === 'latin1' || enc === 'base64') return buf.toString(enc);
+  return buf;
+}
+function __bn_make_cipher(alg, key, iv, encrypt) {
+  var name = String(alg || '').toLowerCase();
+  var want = name === 'aes-128-cbc' ? 16 : name === 'aes-192-cbc' ? 24 : name === 'aes-256-cbc' ? 32 : 0;
+  if (!want) {
+    var unknown = new Error((encrypt ? 'createCipheriv' : 'createDecipheriv') + ': unsupported ' + alg);
+    unknown.code = 'ERR_CRYPTO_UNKNOWN_CIPHER';
+    throw unknown;
+  }
+  var keyBytes = __bn_as_bytes(key);
+  var ivBytes = __bn_as_bytes(iv);
+  if (keyBytes.length !== want) {
+    var badKey = new Error('Invalid key length');
+    badKey.code = 'ERR_CRYPTO_INVALID_KEYLEN';
+    throw badKey;
+  }
+  if (ivBytes.length !== 16) {
+    var badIv = new Error('Invalid initialization vector');
+    badIv.code = 'ERR_CRYPTO_INVALID_IV';
+    throw badIv;
+  }
+  var exp = __bn_aes_expand(keyBytes);
+  var prev = [];
+  var i;
+  for (i = 0; i < 16; i++) prev.push(ivBytes[i] & 255);
+  var pending = [];
+  var autoPad = true;
+  var done = false;
+  function transform(chunk) {
+    var out = [];
+    var off;
+    for (off = 0; off < chunk.length; off += 16) {
+      var block = [];
+      for (i = 0; i < 16; i++) block.push(chunk[off + i] & 255);
+      if (encrypt) {
+        for (i = 0; i < 16; i++) block[i] = (block[i] ^ prev[i]) & 255;
+        block = __bn_aes_encrypt_block(block, exp);
+        prev = block.slice();
+        for (i = 0; i < 16; i++) out.push(block[i]);
+      } else {
+        var plain = __bn_aes_decrypt_block(block, exp);
+        for (i = 0; i < 16; i++) out.push((plain[i] ^ prev[i]) & 255);
+        prev = block.slice();
+      }
+    }
+    return out;
+  }
+  function pull(data, inEnc) {
+    var bytes = typeof data === 'string' ? __bn_as_bytes(data, inEnc || 'utf8') : __bn_as_bytes(data);
+    for (var n = 0; n < bytes.length; n++) pending.push(bytes[n] & 255);
+  }
+  return {
+    setAutoPadding: function(on) { autoPad = on !== false; return this; },
+    update: function(data, a, b) {
+      if (done) throw new Error('Cipher update after final');
+      var inEnc = typeof data === 'string' ? (typeof a === 'string' ? a : 'utf8') : null;
+      var outEnc = typeof data === 'string' ? (typeof b === 'string' ? b : null) : (typeof a === 'string' ? a : null);
+      pull(data, inEnc);
+      var ready = pending.length - (pending.length % 16);
+      if (!encrypt && ready === pending.length && ready >= 16) ready -= 16;
+      var chunk = pending.splice(0, ready);
+      return __bn_aes_out(transform(chunk), outEnc);
+    },
+    final: function(outEnc) {
+      if (done) throw new Error('Cipher final already called');
+      done = true;
+      if (encrypt) {
+        if (autoPad) {
+          var n = 16 - (pending.length % 16);
+          for (i = 0; i < n; i++) pending.push(n);
+        } else if (pending.length % 16) {
+          var bad = new Error('Invalid plaintext length');
+          bad.code = 'ERR_CRYPTO_INVALID_PADDING';
+          throw bad;
+        }
+        return __bn_aes_out(transform(pending.splice(0, pending.length)), outEnc);
+      }
+      if (pending.length % 16) {
+        var odd = new Error('Invalid ciphertext length');
+        odd.code = 'ERR_CRYPTO_INVALID_PADDING';
+        throw odd;
+      }
+      var plain = transform(pending.splice(0, pending.length));
+      if (autoPad) {
+        if (!plain.length) {
+          var empty = new Error('Invalid padding');
+          empty.code = 'ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH';
+          throw empty;
+        }
+        var pad = plain[plain.length - 1];
+        if (pad < 1 || pad > 16 || pad > plain.length) {
+          var badPad = new Error('Invalid padding');
+          badPad.code = 'ERR_OSSL_BAD_DECRYPT';
+          throw badPad;
+        }
+        plain.length -= pad;
+      }
+      return __bn_aes_out(plain, outEnc);
+    }
+  };
+}
+
 function __bn_load_crypto() {
   return {
     randomFillSync: function(buf, offset, size) {
@@ -617,6 +906,70 @@ function __bn_load_crypto() {
       var u8 = new Uint8Array(n);
       __bn_crypto_random_fill(u8);
       return Buffer.from(u8);
+    },
+    randomInt: function(min, max, cb) {
+      if (typeof max === 'function') {
+        cb = max;
+        max = min;
+        min = 0;
+      } else if (typeof max === 'undefined') {
+        max = min;
+        min = 0;
+      }
+      function bad(msg) {
+        var err = new RangeError(msg);
+        err.code = 'ERR_OUT_OF_RANGE';
+        throw err;
+      }
+      if (typeof min !== 'number' || typeof max !== 'number' || min !== min || max !== max) bad('min and max must be numbers');
+      if (Math.floor(min) !== min || Math.floor(max) !== max) bad('min and max must be integers');
+      if (max <= min) bad('max must be greater than min');
+      var range = max - min;
+      if (range > 281474976710655) bad('range must be at most 2^48 - 1');
+      var nbytes = 1;
+      var space = 256;
+      while (space < range && nbytes < 6) {
+        nbytes++;
+        space *= 256;
+      }
+      var limit = space - (space % range);
+      var n;
+      do {
+        var u8 = new Uint8Array(nbytes);
+        __bn_crypto_random_fill(u8);
+        n = 0;
+        for (var i = 0; i < nbytes; i++) n = n * 256 + (u8[i] & 255);
+      } while (n >= limit);
+      var value = min + (n % range);
+      if (typeof cb === 'function') cb(null, value);
+      return value;
+    },
+    randomUUID: function() {
+      var bytes = new Uint8Array(16);
+      __bn_crypto_random_fill(bytes);
+      bytes[6] = (bytes[6] & 15) | 64;
+      bytes[8] = (bytes[8] & 63) | 128;
+      var hex = '';
+      var i;
+      for (i = 0; i < 16; i++) hex += (bytes[i] + 256).toString(16).slice(1);
+      return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+    },
+    pbkdf2Sync: function(password, salt, iterations, keylen, digest) {
+      return Buffer.from(__bn_pbkdf2(digest || 'sha1', password, salt, iterations, keylen));
+    },
+    pbkdf2: function(password, salt, iterations, keylen, digest, cb) {
+      if (typeof digest === 'function') {
+        cb = digest;
+        digest = 'sha1';
+      }
+      var err = null;
+      var out = null;
+      try {
+        out = this.pbkdf2Sync(password, salt, iterations, keylen, digest);
+      } catch (e) {
+        err = e;
+      }
+      if (typeof cb === 'function') cb(err, out);
     },
     createHash: function(alg) {
       alg = String(alg || '').toLowerCase().replace(/^sha-/, 'sha');
@@ -692,8 +1045,9 @@ function __bn_load_crypto() {
       return diff === 0;
     },
     getHashes: function() { return ['sha1', 'sha256', 'sha384', 'sha512']; },
-    createCipheriv: function() { throw new Error('crypto.createCipheriv: unsupported'); },
-    createDecipheriv: function() { throw new Error('crypto.createDecipheriv: unsupported'); }
+    getCiphers: function() { return ['aes-128-cbc', 'aes-192-cbc', 'aes-256-cbc']; },
+    createCipheriv: function(alg, key, iv) { return __bn_make_cipher(alg, key, iv, true); },
+    createDecipheriv: function(alg, key, iv) { return __bn_make_cipher(alg, key, iv, false); }
   };
 }
 
@@ -924,25 +1278,80 @@ function __bn_load_util() {
       );
     };
   }
+  function inspect(v, depth) {
+    if (v === null) return 'null';
+    if (v === undefined) return 'undefined';
+    if (typeof v === 'string') return "'" + v.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (typeof v === 'function') return '[Function' + (v.name ? ': ' + v.name : '') + ']';
+    if (Buffer.isBuffer && Buffer.isBuffer(v)) {
+      var hex = v.toString('hex');
+      var parts = [];
+      for (var i = 0; i < hex.length; i += 2) parts.push(hex.substr(i, 2));
+      return '<Buffer' + (parts.length ? ' ' + parts.join(' ') : '') + '>';
+    }
+    if (depth > 4) return Array.isArray(v) ? '[Array]' : '[Object]';
+    if (Array.isArray(v)) {
+      var items = [];
+      for (var ai = 0; ai < v.length; ai++) items.push(inspect(v[ai], depth + 1));
+      return '[' + items.join(', ') + ']';
+    }
+    if (typeof v === 'object') {
+      var keys = Object.keys(v);
+      if (!keys.length) return '{}';
+      var fields = [];
+      for (var ki = 0; ki < keys.length; ki++) fields.push(keys[ki] + ': ' + inspect(v[keys[ki]], depth + 1));
+      return '{ ' + fields.join(', ') + ' }';
+    }
+    return String(v);
+  }
+  function formatValue(v) {
+    if (typeof v === 'string') return v;
+    if (v === null || v === undefined || typeof v === 'number' || typeof v === 'boolean') return String(v);
+    return inspect(v, 0);
+  }
   return {
     inherits: function(c, s) { c.prototype = Object.create(s.prototype); c.prototype.constructor = c; },
     format: function() {
       var args = Array.prototype.slice.call(arguments);
-      var f = String(args.shift());
-      return f.replace(/%[sdj%]/g, function(x) {
+      if (!args.length) return '';
+      if (typeof args[0] !== 'string') {
+        var plain = [];
+        for (var pi = 0; pi < args.length; pi++) plain.push(formatValue(args[pi]));
+        return plain.join(' ');
+      }
+      var f = args.shift();
+      var out = f.replace(/%[sdij%]/g, function(x) {
         if (x === '%%') return '%';
         if (!args.length) return x;
-        if (x === '%s') return String(args.shift());
-        if (x === '%d') return Number(args.shift());
-        if (x === '%j') try { return JSON.stringify(args.shift()); } catch (e) { return '[Circular]'; }
+        var v = args.shift();
+        if (x === '%s') return formatValue(v);
+        if (x === '%d') return String(Number(v));
+        if (x === '%i') return String(parseInt(v, 10));
+        if (x === '%j') {
+          try { return JSON.stringify(v); } catch (e) { return '[Circular]'; }
+        }
         return x;
       });
+      if (args.length) {
+        var extra = [];
+        for (var ei = 0; ei < args.length; ei++) extra.push(formatValue(args[ei]));
+        out += ' ' + extra.join(' ');
+      }
+      return out;
     },
-    inspect: function(v) { try { return JSON.stringify(v); } catch (e) { return String(v); } },
+    inspect: function(v) { return inspect(v, 0); },
     promisify: promisify,
     callbackify: callbackify,
     deprecate: function(fn) { return fn; },
-    isDeepStrictEqual: function(a, b) { try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return a === b; } },
+    isDeepStrictEqual: function(a, b) {
+      try {
+        loadCore('assert').deepStrictEqual(a, b);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
     types: {
       isPromise: function(v) { return !!v && typeof v.then === 'function'; },
       isDate: function(v) { return v instanceof Date; },
@@ -958,14 +1367,57 @@ function __bn_load_util() {
 }
 
 function __bn_load_string_decoder() {
-  function StringDecoder(encoding) { this.encoding = encoding || 'utf8'; }
+  function decoderBytes(buf) {
+    if (typeof buf === 'string') return Buffer._encode(buf, 'utf8');
+    if (Buffer.isBuffer && Buffer.isBuffer(buf)) return buf._data.slice();
+    if (typeof Uint8Array !== 'undefined' && buf instanceof Uint8Array) {
+      var copy = [];
+      for (var i = 0; i < buf.length; i++) copy.push(buf[i] & 255);
+      return copy;
+    }
+    return Buffer._encode(String(buf == null ? '' : buf), 'utf8');
+  }
+  function completeEnd(bytes) {
+    var n = bytes.length;
+    if (!n) return n;
+    var last = bytes[n - 1] & 255;
+    if ((last & 128) === 0) return n;
+    var i = n - 1;
+    var seen = 1;
+    while (i > 0 && (bytes[i] & 192) === 128 && seen < 4) {
+      i--;
+      seen++;
+    }
+    var lead = bytes[i] & 255;
+    var expect = 1;
+    if ((lead & 224) === 192) expect = 2;
+    else if ((lead & 240) === 224) expect = 3;
+    else if ((lead & 248) === 240) expect = 4;
+    if (n - i < expect) return i;
+    return n;
+  }
+  function StringDecoder(encoding) {
+    this.encoding = String(encoding || 'utf8').toLowerCase();
+    this._held = [];
+  }
   StringDecoder.prototype.write = function(buf) {
-    if (typeof buf === 'string') return buf;
-    if (Buffer.isBuffer && Buffer.isBuffer(buf)) return buf.toString(this.encoding);
-    if (buf instanceof Uint8Array) return Buffer.from(buf).toString(this.encoding);
-    return String(buf);
+    var bytes = decoderBytes(buf);
+    if (this.encoding !== 'utf8' && this.encoding !== 'utf-8') {
+      return Buffer.from(bytes).toString(this.encoding);
+    }
+    var all = this._held.concat(bytes);
+    var cut = completeEnd(all);
+    this._held = all.slice(cut);
+    if (!cut) return '';
+    return Buffer.from(all.slice(0, cut)).toString('utf8');
   };
-  StringDecoder.prototype.end = function(buf) { return buf ? this.write(buf) : ''; };
+  StringDecoder.prototype.end = function(buf) {
+    var extra = buf != null && buf !== '' ? this.write(buf) : '';
+    var rest = this._held;
+    this._held = [];
+    if (!rest.length) return extra;
+    return extra + String.fromCharCode(0xFFFD);
+  };
   return { StringDecoder: StringDecoder };
 }
 
@@ -1169,6 +1621,23 @@ function __bn_load_zlib() {
   };
 }
 
+var __bn_http_status = {
+  200: 'OK',
+  201: 'Created',
+  204: 'No Content',
+  301: 'Moved Permanently',
+  302: 'Found',
+  304: 'Not Modified',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  405: 'Method Not Allowed',
+  409: 'Conflict',
+  500: 'Internal Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable'
+};
 function __bn_register_http(which) {
   var EE = loadCore('events').EventEmitter;
   function Server(handler) {
@@ -1191,13 +1660,29 @@ function __bn_register_http(which) {
       var ended = false;
       var nodeRes = {
         statusCode: 200,
+        statusMessage: '',
         headersSent: false,
-        setHeader: function(k, v) { headers[k] = v; },
-        writeHead: function(code, hds) {
+        setHeader: function(k, v) { headers[String(k).toLowerCase()] = v; return this; },
+        getHeader: function(k) { return headers[String(k).toLowerCase()]; },
+        removeHeader: function(k) { delete headers[String(k).toLowerCase()]; },
+        hasHeader: function(k) { return Object.prototype.hasOwnProperty.call(headers, String(k).toLowerCase()); },
+        getHeaders: function() {
+          var copy = {};
+          for (var key in headers) if (Object.prototype.hasOwnProperty.call(headers, key)) copy[key] = headers[key];
+          return copy;
+        },
+        writeHead: function(code, reason, hds) {
           status = code | 0;
           this.statusCode = status;
           this.headersSent = true;
-          if (hds) for (var k in hds) if (Object.prototype.hasOwnProperty.call(hds, k)) headers[k] = hds[k];
+          if (typeof reason === 'string') {
+            this.statusMessage = reason;
+          } else {
+            hds = reason;
+            if (!this.statusMessage) this.statusMessage = __bn_http_status[status] || '';
+          }
+          if (hds) for (var k in hds) if (Object.prototype.hasOwnProperty.call(hds, k)) headers[String(k).toLowerCase()] = hds[k];
+          return this;
         },
         write: function(chunk) {
           bodyParts.push(String(chunk == null ? '' : chunk));
@@ -1207,7 +1692,12 @@ function __bn_register_http(which) {
           if (ended) return;
           if (chunk != null) bodyParts.push(String(chunk));
           ended = true;
+          if (!this.headersSent) {
+            status = this.statusCode || 200;
+            if (!this.statusMessage) this.statusMessage = __bn_http_status[status] || '';
+          }
           res.writeHead(status, headers);
+          if (this.statusMessage && res) res.statusMessage = this.statusMessage;
           res.end(bodyParts.join(''));
         }
       };
@@ -1244,7 +1734,7 @@ function __bn_register_http(which) {
     var Readable = loadCore('stream').Readable;
     Readable.call(this);
     this.statusCode = parsed && parsed.status != null ? (parsed.status | 0) : 0;
-    this.statusMessage = '';
+    this.statusMessage = parsed && parsed.statusMessage ? String(parsed.statusMessage) : (__bn_http_status[this.statusCode] || '');
     this.httpVersion = '1.1';
     this.headers = {};
     var h = (parsed && parsed.headers) || {};
@@ -1352,7 +1842,8 @@ function __bn_register_http(which) {
       var req = new ClientRequest(spec.options, spec.cb);
       req.end();
       return req;
-    }
+    },
+    STATUS_CODES: __bn_http_status
   };
 }
 
@@ -1526,6 +2017,22 @@ function loadCore(name) {
       }
       if (!__bn.writeFile(String(path), Buffer.from(u8).toString())) __bn_fs_code('EIO', 'EIO');
     }
+    function Dirent(name, kind) {
+      this.name = name;
+      this._kind = kind || 'file';
+    }
+    Dirent.prototype.isFile = function() { return this._kind === 'file'; };
+    Dirent.prototype.isDirectory = function() { return this._kind === 'dir'; };
+    Dirent.prototype.isSymbolicLink = function() { return this._kind === 'symlink'; };
+    Dirent.prototype.isBlockDevice = function() { return false; };
+    Dirent.prototype.isCharacterDevice = function() { return false; };
+    Dirent.prototype.isFIFO = function() { return false; };
+    Dirent.prototype.isSocket = function() { return false; };
+    function __bn_child_dirent(dir, name) {
+      var full = String(dir) === '/' ? '/' + name : String(dir).replace(/\/$/, '') + '/' + name;
+      var kind = __bn.lstatKind ? __bn.lstatKind(full) : (__bn.isDir(full) ? 'dir' : 'file');
+      return new Dirent(name, kind || 'file');
+    }
     var fs = {
       constants: {
         F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
@@ -1533,28 +2040,29 @@ function loadCore(name) {
         S_IFMT: 61440, S_IFREG: 32768, S_IFDIR: 16384, S_IFLNK: 40960
       },
       readFileSync: function(p, enc) {
+        var encoding = null;
+        if (typeof enc === 'string') encoding = enc;
+        else if (enc && Object.prototype.hasOwnProperty.call(enc, 'encoding')) {
+          encoding = enc.encoding == null || enc.encoding === '' ? 'buffer' : enc.encoding;
+        }
         if (typeof p === 'number') {
           var slot = __bn_fds[p];
           if (!slot || !slot.read) __bn_fs_code('EBADF');
           var all = __bn_read_all(slot.path) || [];
           var slice = all.slice(slot.pos);
           slot.pos = all.length;
-          var encoding = typeof enc === 'string' ? enc : (enc && enc.encoding);
           if (encoding && encoding !== 'buffer') return Buffer._decode(slice, encoding);
           return Buffer.from(slice);
         }
-        if (enc === 'buffer' || (enc && enc.encoding === 'buffer')) {
-          var b = __bn.readBytes ? __bn.readBytes(String(p)) : null;
-          if (b === null) {
-            var t0 = __bn.readFile(String(p));
-            if (t0 === null) throw new Error('ENOENT: ' + p);
-            return Buffer.from(t0);
-          }
-          return Buffer.from(b);
+        if (encoding == null) {
+          var t = __bn.readFile(String(p));
+          if (t === null) throw new Error('ENOENT: ' + p);
+          return t;
         }
-        var t = __bn.readFile(String(p));
-        if (t === null) throw new Error('ENOENT: ' + p);
-        return t;
+        var bytes = __bn_read_all(String(p));
+        if (bytes == null) throw new Error('ENOENT: ' + p);
+        if (encoding === 'buffer') return Buffer.from(bytes);
+        return Buffer._decode(bytes, encoding);
       },
       writeFileSync: function(p, d, opts) {
         if (typeof p === 'number') {
@@ -1596,6 +2104,11 @@ function loadCore(name) {
           }
           d = Buffer.from(d).toString();
         }
+        var encoding = typeof opts === 'string' ? opts : (opts && opts.encoding);
+        if (typeof d === 'string' && encoding && encoding !== 'utf8' && encoding !== 'utf-8') {
+          __bn_write_all(String(p), __bn_bytes_of(d, opts));
+          return;
+        }
         if (!__bn.writeFile(String(p), String(d))) throw new Error('EIO');
       },
       existsSync: function(p) { return !!__bn.exists(String(p)); },
@@ -1619,10 +2132,13 @@ function loadCore(name) {
       mkdirSync: function(p, opts) {
         if (!__bn.mkdir(String(p), !!(opts && opts.recursive))) throw new Error('EEXIST mkdir: ' + p);
       },
-      readdirSync: function(p) {
+      readdirSync: function(p, opts) {
         var a = __bn.readdir(String(p));
         if (a === null) throw new Error('ENOENT');
-        return a;
+        if (!(opts && opts.withFileTypes)) return a;
+        var out = [];
+        for (var i = 0; i < a.length; i++) out.push(__bn_child_dirent(p, a[i]));
+        return out;
       },
       unlinkSync: function(p) { if (!__bn.unlink(String(p))) throw new Error('ENOENT'); },
       rmdirSync: function(p) {
@@ -1645,8 +2161,7 @@ function loadCore(name) {
         return {
           readSync: function() {
             if (i >= names.length) return null;
-            var n = names[i++];
-            return { name: n };
+            return __bn_child_dirent(p, names[i++]);
           },
           closeSync: function() {},
           close: function() { return Promise.resolve(); }
@@ -2061,27 +2576,86 @@ function loadCore(name) {
       };
     }
     if (fs.realpathSync) fs.realpathSync.native = fs.realpathSync;
+    fs.Dirent = Dirent;
+    if (fs.promises) {
+      fs.promises.readdir = function(p, opts) {
+        return Promise.resolve().then(function() { return fs.readdirSync(p, opts); });
+      };
+    }
+    function __bn_fs_callback(syncName) {
+      return function() {
+        var args = Array.prototype.slice.call(arguments);
+        var cb = args[args.length - 1];
+        if (typeof cb !== 'function') {
+          var bad = new TypeError('The "cb" argument must be of type function');
+          bad.code = 'ERR_INVALID_ARG_TYPE';
+          throw bad;
+        }
+        args.pop();
+        var result;
+        var err = null;
+        try { result = fs[syncName].apply(fs, args); }
+        catch (e) { err = e; }
+        process.nextTick(function() { cb(err, result); });
+      };
+    }
+    fs.readFile = __bn_fs_callback('readFileSync');
+    fs.writeFile = __bn_fs_callback('writeFileSync');
+    fs.appendFile = __bn_fs_callback('appendFileSync');
+    fs.readdir = __bn_fs_callback('readdirSync');
+    fs.stat = __bn_fs_callback('statSync');
+    fs.lstat = __bn_fs_callback('lstatSync');
+    fs.access = __bn_fs_callback('accessSync');
+    fs.mkdir = __bn_fs_callback('mkdirSync');
+    fs.unlink = __bn_fs_callback('unlinkSync');
+    fs.rmdir = __bn_fs_callback('rmdirSync');
+    fs.rename = __bn_fs_callback('renameSync');
+    fs.realpath = __bn_fs_callback('realpathSync');
+    fs.copyFile = __bn_fs_callback('copyFileSync');
+    fs.chmod = __bn_fs_callback('chmodSync');
+    fs.truncate = __bn_fs_callback('truncateSync');
+    fs.rm = __bn_fs_callback('rmSync');
     return fs;
   }
   if (name === 'path') {
     var pathApi = {
-      join: join,
+      join: function() {
+        var segs = [];
+        for (var i = 0; i < arguments.length; i++) {
+          if (arguments[i] != null && String(arguments[i]) !== '') segs.push(String(arguments[i]));
+        }
+        if (!segs.length) return '.';
+        return __bn_posix_normalize(segs.join('/'));
+      },
       dirname: dirname,
-      basename: function(p) { return __bn_basename(p); },
+      basename: function(p, ext) {
+        p = String(p).replace(/\/+$/, '');
+        var base = __bn_basename(p);
+        ext = ext == null ? '' : String(ext);
+        if (ext && ext.length < base.length && base.slice(-ext.length) === ext) base = base.slice(0, -ext.length);
+        return base;
+      },
       resolve: function() {
-        var args = Array.prototype.slice.call(arguments);
-        var r = args[0] && args[0].charAt(0) === '/' ? '' : process.cwd();
-        for (var i = 0; i < args.length; i++) r = join(r || '/', args[i]);
-        return r.replace(/\/+/g, '/') || '/';
+        var resolved = '';
+        var abs = false;
+        for (var i = arguments.length - 1; i >= -1 && !abs; i--) {
+          var seg = i >= 0 ? arguments[i] : process.cwd();
+          if (seg == null || seg === '') continue;
+          seg = String(seg);
+          resolved = resolved ? seg + '/' + resolved : seg;
+          if (seg.charAt(0) === '/') abs = true;
+        }
+        return __bn_posix_normalize(resolved || '.');
       },
       extname: function(p) {
-        var i = String(p).lastIndexOf('.');
-        return i < 0 ? '' : p.slice(i);
+        var base = pathApi.basename(p);
+        var dot = base.lastIndexOf('.');
+        return dot <= 0 ? '' : base.slice(dot);
       },
       sep: '/',
       delimiter: ':',
       isAbsolute: function(p) { return String(p).charAt(0) === '/'; },
-      normalize: function(p) { return join('/', String(p)); },
+      normalize: function(p) { return __bn_posix_normalize(p); },
       parse: function(p) {
         p = String(p);
         var slash = p.lastIndexOf('/');
@@ -2153,7 +2727,8 @@ function loadCore(name) {
         p = String(p).replace(/[\\/]+$/, '');
         var slash = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
         var base = slash < 0 ? p : p.slice(slash + 1);
-        if (ext && base.slice(-String(ext).length) === ext) base = base.slice(0, -String(ext).length);
+        ext = ext == null ? '' : String(ext);
+        if (ext && ext.length < base.length && base.slice(-ext.length) === ext) base = base.slice(0, -ext.length);
         return base;
       }
       var win = {
@@ -2260,22 +2835,33 @@ function loadCore(name) {
   }
   if (name === 'events') {
     function EE() { this._e = Object.create(null); }
+    function wrapOnce(self, ev, fn) {
+      function w() {
+        self.off(ev, w);
+        return fn.apply(this, arguments);
+      }
+      w.listener = fn;
+      return w;
+    }
     EE.prototype.on = function(ev, fn) {
       (this._e[ev] || (this._e[ev] = [])).push(fn);
       return this;
     };
-    EE.prototype.once = function(ev, fn) {
-      var self = this;
-      function w() {
-        self.off(ev, w);
-        fn.apply(this, arguments);
-      }
-      this.on(ev, w);
+    EE.prototype.addListener = EE.prototype.on;
+    EE.prototype.prependListener = function(ev, fn) {
+      var list = this._e[ev] || (this._e[ev] = []);
+      list.unshift(fn);
       return this;
+    };
+    EE.prototype.once = function(ev, fn) {
+      return this.on(ev, wrapOnce(this, ev, fn));
+    };
+    EE.prototype.prependOnceListener = function(ev, fn) {
+      return this.prependListener(ev, wrapOnce(this, ev, fn));
     };
     EE.prototype.off = function(ev, fn) {
       var list = this._e[ev] || [];
-      this._e[ev] = list.filter(function(f) { return f !== fn; });
+      this._e[ev] = list.filter(function(f) { return f !== fn && f.listener !== fn; });
       return this;
     };
     EE.prototype.removeListener = EE.prototype.off;
@@ -2285,7 +2871,17 @@ function loadCore(name) {
       return this;
     };
     EE.prototype.listenerCount = function(ev) { return (this._e[ev] || []).length; };
-    EE.prototype.listeners = function(ev) { return (this._e[ev] || []).slice(); };
+    EE.prototype.listeners = function(ev) {
+      return (this._e[ev] || []).map(function(f) { return f.listener || f; });
+    };
+    EE.prototype.eventNames = function() {
+      var names = [];
+      var keys = Object.keys(this._e);
+      for (var i = 0; i < keys.length; i++) {
+        if ((this._e[keys[i]] || []).length) names.push(keys[i]);
+      }
+      return names;
+    };
     EE.prototype.setMaxListeners = function() { return this; };
     EE.prototype.emit = function(ev) {
       var args = Array.prototype.slice.call(arguments, 1);
@@ -2293,7 +2889,26 @@ function loadCore(name) {
       for (var i = 0; i < list.length; i++) list[i].apply(this, args);
       return list.length > 0;
     };
-    return { EventEmitter: EE };
+    EE.listenerCount = function(emitter, ev) { return emitter.listenerCount(ev); };
+    function once(emitter, name) {
+      return new Promise(function(resolve, reject) {
+        function onResult() {
+          cleanup();
+          resolve(Array.prototype.slice.call(arguments));
+        }
+        function onError(err) {
+          cleanup();
+          reject(err);
+        }
+        function cleanup() {
+          emitter.removeListener(name, onResult);
+          if (name !== 'error') emitter.removeListener('error', onError);
+        }
+        emitter.on(name, onResult);
+        if (name !== 'error') emitter.on('error', onError);
+      });
+    }
+    return { EventEmitter: EE, once: once };
   }
   if (name === 'http' || name === 'https') return __bn_register_http(name);
   if (name === 'net') {
@@ -2344,38 +2959,168 @@ function loadCore(name) {
   if (name === 'url') {
     function fileURLToPath(u) {
       var s = typeof u === 'string' ? u : (u && u.href ? u.href : String(u));
-      if (s.slice(0, 7) === 'file://') {
-        s = s.slice(7);
-        if (s.slice(0, 2) === '//') {
-          var slash = s.indexOf('/', 2);
-          s = slash >= 0 ? s.slice(slash) : '/';
-        }
-        if (s.charAt(0) !== '/') s = '/' + s;
-        try { s = decodeURIComponent(s); } catch (e) {}
+      if (s.slice(0, 5).toLowerCase() !== 'file:') {
+        var scheme = new TypeError('Invalid URL scheme');
+        scheme.code = 'ERR_INVALID_URL_SCHEME';
+        throw scheme;
       }
-      return s;
+      if (s.slice(5, 7) !== '//') {
+        var badPath = new TypeError('Invalid file URL path');
+        badPath.code = 'ERR_INVALID_FILE_URL_PATH';
+        throw badPath;
+      }
+      var rest = s.slice(7);
+      var slash = rest.indexOf('/');
+      var host = slash < 0 ? rest : rest.slice(0, slash);
+      var path = slash < 0 ? '' : rest.slice(slash);
+      if (host && host.toLowerCase() !== 'localhost') {
+        var hostErr = new TypeError('File URL host must be "localhost" or empty');
+        hostErr.code = 'ERR_INVALID_FILE_URL_HOST';
+        throw hostErr;
+      }
+      if (!path || /%2f/i.test(path)) {
+        var pathErr = new TypeError('Invalid file URL path');
+        pathErr.code = 'ERR_INVALID_FILE_URL_PATH';
+        throw pathErr;
+      }
+      try { path = decodeURIComponent(path); }
+      catch (e) {
+        var dec = new TypeError('Invalid file URL path');
+        dec.code = 'ERR_INVALID_FILE_URL_PATH';
+        throw dec;
+      }
+      return path;
     }
     function pathToFileURL(p) {
       var path = String(p);
-      if (path.charAt(0) !== '/') path = '/' + path;
+      if (path.charAt(0) !== '/') {
+        var cwd = process.cwd();
+        path = (cwd === '/' ? '' : cwd.replace(/\/$/, '')) + '/' + path;
+      }
       var href = 'file://' + path.split('/').map(function(seg) { return encodeURIComponent(seg); }).join('/');
-      href = href.replace('file://', 'file:///');
       return { href: href, pathname: path, protocol: 'file:', toString: function() { return href; } };
     }
-    return {
-      parse: function(u) {
-        try {
-          var x = new URL(u, 'http://localhost');
-          return { href: x.href, pathname: x.pathname, hostname: x.hostname, protocol: x.protocol };
-        } catch (e) {
-          return { href: u, pathname: '/' };
+    function parse(input, parseQuery, slashesDenoteHost) {
+      var href = input == null ? '' : String(input);
+      var rest = href;
+      var hash = null;
+      var hi = rest.indexOf('#');
+      if (hi >= 0) {
+        hash = rest.slice(hi);
+        rest = rest.slice(0, hi);
+      }
+      var protocol = null;
+      var pm = /^([a-zA-Z][a-zA-Z0-9+.-]*:)/.exec(rest);
+      if (pm) {
+        protocol = pm[1].toLowerCase();
+        rest = rest.slice(pm[1].length);
+      }
+      var slashes = null;
+      var auth = null;
+      var host = null;
+      var hostname = null;
+      var port = null;
+      var hadSlashes = rest.slice(0, 2) === '//';
+      if (hadSlashes && (protocol || slashesDenoteHost)) {
+        slashes = true;
+        rest = rest.slice(2);
+        var cut = rest.search(/[\/\?]/);
+        var hostpart = cut < 0 ? rest : rest.slice(0, cut);
+        rest = cut < 0 ? '' : rest.slice(cut);
+        var at = hostpart.lastIndexOf('@');
+        if (at >= 0) {
+          auth = hostpart.slice(0, at) || null;
+          hostpart = hostpart.slice(at + 1);
         }
-      },
+        host = hostpart || null;
+        hostname = hostpart || null;
+        if (hostpart.charAt(0) === '[') {
+          var br = hostpart.indexOf(']');
+          if (br >= 0) {
+            hostname = hostpart.slice(1, br) || null;
+            if (hostpart.charAt(br + 1) === ':') port = hostpart.slice(br + 2) || null;
+          }
+        } else {
+          var colon = hostpart.lastIndexOf(':');
+          if (colon >= 0) {
+            hostname = hostpart.slice(0, colon) || null;
+            port = hostpart.slice(colon + 1) || null;
+          }
+        }
+      } else if (protocol && rest && rest.indexOf('/') < 0 && rest.indexOf('?') < 0) {
+        var at2 = rest.lastIndexOf('@');
+        if (at2 >= 0) {
+          auth = rest.slice(0, at2) || null;
+          hostname = rest.slice(at2 + 1) || null;
+          host = hostname;
+          rest = '';
+        }
+      }
+      var search = null;
+      var qi = rest.indexOf('?');
+      var pathname = rest;
+      if (qi >= 0) {
+        pathname = rest.slice(0, qi);
+        search = rest.slice(qi) || null;
+      }
+      if (slashes && pathname === '') pathname = '/';
+      if (pathname === '') pathname = null;
+      var query = null;
+      if (search) {
+        query = search.slice(1);
+        if (parseQuery) query = loadCore('querystring').parse(query);
+      }
+      var path = null;
+      if (pathname != null || search) path = (pathname || '') + (search || '');
+      if (path === '') path = null;
+      var parsed = {
+        protocol: protocol,
+        slashes: slashes,
+        auth: auth,
+        host: host,
+        port: port,
+        hostname: hostname,
+        hash: hash,
+        search: search,
+        query: query,
+        pathname: pathname,
+        path: path,
+        href: href
+      };
+      parsed.href = format(parsed);
+      return parsed;
+    }
+    function format(o) {
+      if (typeof o === 'string') return parse(o).href;
+      o = o || {};
+      var out = '';
+      if (o.protocol) {
+        out += o.protocol;
+        if (out.charAt(out.length - 1) !== ':') out += ':';
+      }
+      if (o.slashes) out += '//';
+      if (o.auth) out += o.auth + '@';
+      if (o.host) out += o.host;
+      else if (o.hostname) {
+        out += o.hostname.indexOf(':') >= 0 ? '[' + o.hostname + ']' : o.hostname;
+        if (o.port != null && o.port !== '') out += ':' + o.port;
+      }
+      if (o.pathname) out += o.pathname;
+      if (o.search) out += o.search.charAt(0) === '?' ? o.search : '?' + o.search;
+      else if (o.query != null && o.query !== '') {
+        var q = typeof o.query === 'object' ? loadCore('querystring').stringify(o.query) : String(o.query);
+        if (q) out += '?' + q;
+      }
+      if (o.hash) out += o.hash.charAt(0) === '#' ? o.hash : '#' + o.hash;
+      return out;
+    }
+    return {
+      parse: parse,
       URL: typeof URL !== 'undefined' ? URL : undefined,
       URLSearchParams: typeof URLSearchParams !== 'undefined' ? URLSearchParams : undefined,
       fileURLToPath: fileURLToPath,
       pathToFileURL: pathToFileURL,
-      format: function(o) { return (o && o.href) || String(o); }
+      format: format
     };
   }
   if (name === 'util') return __bn_load_util();
@@ -2774,7 +3519,32 @@ function loadCore(name) {
       uptime: function() { return 1; },
       networkInterfaces: function() { return {}; },
       userInfo: function() { return { username: 'user', homedir: '/home', uid: 1000, gid: 1000, shell: '/bin/sh' }; },
-      constants: { signals: {}, errno: {} }
+      constants: {
+        signals: {
+          SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGTRAP: 5, SIGABRT: 6, SIGIOT: 6,
+          SIGBUS: 7, SIGFPE: 8, SIGKILL: 9, SIGUSR1: 10, SIGSEGV: 11, SIGUSR2: 12,
+          SIGPIPE: 13, SIGALRM: 14, SIGTERM: 15, SIGSTKFLT: 16, SIGCHLD: 17, SIGCONT: 18,
+          SIGSTOP: 19, SIGTSTP: 20, SIGTTIN: 21, SIGTTOU: 22, SIGURG: 23, SIGXCPU: 24,
+          SIGXFSZ: 25, SIGVTALRM: 26, SIGPROF: 27, SIGWINCH: 28, SIGIO: 29, SIGPOLL: 29,
+          SIGPWR: 30, SIGSYS: 31
+        },
+        errno: {
+          EPERM: -1, ENOENT: -2, ESRCH: -3, EINTR: -4, EIO: -5, ENXIO: -6, E2BIG: -7,
+          ENOEXEC: -8, EBADF: -9, ECHILD: -10, EAGAIN: -11, EWOULDBLOCK: -11, ENOMEM: -12,
+          EACCES: -13, EFAULT: -14, EBUSY: -16, EEXIST: -17, EXDEV: -18, ENODEV: -19,
+          ENOTDIR: -20, EISDIR: -21, EINVAL: -22, ENFILE: -23, EMFILE: -24, ENOTTY: -25,
+          EFBIG: -27, ENOSPC: -28, ESPIPE: -29, EROFS: -30, EMLINK: -31, EPIPE: -32,
+          ENAMETOOLONG: -36, ENOSYS: -38, ENOTEMPTY: -39, ELOOP: -40, EOVERFLOW: -75,
+          ENOTSOCK: -88, EMSGSIZE: -90, EOPNOTSUPP: -95, ENOTSUP: -95, EAFNOSUPPORT: -97,
+          EADDRINUSE: -98, EADDRNOTAVAIL: -99, ENETUNREACH: -101, ECONNABORTED: -103,
+          ECONNRESET: -104, EISCONN: -106, ENOTCONN: -107, ETIMEDOUT: -110, ECONNREFUSED: -111,
+          EHOSTUNREACH: -113, EALREADY: -114, EINPROGRESS: -115
+        },
+        priority: {
+          PRIORITY_LOW: 19, PRIORITY_BELOW_NORMAL: 10, PRIORITY_NORMAL: 0,
+          PRIORITY_ABOVE_NORMAL: -7, PRIORITY_HIGH: -14, PRIORITY_HIGHEST: -20
+        }
+      }
     };
   }
   if (name === 'assert') {
@@ -2792,12 +3562,40 @@ function loadCore(name) {
     function fail(a, b, m, op) {
       throw AssertionError({ actual: a, expected: b, message: m, operator: op || 'fail' });
     }
-    function deep(a, b) {
-      if (a === b) return true;
-      if (a && b && typeof a === 'object' && typeof b === 'object') {
-        try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; }
+    function deep(a, b, strict) {
+      if (Object.is(a, b)) return true;
+      if (typeof a !== 'object' && typeof b !== 'object') {
+        if (a !== a && b !== b) return true;
+        return !strict && a == b;
       }
-      return false;
+      if (a == null || b == null) return false;
+      if ((Buffer.isBuffer && Buffer.isBuffer(a)) || (Buffer.isBuffer && Buffer.isBuffer(b))) {
+        if (!(Buffer.isBuffer(a) && Buffer.isBuffer(b)) || a.length !== b.length) return false;
+        for (var n = 0; n < a.length; n++) if ((a._data[n] & 255) !== (b._data[n] & 255)) return false;
+        return true;
+      }
+      if (a instanceof Date || b instanceof Date) {
+        return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+      }
+      if (a instanceof RegExp || b instanceof RegExp) {
+        return a instanceof RegExp && b instanceof RegExp && String(a) === String(b);
+      }
+      if (Array.isArray(a) || Array.isArray(b)) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) {
+          if ((i in a) !== (i in b)) return false;
+          if (!deep(a[i], b[i], strict)) return false;
+        }
+        return true;
+      }
+      if (Object.prototype.toString.call(a) !== Object.prototype.toString.call(b)) return false;
+      var keys = Object.keys(a);
+      if (keys.length !== Object.keys(b).length) return false;
+      for (var k = 0; k < keys.length; k++) {
+        if (!Object.prototype.hasOwnProperty.call(b, keys[k])) return false;
+        if (!deep(a[keys[k]], b[keys[k]], strict)) return false;
+      }
+      return true;
     }
     function assert(v, m) { if (!v) fail(v, true, m || 'assert', '=='); }
     assert.ok = assert;
@@ -2805,10 +3603,10 @@ function loadCore(name) {
     assert.notEqual = function(a, b, m) { if (a == b) fail(a, b, m, '!='); };
     assert.strictEqual = function(a, b, m) { if (a !== b) fail(a, b, m, '==='); };
     assert.notStrictEqual = function(a, b, m) { if (a === b) fail(a, b, m, '!=='); };
-    assert.deepEqual = function(a, b, m) { if (!deep(a, b)) fail(a, b, m, 'deepEqual'); };
-    assert.notDeepEqual = function(a, b, m) { if (deep(a, b)) fail(a, b, m, 'notDeepEqual'); };
-    assert.deepStrictEqual = assert.deepEqual;
-    assert.notDeepStrictEqual = assert.notDeepEqual;
+    assert.deepEqual = function(a, b, m) { if (!deep(a, b, false)) fail(a, b, m, 'deepEqual'); };
+    assert.notDeepEqual = function(a, b, m) { if (deep(a, b, false)) fail(a, b, m, 'notDeepEqual'); };
+    assert.deepStrictEqual = function(a, b, m) { if (!deep(a, b, true)) fail(a, b, m, 'deepStrictEqual'); };
+    assert.notDeepStrictEqual = function(a, b, m) { if (deep(a, b, true)) fail(a, b, m, 'notDeepStrictEqual'); };
     assert.fail = function(m) { fail(undefined, undefined, m || 'fail', 'fail'); };
     assert.ifError = function(err) { if (err) throw err; };
     assert.throws = function(fn, err, m) {
@@ -2823,6 +3621,24 @@ function loadCore(name) {
     assert.match = function(s, re, m) { if (!re.test(String(s))) fail(s, re, m, 'match'); };
     assert.doesNotMatch = function(s, re, m) { if (re.test(String(s))) fail(s, re, m, 'doesNotMatch'); };
     assert.AssertionError = AssertionError;
+    var strictAssert = function(v, m) { assert(v, m); };
+    strictAssert.ok = strictAssert;
+    strictAssert.equal = assert.strictEqual;
+    strictAssert.strictEqual = assert.strictEqual;
+    strictAssert.notEqual = assert.notStrictEqual;
+    strictAssert.notStrictEqual = assert.notStrictEqual;
+    strictAssert.deepEqual = assert.deepStrictEqual;
+    strictAssert.deepStrictEqual = assert.deepStrictEqual;
+    strictAssert.notDeepEqual = assert.notDeepStrictEqual;
+    strictAssert.notDeepStrictEqual = assert.notDeepStrictEqual;
+    strictAssert.throws = assert.throws;
+    strictAssert.doesNotThrow = assert.doesNotThrow;
+    strictAssert.fail = assert.fail;
+    strictAssert.ifError = assert.ifError;
+    strictAssert.match = assert.match;
+    strictAssert.doesNotMatch = assert.doesNotMatch;
+    strictAssert.AssertionError = AssertionError;
+    assert.strict = strictAssert;
     return assert;
   }
   if (name === 'querystring') {
@@ -2858,7 +3674,7 @@ function loadCore(name) {
     return { parse: parse, stringify: stringify, escape: encodeURIComponent, unescape: decodeURIComponent };
   }
   if (name === 'constants') {
-    return { os: {}, fs: loadCore('fs').constants, crypto: {} };
+    return { os: loadCore('os').constants, fs: loadCore('fs').constants, crypto: {} };
   }
   if (name === 'punycode') {
     return { toASCII: function(s) { return String(s); }, toUnicode: function(s) { return String(s); }, encode: function(s) { return String(s); }, decode: function(s) { return String(s); } };
@@ -3399,9 +4215,19 @@ function __bn_install_stdin() {
   }
   Stdin.prototype = Object.create(EE.prototype);
   Stdin.prototype.read = function() {
+    if (this._ended) return null;
     var ab = __bn.readStdin();
-    if (!ab || !ab.byteLength) return null;
-    return Buffer.from(ab);
+    if (ab && ab.byteLength) return Buffer.from(ab);
+    if (__bn.stdinClosed && __bn.stdinClosed()) this._finish();
+    return null;
+  };
+  Stdin.prototype._finish = function() {
+    if (this._ended) return;
+    this._ended = true;
+    this.readable = false;
+    this.pause();
+    this.emit('end');
+    this.emit('close');
   };
   Stdin.prototype.pause = function() {
     this._flowing = false;
@@ -3412,7 +4238,7 @@ function __bn_install_stdin() {
     return this;
   };
   Stdin.prototype.resume = function() {
-    if (this._flowing) return this;
+    if (this._flowing || this._ended) return this;
     this._flowing = true;
     var self = this;
     this._poll = setInterval(function() {

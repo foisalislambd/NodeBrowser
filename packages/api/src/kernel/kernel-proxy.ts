@@ -110,6 +110,7 @@ export async function createWorkerKernel(wasmUrl: string): Promise<KernelModule>
     readStdout: (k, pid) => call<string>('readStdout', [k, pid]),
     readStderr: (k, pid) => call<string>('readStderr', [k, pid]),
     writeStdin: (k, pid, data) => call<number>('writeStdin', [k, pid, data]),
+    closeStdin: (k, pid) => call<number>('closeStdin', [k, pid]),
     writeStdout: (k, pid, data) => call<number>('writeStdout', [k, pid, data]),
     writeStderr: (k, pid, data) => call<number>('writeStderr', [k, pid, data]),
     complete: (k, pid, code) => call<number>('complete', [k, pid, code]),

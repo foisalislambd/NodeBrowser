@@ -166,15 +166,20 @@ std::string http_dispatch_json(int port, const char* method, const char* path,
 
   const char* bridge = R"JS(
 (function(){
-  var bag = { status: 200, headers: {}, body: '', ended: false };
+  var bag = { status: 200, statusMessage: '', headers: {}, body: '', ended: false };
   globalThis.__bn_http_bag = bag;
-  return {
+  var res = {
     statusCode: 200,
     setHeader: function(k,v){ bag.headers[k]=String(v); },
     writeHead: function(code, h){ bag.status=code|0; this.statusCode=bag.status; if(h){ for(var k in h) bag.headers[k]=h[k]; } },
     write: function(c){ bag.body += String(c==null?'':c); return true; },
     end: function(c){ if(c!=null) bag.body += String(c); bag.ended=true; }
   };
+  Object.defineProperty(res, 'statusMessage', {
+    get: function(){ return bag.statusMessage || ''; },
+    set: function(v){ bag.statusMessage = String(v == null ? '' : v); }
+  });
+  return res;
 })()
 )JS";
   JSValue res = JS_Eval(ctx, bridge, std::strlen(bridge), "<http-res>", JS_EVAL_TYPE_GLOBAL);
@@ -220,14 +225,26 @@ std::string http_dispatch_json(int port, const char* method, const char* path,
   JSValue status = JS_GetPropertyStr(ctx, bag, "status");
   JSValue bodyV = JS_GetPropertyStr(ctx, bag, "body");
   JSValue headersV = JS_GetPropertyStr(ctx, bag, "headers");
+  JSValue msgV = JS_GetPropertyStr(ctx, bag, "statusMessage");
   int32_t st = 200;
   JS_ToInt32(ctx, &st, status);
   const char* bodyStr = JS_ToCString(ctx, bodyV);
+  const char* msgStr = JS_ToCString(ctx, msgV);
   JSValue headersJson = JS_JSONStringify(ctx, headersV, JS_UNDEFINED, JS_UNDEFINED);
   const char* hdrStr = JS_ToCString(ctx, headersJson);
 
   std::ostringstream oss;
-  oss << "{\"status\":" << st << ",\"headers\":" << (hdrStr ? hdrStr : "{}") << ",\"body\":\"";
+  oss << "{\"status\":" << st << ",\"statusMessage\":\"";
+  if (msgStr) {
+    for (const char* p = msgStr; *p; ++p) {
+      char c = *p;
+      if (c == '"' || c == '\\') oss << '\\' << c;
+      else if (c == '\n') oss << "\\n";
+      else if (c == '\r') oss << "\\r";
+      else oss << c;
+    }
+  }
+  oss << "\",\"headers\":" << (hdrStr ? hdrStr : "{}") << ",\"body\":\"";
   if (bodyStr) {
     for (const char* p = bodyStr; *p; ++p) {
       char c = *p;
@@ -241,11 +258,13 @@ std::string http_dispatch_json(int port, const char* method, const char* path,
   oss << "\"}";
 
   if (bodyStr) JS_FreeCString(ctx, bodyStr);
+  if (msgStr) JS_FreeCString(ctx, msgStr);
   if (hdrStr) JS_FreeCString(ctx, hdrStr);
   JS_FreeValue(ctx, headersJson);
   JS_FreeValue(ctx, status);
   JS_FreeValue(ctx, bodyV);
   JS_FreeValue(ctx, headersV);
+  JS_FreeValue(ctx, msgV);
   JS_FreeValue(ctx, bag);
   return oss.str();
 }
@@ -1189,6 +1208,12 @@ static JSValue js_bn_read_stdin(JSContext* ctx, JSValueConst, int, JSValueConst*
   return JS_NewArrayBufferCopy(ctx, buf, n);
 }
 
+static JSValue js_bn_stdin_closed(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+  auto* nc = get_opaque(ctx);
+  if (!nc || !nc->proc) return JS_FALSE;
+  return JS_NewBool(ctx, nc->kernel->stdin_closed(nc->proc->pid));
+}
+
 static JSValue js_bn_write_stdin_pid(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   auto* nc = get_opaque(ctx);
   if (!nc || argc < 2) return JS_EXCEPTION;
@@ -1534,6 +1559,12 @@ var Buffer = (function() {
     } else if (Array.isArray(arg)) {
       this._data = arg.slice();
     } else if (arg && typeof arg === 'object') {
+      if (arg.type === 'Buffer' && Array.isArray(arg.data)) {
+        this._data = [];
+        for (var ji = 0; ji < arg.data.length; ji++) this._data.push((arg.data[ji] || 0) & 255);
+        this.length = this._data.length;
+        return;
+      }
       // QuickJS: readBytes returns ArrayBuffer; TypedArray/array-like must copy into _data.
       var src = null;
       if (typeof ArrayBuffer !== 'undefined' && arg instanceof ArrayBuffer) {
@@ -1557,6 +1588,18 @@ var Buffer = (function() {
     }
     this.length = this._data.length;
   }
+  Buffer._b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  Buffer._b64map = null;
+  Buffer._b64index = function() {
+    if (Buffer._b64map) return Buffer._b64map;
+    var m = Object.create(null);
+    var alpha = Buffer._b64;
+    for (var i = 0; i < alpha.length; i++) m[alpha.charAt(i)] = i;
+    m['-'] = 62;
+    m['_'] = 63;
+    Buffer._b64map = m;
+    return m;
+  };
   Buffer._encode = function(s, enc) {
     enc = (enc || 'utf8').toLowerCase();
     var a = [];
@@ -1565,9 +1608,26 @@ var Buffer = (function() {
       for (var j = 0; j < clean.length; j += 2) a.push(parseInt(clean.substr(j, 2), 16) || 0);
       return a;
     }
-    if (enc === 'base64') {
-      // minimal: treat as latin1 of decoded-ish string
-      for (var k = 0; k < s.length; k++) a.push(s.charCodeAt(k) & 255);
+    if (enc === 'base64' || enc === 'base64url') {
+      var map = Buffer._b64index();
+      var buf = 0;
+      var bits = 0;
+      for (var k = 0; k < s.length; k++) {
+        var ch = s.charAt(k);
+        if (ch === '=') break;
+        var v = map[ch];
+        if (v == null) continue;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+          bits -= 8;
+          a.push((buf >> bits) & 255);
+        }
+      }
+      return a;
+    }
+    if (enc === 'latin1' || enc === 'binary' || enc === 'ascii') {
+      for (var n = 0; n < s.length; n++) a.push(s.charCodeAt(n) & 255);
       return a;
     }
     for (var i = 0; i < s.length; i++) {
@@ -1598,19 +1658,42 @@ var Buffer = (function() {
       for (var j = 0; j < arr.length; j++) h += ((arr[j] & 255) + 256).toString(16).slice(1);
       return h;
     }
-    if (enc === 'base64') {
-      var bin = '';
-      for (var k = 0; k < arr.length; k++) bin += String.fromCharCode(arr[k] & 255);
-      return bin;
+    if (enc === 'base64' || enc === 'base64url') {
+      var alpha = Buffer._b64;
+      var url = enc === 'base64url';
+      var b64 = '';
+      for (var k = 0; k < arr.length; k += 3) {
+        var b0 = arr[k] & 255;
+        var b1 = k + 1 < arr.length ? arr[k + 1] & 255 : 0;
+        var b2 = k + 2 < arr.length ? arr[k + 2] & 255 : 0;
+        var n = (b0 << 16) | (b1 << 8) | b2;
+        b64 += alpha.charAt((n >> 18) & 63);
+        b64 += alpha.charAt((n >> 12) & 63);
+        if (k + 1 < arr.length) b64 += alpha.charAt((n >> 6) & 63);
+        else if (!url) b64 += '=';
+        if (k + 2 < arr.length) b64 += alpha.charAt(n & 63);
+        else if (!url) b64 += '=';
+      }
+      if (url) b64 = b64.replace(/\+/g, '-').replace(/\//g, '_');
+      return b64;
+    }
+    if (enc === 'latin1' || enc === 'binary' || enc === 'ascii') {
+      var lat = '';
+      for (var t = 0; t < arr.length; t++) lat += String.fromCharCode(arr[t] & 255);
+      return lat;
     }
     var out = '', i = 0;
     while (i < arr.length) {
-      var c = arr[i++];
+      var c = arr[i++] & 255;
       if (c < 128) out += String.fromCharCode(c);
-      else if (c >= 192 && c < 224 && i < arr.length) {
+      else if (c < 224 && i < arr.length) {
         out += String.fromCharCode(((c & 31) << 6) | (arr[i++] & 63));
-      } else if (i + 1 < arr.length) {
+      } else if (c < 240 && i + 1 < arr.length) {
         out += String.fromCharCode(((c & 15) << 12) | ((arr[i++] & 63) << 6) | (arr[i++] & 63));
+      } else if (c < 248 && i + 2 < arr.length) {
+        var cp = ((c & 7) << 18) | ((arr[i++] & 63) << 12) | ((arr[i++] & 63) << 6) | (arr[i++] & 63);
+        cp -= 0x10000;
+        out += String.fromCharCode(0xD800 + ((cp >> 10) & 0x3FF), 0xDC00 + (cp & 0x3FF));
       }
     }
     return out;
@@ -1631,8 +1714,179 @@ var Buffer = (function() {
     }
     return Buffer.from(out.slice(0, len));
   };
+  Buffer.byteLength = function(s, enc) {
+    if (Buffer.isBuffer(s)) return s.length;
+    return Buffer._encode(typeof s === 'string' ? s : String(s == null ? '' : s), enc || 'utf8').length;
+  };
+  Buffer.compare = function(a, b) {
+    var n = a.length < b.length ? a.length : b.length;
+    for (var i = 0; i < n; i++) {
+      if ((a._data[i] & 255) !== (b._data[i] & 255)) return (a._data[i] & 255) < (b._data[i] & 255) ? -1 : 1;
+    }
+    if (a.length === b.length) return 0;
+    return a.length < b.length ? -1 : 1;
+  };
   Buffer.prototype.toString = function(enc) { return Buffer._decode(this._data, enc || 'utf8'); };
+  Buffer.prototype.toJSON = function() {
+    var data = [];
+    for (var i = 0; i < this._data.length; i++) data.push(this._data[i] & 255);
+    return { type: 'Buffer', data: data };
+  };
   Buffer.prototype.slice = function(s, e) { return Buffer.from(this._data.slice(s || 0, e)); };
+  Buffer.prototype.subarray = Buffer.prototype.slice;
+  Buffer.prototype.equals = function(other) { return Buffer.compare(this, other) === 0; };
+  Buffer.prototype.compare = function(other) { return Buffer.compare(this, other); };
+  Buffer.prototype.copy = function(target, targetStart, sourceStart, sourceEnd) {
+    targetStart = targetStart | 0;
+    if (targetStart < 0) targetStart = 0;
+    sourceStart = sourceStart | 0;
+    if (sourceStart < 0) sourceStart = 0;
+    sourceEnd = sourceEnd == null ? this.length : sourceEnd | 0;
+    var n = 0;
+    while (sourceStart < sourceEnd && targetStart + n < target.length) {
+      target._data[targetStart + n] = this._data[sourceStart] & 255;
+      sourceStart++;
+      n++;
+    }
+    return n;
+  };
+  Buffer.prototype.fill = function(value, start, end) {
+    if (typeof start !== 'number') start = 0;
+    if (typeof end !== 'number') end = this.length;
+    var bytes;
+    if (typeof value === 'number') bytes = [value & 255];
+    else if (Buffer.isBuffer(value)) bytes = value._data;
+    else if (typeof value === 'string') bytes = Buffer._encode(value, 'utf8');
+    else bytes = [0];
+    if (!bytes.length || start >= this.length) return this;
+    if (start < 0) start = 0;
+    var p = 0;
+    for (var i = start; i < end && i < this.length; i++) {
+      this._data[i] = bytes[p % bytes.length] & 255;
+      p++;
+    }
+    return this;
+  };
+  Buffer.prototype.indexOf = function(val, byteOffset, enc) {
+    var from = byteOffset == null ? 0 : byteOffset | 0;
+    if (from < 0) from = this.length + from;
+    if (from < 0) from = 0;
+    var needle;
+    if (typeof val === 'number') needle = [val & 255];
+    else if (typeof val === 'string') needle = Buffer._encode(val, enc || 'utf8');
+    else if (Buffer.isBuffer(val)) needle = val._data;
+    else needle = Buffer._encode(String(val), enc || 'utf8');
+    if (!needle.length) return from <= this.length ? from : this.length;
+    for (var i = from; i + needle.length <= this.length; i++) {
+      var ok = true;
+      for (var j = 0; j < needle.length; j++) {
+        if ((this._data[i + j] & 255) !== (needle[j] & 255)) { ok = false; break; }
+      }
+      if (ok) return i;
+    }
+    return -1;
+  };
+  Buffer.prototype.includes = function(val, byteOffset, enc) {
+    return this.indexOf(val, byteOffset, enc) !== -1;
+  };
+  function __bn_need(buf, offset, size) {
+    offset = offset == null ? 0 : offset | 0;
+    if (offset < 0 || offset + size > buf.length) {
+      var err = new RangeError('The value of "offset" is out of range');
+      err.code = 'ERR_OUT_OF_RANGE';
+      throw err;
+    }
+    return offset;
+  }
+  function __bn_u32(value) {
+    var v = Number(value);
+    if (v < 0) v += 4294967296;
+    v = v % 4294967296;
+    if (v < 0) v += 4294967296;
+    return v;
+  }
+  Buffer.prototype.readUInt8 = function(offset) {
+    offset = __bn_need(this, offset, 1);
+    return this._data[offset] & 255;
+  };
+  Buffer.prototype.readUInt16BE = function(offset) {
+    offset = __bn_need(this, offset, 2);
+    return ((this._data[offset] & 255) << 8) | (this._data[offset + 1] & 255);
+  };
+  Buffer.prototype.readUInt16LE = function(offset) {
+    offset = __bn_need(this, offset, 2);
+    return (this._data[offset] & 255) | ((this._data[offset + 1] & 255) << 8);
+  };
+  Buffer.prototype.readUInt32BE = function(offset) {
+    offset = __bn_need(this, offset, 4);
+    return ((this._data[offset] & 255) * 16777216) + ((this._data[offset + 1] & 255) * 65536) +
+      ((this._data[offset + 2] & 255) * 256) + (this._data[offset + 3] & 255);
+  };
+  Buffer.prototype.readUInt32LE = function(offset) {
+    offset = __bn_need(this, offset, 4);
+    return (this._data[offset] & 255) + ((this._data[offset + 1] & 255) * 256) +
+      ((this._data[offset + 2] & 255) * 65536) + ((this._data[offset + 3] & 255) * 16777216);
+  };
+  Buffer.prototype.readInt8 = function(offset) {
+    var v = this.readUInt8(offset);
+    return v & 128 ? v - 256 : v;
+  };
+  Buffer.prototype.readInt16BE = function(offset) {
+    var v = this.readUInt16BE(offset);
+    return v & 32768 ? v - 65536 : v;
+  };
+  Buffer.prototype.readInt16LE = function(offset) {
+    var v = this.readUInt16LE(offset);
+    return v & 32768 ? v - 65536 : v;
+  };
+  Buffer.prototype.readInt32BE = function(offset) {
+    var v = this.readUInt32BE(offset);
+    return v >= 2147483648 ? v - 4294967296 : v;
+  };
+  Buffer.prototype.readInt32LE = function(offset) {
+    var v = this.readUInt32LE(offset);
+    return v >= 2147483648 ? v - 4294967296 : v;
+  };
+  Buffer.prototype.writeUInt8 = function(value, offset) {
+    offset = __bn_need(this, offset, 1);
+    this._data[offset] = value & 255;
+    return offset + 1;
+  };
+  Buffer.prototype.writeUInt16BE = function(value, offset) {
+    offset = __bn_need(this, offset, 2);
+    this._data[offset] = (value >> 8) & 255;
+    this._data[offset + 1] = value & 255;
+    return offset + 2;
+  };
+  Buffer.prototype.writeUInt16LE = function(value, offset) {
+    offset = __bn_need(this, offset, 2);
+    this._data[offset] = value & 255;
+    this._data[offset + 1] = (value >> 8) & 255;
+    return offset + 2;
+  };
+  Buffer.prototype.writeUInt32BE = function(value, offset) {
+    offset = __bn_need(this, offset, 4);
+    var v = __bn_u32(value);
+    this._data[offset] = (v / 16777216) & 255;
+    this._data[offset + 1] = (v / 65536) & 255;
+    this._data[offset + 2] = (v / 256) & 255;
+    this._data[offset + 3] = v & 255;
+    return offset + 4;
+  };
+  Buffer.prototype.writeUInt32LE = function(value, offset) {
+    offset = __bn_need(this, offset, 4);
+    var v = __bn_u32(value);
+    this._data[offset] = v & 255;
+    this._data[offset + 1] = (v / 256) & 255;
+    this._data[offset + 2] = (v / 65536) & 255;
+    this._data[offset + 3] = (v / 16777216) & 255;
+    return offset + 4;
+  };
+  Buffer.prototype.writeInt8 = function(value, offset) { return this.writeUInt8(value & 255, offset); };
+  Buffer.prototype.writeInt16BE = function(value, offset) { return this.writeUInt16BE(value & 65535, offset); };
+  Buffer.prototype.writeInt16LE = function(value, offset) { return this.writeUInt16LE(value & 65535, offset); };
+  Buffer.prototype.writeInt32BE = function(value, offset) { return this.writeUInt32BE(__bn_u32(value), offset); };
+  Buffer.prototype.writeInt32LE = function(value, offset) { return this.writeUInt32LE(__bn_u32(value), offset); };
   return Buffer;
 })();
 globalThis.Buffer = Buffer;
@@ -2250,6 +2504,7 @@ int run_node_quickjs(Kernel& kernel, Process& proc) {
   JS_SetPropertyStr(ctx, bn, "httpDispatch", JS_NewCFunction(ctx, js_bn_http_dispatch, "httpDispatch", 5));
   JS_SetPropertyStr(ctx, bn, "evalNewContext", JS_NewCFunction(ctx, js_bn_eval_new_ctx, "evalNewContext", 1));
   JS_SetPropertyStr(ctx, bn, "readStdin", JS_NewCFunction(ctx, js_bn_read_stdin, "readStdin", 0));
+  JS_SetPropertyStr(ctx, bn, "stdinClosed", JS_NewCFunction(ctx, js_bn_stdin_closed, "stdinClosed", 0));
   JS_SetPropertyStr(ctx, bn, "writeStdin", JS_NewCFunction(ctx, js_bn_write_stdin_pid, "writeStdin", 2));
   JS_SetPropertyStr(ctx, bn, "chmod", JS_NewCFunction(ctx, js_bn_chmod, "chmod", 2));
   JS_SetPropertyStr(ctx, bn, "rename", JS_NewCFunction(ctx, js_bn_rename, "rename", 2));

@@ -25,6 +25,28 @@ The published version is the `X.Y.Z` line in [`VERSION.md`](./VERSION.md).
 - Guest `process.chdir` changes the working directory, and relative `fs` paths resolve from `process.cwd()`
 - Guest `fs.accessSync` and `fs.promises.access` honor `F_OK`, `R_OK`, `W_OK`, and `X_OK` against the file mode
 - Guest `fs.realpathSync` follows symlinks, resolves `.` and `..`, and throws `ELOOP` on a cycle
+- Guest `crypto.randomUUID` returns a version-4 UUID from the kernel random bytes
+- Guest `crypto.pbkdf2Sync` / `pbkdf2` derive a key with HMAC (`sha1`, `sha256`, `sha384`, `sha512`)
+- Guest `process.stdin` emits `end` when the host closes the pipe with `proc.end()`, and the listener no longer keeps the process alive
+- Guest `crypto.createCipheriv` / `createDecipheriv` support `aes-128-cbc`, `aes-192-cbc`, and `aes-256-cbc`
+- Guest `Buffer` encodes and decodes `base64`, `base64url`, `latin1`, `binary`, and `ascii`
+- Guest `Buffer` round-trips UTF-8 above U+FFFF and adds `byteLength`, `equals`, `compare`, `copy`, `fill`, and `indexOf`
+- Guest `Buffer` reads and writes signed and unsigned 8-, 16-, and 32-bit integers in big- and little-endian order
+- Guest `events` adds `prependListener`, `prependOnceListener`, `eventNames`, and `events.once`; `off` removes a one-shot listener by the original function
+- Guest `assert.deepEqual` / `deepStrictEqual` compare objects by key, buffers by bytes, and dates and regular expressions by value. `assert.strict` uses the strict comparison
+- Guest `crypto.randomInt` returns an integer in `[min, max)`, and `getCiphers` lists the AES-CBC ciphers
+- Guest `util.format` keeps leftover arguments and prints objects, and `util.inspect` / `isDeepStrictEqual` follow that comparison
+- Guest `fs.readFileSync` and `writeFileSync` honor an encoding string or `{ encoding }`, including `hex`, `base64`, and `buffer`
+- Guest `path.basename` accepts a suffix, and `path.extname` looks only at the last path segment
+- Guest `fs.readdirSync`, `fs.promises.readdir`, and `opendirSync` return `fs.Dirent` entries when `withFileTypes` is set
+- Guest `fs` callback forms (`readFile`, `writeFile`, `appendFile`, `readdir`, `stat`, `mkdir`, `rename`, and the other common methods) run the callback on `nextTick`
+- Guest `http` responses honor `statusCode`, `statusMessage`, and case-insensitive `setHeader` / `getHeader` / `removeHeader`. `http.STATUS_CODES` includes the common reason phrases
+- Guest `string_decoder` keeps a UTF-8 character that is split across `write` calls and replaces a leftover fragment with U+FFFD on `end`
+- Guest `Buffer.toJSON` and `JSON.stringify(buffer)` use `{ type: 'Buffer', data }`, and `Buffer.from` accepts that object
+- Guest `url.fileURLToPath` and `pathToFileURL` round-trip POSIX file URLs, including percent-encoding and a `localhost` host
+- Guest `path.join`, `path.normalize`, and `path.resolve` collapse `.` and `..`, and a relative `require` uses that same path
+- Guest `url.parse` returns protocol, auth, host, port, query, and hash, and `url.format` rebuilds that URL
+- Guest `os.constants` and `constants.os` use Linux signal, errno, and priority numbers (`ENOENT` is `-2`, `SIGTERM` is `15`)
 - V8 guest runs on its own thread when the WASM kernel is on a Worker, with filesystem calls over a SharedArrayBuffer
 - `async_hooks.AsyncLocalStorage` uses Node's own hooks on the V8 guest there, so `await` keeps the store; the embedded polyfill covers `.then`, timers, and `nextTick`. ESM `export *` / `export { } from` and the `import` exports condition resolve
 - npm tarball cache in OPFS (browser) or the temp directory (Node); scoped installs hoist a nested package root such as `@types/ms`

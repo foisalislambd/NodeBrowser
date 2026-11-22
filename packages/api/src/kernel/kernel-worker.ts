@@ -20,6 +20,7 @@ type StdioSlot = {
   outPend: Uint8Array;
   errPend: Uint8Array;
   inPend: Uint8Array;
+  stdinEof: boolean;
   exitCode: number | null;
 };
 
@@ -125,6 +126,10 @@ async function pumpOnce(): Promise<void> {
         const wrote = Math.max(0, Number(n) || 0);
         slot.inPend = wrote >= inbound.byteLength ? empty : inbound.slice(wrote);
       }
+      if (!slot.stdinEof && slot.inn.closed && !slot.inPend.byteLength && mod.closeStdin) {
+        slot.stdinEof = true;
+        await Promise.resolve(mod.closeStdin(k, pid));
+      }
 
       if (slot.exitCode === null) {
         const code = await Promise.resolve(mod.wait(k, pid));
@@ -194,6 +199,7 @@ async function dispatch(op: string, args: unknown[]): Promise<unknown> {
       outPend: empty,
       errPend: empty,
       inPend: empty,
+      stdinEof: false,
       exitCode: null,
     });
     startStdioPump();

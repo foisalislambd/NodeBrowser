@@ -473,6 +473,26 @@ int main() {
   }
   {
     k.vfs().write_text(
+        "/stdin-end.js",
+        "var parts=[];\n"
+        "process.stdin.on('data', function(buf) { parts.push(buf.toString()); });\n"
+        "process.stdin.on('end', function() { console.log('end=' + parts.join('')); });\n");
+    auto pid = k.spawn("node", {"/stdin-end.js"}, {}, "/");
+    CHECK(!k.wait(pid).has_value());
+    const char* msg = "hi";
+    CHECK(k.write_stdin(pid, reinterpret_cast<const uint8_t*>(msg), 2) == 2);
+    k.close_stdin(pid);
+    std::optional<int> code;
+    for (int i = 0; i < 40 && !code; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      code = k.wait(pid);
+    }
+    CHECK(code.has_value() && *code == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("end=hi") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
         "/rl.js",
         "const rl=require('readline').createInterface({input:process.stdin,output:process.stdout});\n"
         "rl.question('name? ', function(a){ console.log('ans='+a); });\n"
@@ -763,6 +783,439 @@ int main() {
     CHECK(k.wait(pid).value_or(1) == 0);
     auto out = k.get(pid)->stdout_buf.read_all_string();
     CHECK(out.find("/real/file.txt|/real/file.txt|/real/file.txt|/real/file.txt|true|true|true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/uuid.js",
+        "const c=require('crypto');\n"
+        "const a=c.randomUUID();\n"
+        "const b=c.randomUUID();\n"
+        "const re=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;\n"
+        "console.log('uuid='+(re.test(a)&&re.test(b)&&a!==b));\n");
+    auto pid = k.spawn("node", {"/uuid.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("uuid=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/pbkdf2.js",
+        "const c=require('crypto');\n"
+        "const a=c.pbkdf2Sync('password','salt',1,20,'sha1').toString('hex');\n"
+        "const b=c.pbkdf2Sync('password','salt',2,20,'sha1').toString('hex');\n"
+        "const d=c.pbkdf2Sync('password','salt',1,32,'sha256').toString('hex');\n"
+        "var bad=false;\n"
+        "try{c.pbkdf2Sync('password','salt',0,20,'sha1');}catch(e){bad=e.code==='ERR_OUT_OF_RANGE';}\n"
+        "console.log('pbkdf2='+(a==='0c60c80f961f0e71f3a9b524af6012062fe037a6'&&b==='ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957'&&d==='120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b'&&bad));\n");
+    auto pid = k.spawn("node", {"/pbkdf2.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("pbkdf2=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/aes.js",
+        "const c=require('crypto');\n"
+        "const key=Buffer.alloc(32,1);\n"
+        "const iv=Buffer.alloc(16,2);\n"
+        "const enc=c.createCipheriv('aes-256-cbc', key, iv);\n"
+        "const ct=Buffer.concat([enc.update('hello'), enc.final()]);\n"
+        "const dec=c.createDecipheriv('aes-256-cbc', key, iv);\n"
+        "const pt=Buffer.concat([dec.update(ct), dec.final()]).toString();\n"
+        "const key2=Buffer.from('603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4','hex');\n"
+        "const iv2=Buffer.from('000102030405060708090a0b0c0d0e0f','hex');\n"
+        "const block=Buffer.from('6bc1bee22e409f96e93d7e117393172a','hex');\n"
+        "const rawEnc=c.createCipheriv('aes-256-cbc', key2, iv2);\n"
+        "rawEnc.setAutoPadding(false);\n"
+        "const raw=Buffer.concat([rawEnc.update(block), rawEnc.final()]).toString('hex');\n"
+        "const rawDec=c.createDecipheriv('aes-256-cbc', key2, iv2);\n"
+        "rawDec.setAutoPadding(false);\n"
+        "const back=Buffer.concat([rawDec.update(Buffer.from(raw,'hex')), rawDec.final()]).toString('hex');\n"
+        "console.log('aes='+(pt==='hello'&&ct.toString('hex')==='aaf7a0b1c5d4d4b8c8abeaa891ec2755'&&raw==='f58c4c04d6e5f1ba779eabfb5f7bfbd6'&&back==='6bc1bee22e409f96e93d7e117393172a'));\n");
+    auto pid = k.spawn("node", {"/aes.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("aes=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/b64.js",
+        "const hello=Buffer.from('hello').toString('base64');\n"
+        "const back=Buffer.from('aGVsbG8=','base64').toString();\n"
+        "const nopad=Buffer.from('aGVs bG8=','base64').toString();\n"
+        "const bytes=Buffer.from([0,1,2,250,255]);\n"
+        "const url=Buffer.from([0xfb,0xff,0xbf]).toString('base64url');\n"
+        "const urlBack=Buffer.from('AAEC-v8','base64url').toString('hex');\n"
+        "const latin=Buffer.from(String.fromCharCode(255),'latin1').toString('hex');\n"
+        "const latinBack=Buffer.from([255]).toString('binary').charCodeAt(0);\n"
+        "const ascii=Buffer.from(String.fromCharCode(65,321),'ascii').toString('hex');\n"
+        "console.log('b64='+(hello==='aGVsbG8='&&back==='hello'&&nopad==='hello'&&bytes.toString('base64')==='AAEC+v8='&&url==='-_-_'&&urlBack==='000102faff'&&latin==='ff'&&latinBack===255&&ascii==='4141'));\n");
+    auto pid = k.spawn("node", {"/b64.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("b64=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/utf8.js",
+        "const grin=String.fromCharCode(0xD83D,0xDE00);\n"
+        "const euro=String.fromCharCode(0x20AC);\n"
+        "const g=Buffer.from(grin);\n"
+        "const back=Buffer.from([0xf0,0x9f,0x98,0x80]).toString();\n"
+        "const dst=Buffer.alloc(5);\n"
+        "const copied=Buffer.from('hello').copy(dst,1,0,3);\n"
+        "const filled=Buffer.alloc(4).fill('ab').toString('hex');\n"
+        "const ok=g.toString('hex')==='f09f9880'&&g.toString()===grin&&back===grin&&Buffer.byteLength(grin)===4&&Buffer.byteLength(euro)===3&&Buffer.from(euro).toString('hex')==='e282ac';\n"
+        "const cmp=Buffer.compare(Buffer.from('a'),Buffer.from('b'))===-1&&Buffer.compare(Buffer.from('a'),Buffer.from('aa'))===-1&&Buffer.from('ab').equals(Buffer.from('ab'))&&!Buffer.from('ab').equals(Buffer.from('a'));\n"
+        "const find=Buffer.from('hello').indexOf('ll')===2&&Buffer.from('hello').indexOf(0x6c)===2&&!Buffer.from('hello').includes('x')&&copied===3&&dst.toString('hex')==='0068656c00'&&filled==='61626162';\n"
+        "console.log('utf8='+(ok&&cmp&&find));\n");
+    auto pid = k.spawn("node", {"/utf8.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("utf8=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/int.js",
+        "const b=Buffer.from([0xff,0xfe,0xfd,0xfc,0x80]);\n"
+        "const reads=[b.readUInt8(4),b.readUInt16BE(0),b.readUInt16LE(0),b.readUInt32BE(0),b.readUInt32LE(0),b.readInt8(4),b.readInt16BE(0),b.readInt16LE(0),b.readInt32BE(0),b.readInt32LE(0)].join(',');\n"
+        "const w=Buffer.alloc(8);\n"
+        "const n=w.writeUInt32BE(0x01020304,0);\n"
+        "const n2=w.writeInt16LE(-2,4);\n"
+        "const n3=w.writeUInt8(255,6);\n"
+        "var bad=false;\n"
+        "try{b.readUInt8(9);}catch(e){bad=e.code==='ERR_OUT_OF_RANGE';}\n"
+        "const back=w.readUInt32BE(0)===0x01020304&&w.readInt16LE(4)===-2&&w.readUInt8(6)===255;\n"
+        "console.log('int='+(reads==='128,65534,65279,4294901244,4244504319,-128,-2,-257,-66052,-50462977'&&n===4&&n2===6&&n3===7&&w.toString('hex')==='01020304feffff00'&&bad&&back));\n");
+    auto pid = k.spawn("node", {"/int.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("int=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/ev.js",
+        "const ev=require('events');\n"
+        "const ee=new ev.EventEmitter();\n"
+        "const order=[];\n"
+        "ee.prependListener('a', function(){ order.push('pre'); });\n"
+        "ee.addListener('a', function(){ order.push('on'); });\n"
+        "ee.emit('a');\n"
+        "var n=0;\n"
+        "ee.once('b', function(x){ n=x; });\n"
+        "ee.emit('b', 7);\n"
+        "ee.emit('b', 9);\n"
+        "var hit=0;\n"
+        "function orig(){ hit++; }\n"
+        "ee.once('d', orig);\n"
+        "ee.off('d', orig);\n"
+        "ee.emit('d');\n"
+        "const names=ee.eventNames().join(',');\n"
+        "const ee2=new ev.EventEmitter();\n"
+        "const p=ev.once(ee, 'e').then(function(args){ return args[0]; });\n"
+        "const p2=ev.once(ee2, 'z').then(function(){ return 'bad'; }, function(){ return 'err'; });\n"
+        "ee.emit('e', 'ok');\n"
+        "ee2.emit('error', new Error('nope'));\n"
+        "Promise.all([p, p2]).then(function(r){\n"
+        "  console.log('ev='+(order.join(',')==='pre,on'&&n===7&&hit===0&&names==='a'&&r[0]==='ok'&&r[1]==='err'&&ee.listeners('b').length===0));\n"
+        "});\n");
+    auto pid = k.spawn("node", {"/ev.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("ev=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/deep.js",
+        "const a=require('assert');\n"
+        "a.deepStrictEqual({a:1,b:2},{b:2,a:1});\n"
+        "a.deepStrictEqual(Buffer.from('ab'),Buffer.from('ab'));\n"
+        "a.deepStrictEqual(NaN,NaN);\n"
+        "a.deepEqual(1,'1');\n"
+        "a.deepStrictEqual(new Date(5),new Date(5));\n"
+        "a.deepStrictEqual(/a/gi,/a/gi);\n"
+        "a.strict.deepEqual({x:[1]},{x:[1]});\n"
+        "var strictNum=false, undef=false, hole=false, buf=false;\n"
+        "try{a.deepStrictEqual(1,'1');}catch(e){strictNum=e.code==='ERR_ASSERTION';}\n"
+        "try{a.deepStrictEqual({a:undefined},{});}catch(e){undef=true;}\n"
+        "try{a.deepStrictEqual([1,,3],[1,undefined,3]);}catch(e){hole=true;}\n"
+        "try{a.deepStrictEqual(Buffer.from('a'),Buffer.from('b'));}catch(e){buf=true;}\n"
+        "console.log('deep='+(strictNum&&undef&&hole&&buf));\n");
+    auto pid = k.spawn("node", {"/deep.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("deep=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/rint.js",
+        "const c=require('crypto');\n"
+        "var ok=true;\n"
+        "for (var i=0;i<40;i++){\n"
+        "  var n=c.randomInt(5,8);\n"
+        "  if (n<5||n>=8||n!==(n|0)) ok=false;\n"
+        "  if (c.randomInt(1)!==0) ok=false;\n"
+        "}\n"
+        "var bad=false;\n"
+        "try{c.randomInt(3,3);}catch(e){bad=e.code==='ERR_OUT_OF_RANGE';}\n"
+        "var cbv=null;\n"
+        "c.randomInt(2,4,function(err,n){cbv=n;});\n"
+        "var ciphers=c.getCiphers().indexOf('aes-256-cbc')>=0&&c.getCiphers().indexOf('aes-128-cbc')>=0;\n"
+        "console.log('rint='+(ok&&bad&&cbv>=2&&cbv<4&&ciphers));\n");
+    auto pid = k.spawn("node", {"/rint.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("rint=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/fmt.js",
+        "const u=require('util');\n"
+        "const a=u.format('%s:%s','a','b','c')==='a:b c';\n"
+        "const b=u.format(1,2,3)==='1 2 3';\n"
+        "const c=u.format('%% %i %d',1.9,2.5)==='% 1 2.5';\n"
+        "const d=u.format('%j',{a:1})==='{\"a\":1}';\n"
+        "const e=u.format()==='';\n"
+        "const f=u.format('%s')==='%s';\n"
+        "const g=u.format('%s',{a:1})==='{ a: 1 }';\n"
+        "const h=u.format('x',{a:1})==='x { a: 1 }';\n"
+        "const i=u.isDeepStrictEqual({b:1,a:2},{a:2,b:1});\n"
+        "const j=!u.isDeepStrictEqual(Buffer.from('a'),Buffer.from('b'));\n"
+        "const k=u.inspect(Buffer.from('ab'))==='<Buffer 61 62>';\n"
+        "console.log('fmt='+(a&&b&&c&&d&&e&&f&&g&&h&&i&&j&&k));\n");
+    auto pid = k.spawn("node", {"/fmt.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("fmt=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/enc.js",
+        "const fs=require('fs');\n"
+        "fs.writeFileSync('/t.bin', Buffer.from([0,255,97]));\n"
+        "const hex=fs.readFileSync('/t.bin','hex');\n"
+        "const b64=fs.readFileSync('/t.bin',{encoding:'base64'});\n"
+        "const buf=fs.readFileSync('/t.bin',{encoding:'buffer'});\n"
+        "const expect=Buffer.from([0,255,97]).toString('base64');\n"
+        "fs.writeFileSync('/w.txt','6869','hex');\n"
+        "const back=fs.readFileSync('/w.txt');\n"
+        "const utf=fs.readFileSync('/w.txt','utf8');\n"
+        "console.log('enc='+(hex==='00ff61'&&b64===expect&&buf.toString('hex')==='00ff61'&&back==='hi'&&utf==='hi'));\n");
+    auto pid = k.spawn("node", {"/enc.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("enc=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/base.js",
+        "const p=require('path');\n"
+        "const a=p.basename('a/b/c.txt','.txt')==='c';\n"
+        "const b=p.basename('a/b/c.txt','txt')==='c.';\n"
+        "const c=p.basename('a/b/.txt','.txt')==='.txt';\n"
+        "const d=p.extname('dir.ext/file')==='';\n"
+        "const e=p.extname('.gitignore')==='';\n"
+        "const f=p.extname('a/b.tar.gz')==='.gz';\n"
+        "const g=p.extname('a.')==='.';\n"
+        "const h=p.win32.basename('C:\\\\foo\\\\bar.txt','.txt')==='bar';\n"
+        "const i=p.win32.extname('C:\\\\foo.bar\\\\baz')==='';\n"
+        "const j=p.basename('/a/b/')==='b';\n"
+        "console.log('base='+(a&&b&&c&&d&&e&&f&&g&&h&&i&&j));\n");
+    auto pid = k.spawn("node", {"/base.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("base=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/dirent.js",
+        "const fs=require('fs');\n"
+        "fs.mkdirSync('/dirents');\n"
+        "fs.writeFileSync('/dirents/a.txt','hi');\n"
+        "fs.mkdirSync('/dirents/sub');\n"
+        "fs.symlinkSync('/dirents/a.txt','/dirents/link');\n"
+        "const names=fs.readdirSync('/dirents');\n"
+        "const ents=fs.readdirSync('/dirents',{withFileTypes:true});\n"
+        "function find(list,n){for(var i=0;i<list.length;i++) if(list[i].name===n) return list[i];}\n"
+        "const a=find(ents,'a.txt');\n"
+        "const s=find(ents,'sub');\n"
+        "const l=find(ents,'link');\n"
+        "const plain=names.length===3&&names.indexOf('a.txt')>=0;\n"
+        "const typed=a instanceof fs.Dirent&&a.isFile()&&!a.isDirectory()&&s.isDirectory()&&l.isSymbolicLink()&&!l.isFile();\n"
+        "const opened=fs.opendirSync('/dirents').readSync();\n"
+        "fs.promises.readdir('/dirents',{withFileTypes:true}).then(function(list){\n"
+        "  const sub=find(list,'sub');\n"
+        "  console.log('dirent='+(plain&&typed&&opened instanceof fs.Dirent&&sub&&sub.isDirectory()));\n"
+        "});\n");
+    auto pid = k.spawn("node", {"/dirent.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("dirent=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/fscb.js",
+        "const fs=require('fs');\n"
+        "fs.writeFileSync('/cb.txt','hi');\n"
+        "var data='', missing=false, wrote=false, typed=false, bad=false;\n"
+        "try{fs.readFile('/cb.txt');}catch(e){bad=e.code==='ERR_INVALID_ARG_TYPE';}\n"
+        "var left=4;\n"
+        "function done(){ if(--left) return; console.log('fscb='+(bad&&data==='hi'&&missing&&wrote&&typed)); }\n"
+        "fs.readFile('/cb.txt','utf8',function(err,d){ data=d; done(); });\n"
+        "fs.readFile('/no-such-cb',function(err){ missing=!!(err&&String(err.message||err).indexOf('ENOENT')>=0); done(); });\n"
+        "fs.writeFile('/cb2.txt','yo',function(err){\n"
+        "  fs.readFile('/cb2.txt','utf8',function(e,d){ wrote=!e&&d==='yo'; done(); });\n"
+        "});\n"
+        "fs.mkdirSync('/cbdir'); fs.writeFileSync('/cbdir/a','x');\n"
+        "fs.readdir('/cbdir',{withFileTypes:true},function(err,list){\n"
+        "  typed=!err&&list[0] instanceof fs.Dirent&&list[0].name==='a'&&list[0].isFile();\n"
+        "  done();\n"
+        "});\n");
+    auto pid = k.spawn("node", {"/fscb.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("fscb=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/hdr.js",
+        "const http=require('http');\n"
+        "if(http.STATUS_CODES[404]!=='Not Found'||http.STATUS_CODES[200]!=='OK') throw new Error('codes');\n"
+        "http.createServer(function(req,res){\n"
+        "  res.setHeader('X-Test','yes');\n"
+        "  res.setHeader('X-Drop','1');\n"
+        "  res.removeHeader('x-drop');\n"
+        "  if(res.getHeader('X-Test')!=='yes'||res.hasHeader('x-drop')){ res.statusCode=500; res.end('bad-header'); return; }\n"
+        "  res.writeHead(404,'Missing');\n"
+        "  res.end('gone');\n"
+        "}).listen(3212);\n"
+        "http.get({hostname:'127.0.0.1',port:3212,path:'/'},function(res){\n"
+        "  var body='';\n"
+        "  res.on('data',function(c){ body+=c; });\n"
+        "  res.on('end',function(){\n"
+        "    console.log('hdr='+(res.statusCode===404&&res.statusMessage==='Missing'&&body==='gone'&&res.headers['x-test']==='yes'&&!res.headers['x-drop']));\n"
+        "  });\n"
+        "});\n");
+    auto pid = k.spawn("node", {"/hdr.js"}, {}, "/");
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("hdr=true") != std::string::npos);
+    k.kill(pid);
+  }
+  {
+    k.vfs().write_text(
+        "/sd.js",
+        "const sd=require('string_decoder');\n"
+        "const d=new sd.StringDecoder('utf8');\n"
+        "const a=d.write(Buffer.from([0xe2,0x82]));\n"
+        "const b=d.write(Buffer.from([0xac]));\n"
+        "const d2=new sd.StringDecoder('utf8');\n"
+        "const c=d2.write(Buffer.from([0xe2]));\n"
+        "const end=d2.end();\n"
+        "const d3=new sd.StringDecoder('utf8');\n"
+        "const g1=d3.write(Buffer.from([0xf0,0x9f]));\n"
+        "const g2=d3.write(Buffer.from([0x98,0x80]));\n"
+        "const hi=new sd.StringDecoder().write(Buffer.from('hi'));\n"
+        "const euro=b===String.fromCharCode(0x20AC);\n"
+        "const grin=g2===String.fromCharCode(0xD83D,0xDE00);\n"
+        "console.log('sd='+(a===''&&euro&&c===''&&end.charCodeAt(0)===0xFFFD&&g1===''&&grin&&hi==='hi'));\n");
+    auto pid = k.spawn("node", {"/sd.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("sd=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/bjson.js",
+        "const b=Buffer.from('hi');\n"
+        "const j=JSON.stringify(b);\n"
+        "const back=Buffer.from(JSON.parse(j)).toString();\n"
+        "const again=Buffer.from({type:'Buffer',data:[104,105]}).toString();\n"
+        "console.log('bjson='+(j==='{\"type\":\"Buffer\",\"data\":[104,105]}'&&back==='hi'&&again==='hi'));\n");
+    auto pid = k.spawn("node", {"/bjson.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("bjson=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/furl.js",
+        "const url=require('url');\n"
+        "const a=url.fileURLToPath('file:///tmp/a%20b')==='/tmp/a b';\n"
+        "const b=url.fileURLToPath('file://localhost/tmp/a')==='/tmp/a';\n"
+        "const c=String(url.pathToFileURL('/tmp/a b'))==='file:///tmp/a%20b';\n"
+        "const d=url.fileURLToPath(url.pathToFileURL('/tmp/a b'))==='/tmp/a b';\n"
+        "var scheme=false, host=false;\n"
+        "try{url.fileURLToPath('http://x/y');}catch(e){scheme=e.code==='ERR_INVALID_URL_SCHEME';}\n"
+        "try{url.fileURLToPath('file://example.com/tmp/a');}catch(e){host=e.code==='ERR_INVALID_FILE_URL_HOST';}\n"
+        "console.log('furl='+(a&&b&&c&&d&&scheme&&host));\n");
+    auto pid = k.spawn("node", {"/furl.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("furl=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/norm.js",
+        "const p=require('path');\n"
+        "const a=p.join('/a','b','..','c')==='/a/c';\n"
+        "const b=p.normalize('/a/b/../c')==='/a/c';\n"
+        "const c=p.normalize('/a/../../b')==='/b';\n"
+        "const d=p.normalize('a/../../b')==='../b';\n"
+        "const e=p.join('a','..','b')==='b';\n"
+        "const f=p.resolve('/a','../b')==='/b';\n"
+        "const g=p.normalize('')==='.';\n"
+        "const h=p.normalize('/foo/bar//baz/asdf/quux/..')==='/foo/bar/baz/asdf';\n"
+        "const i=p.normalize('/a/b/')==='/a/b/';\n"
+        "const j=p.join('/a/','b/')==='/a/b/';\n"
+        "const k=p.normalize('.')==='.';\n"
+        "const l=p.join('/a','.','b')==='/a/b';\n"
+        "console.log('norm='+(a&&b&&c&&d&&e&&f&&g&&h&&i&&j&&k&&l));\n");
+    auto pid = k.spawn("node", {"/norm.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("norm=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/uparse.js",
+        "const u=require('url');\n"
+        "const a=u.parse('https://user:pass@example.com:8080/a/b?x=1&y=2#h');\n"
+        "const b=u.parse('/a/b?x=1&x=2', true);\n"
+        "const c=u.parse('http://localhost');\n"
+        "const d=u.parse('mailto:a@b.com');\n"
+        "const e=u.parse('http://[::1]:3000/p');\n"
+        "const f=u.parse('//cdn.example/lib.js');\n"
+        "const g=u.parse('//cdn.example/lib.js', false, true);\n"
+        "const ok=a.protocol==='https:'&&a.slashes===true&&a.auth==='user:pass'&&a.host==='example.com:8080'&&a.port==='8080'&&a.hostname==='example.com'&&a.hash==='#h'&&a.search==='?x=1&y=2'&&a.query==='x=1&y=2'&&a.pathname==='/a/b'&&a.path==='/a/b?x=1&y=2'&&a.href==='https://user:pass@example.com:8080/a/b?x=1&y=2#h'\n"
+        " &&b.query.x[0]==='1'&&b.query.x[1]==='2'&&b.pathname==='/a/b'\n"
+        " &&c.pathname==='/'&&c.href==='http://localhost/'&&c.host==='localhost'&&c.port===null\n"
+        " &&d.protocol==='mailto:'&&d.auth==='a'&&d.host==='b.com'&&d.pathname===null\n"
+        " &&e.hostname==='::1'&&e.port==='3000'&&e.pathname==='/p'&&e.host==='[::1]:3000'\n"
+        " &&f.pathname==='//cdn.example/lib.js'&&f.host===null\n"
+        " &&g.host==='cdn.example'&&g.pathname==='/lib.js'&&g.slashes===true\n"
+        " &&u.format(a)===a.href;\n"
+        "console.log('uparse='+ok);\n");
+    auto pid = k.spawn("node", {"/uparse.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("uparse=true") != std::string::npos);
+  }
+  {
+    k.vfs().write_text(
+        "/ocon.js",
+        "const os=require('os');\n"
+        "const c=require('constants');\n"
+        "const s=os.constants.signals;\n"
+        "const e=os.constants.errno;\n"
+        "const ok=s.SIGINT===2&&s.SIGTERM===15&&s.SIGKILL===9&&s.SIGWINCH===28\n"
+        " &&e.ENOENT===-2&&e.EEXIST===-17&&e.EACCES===-13&&e.EISDIR===-21&&e.ECONNREFUSED===-111&&e.ENOTEMPTY===-39\n"
+        " &&os.constants.priority.PRIORITY_NORMAL===0\n"
+        " &&c.os.errno.ENOENT===-2&&c.os.signals.SIGTERM===15&&c.fs.O_CREAT===64;\n"
+        "console.log('ocon='+ok);\n");
+    auto pid = k.spawn("node", {"/ocon.js"}, {}, "/");
+    CHECK(k.wait(pid).value_or(1) == 0);
+    auto out = k.get(pid)->stdout_buf.read_all_string();
+    CHECK(out.find("ocon=true") != std::string::npos);
   }
 #endif
 

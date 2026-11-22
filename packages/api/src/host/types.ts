@@ -26,6 +26,8 @@ export interface BrowserNodeProcess {
   readonly output: ReadableStream<string>;
   kill(): void;
   write(data: string): void;
+  /** Close stdin. Queued writes finish first. A guest `data` listener can then see `end`. */
+  end(): void;
 }
 
 export type InstallProgressEvent = {
